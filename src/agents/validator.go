@@ -107,7 +107,7 @@ func (a *ValidatorAgent) ValidateDocument(ctx context.Context, documentText, pro
 
 	// 5. Проверка по чек-листу процедуры.
 	if procedureType != "" {
-		checklistIssues, err := a.checkProcedureChecklist(ctx, procedureType, clientID)
+		checklistIssues, err := a.checkProcedureChecklist(ctx, procedureType, clientID, documentText)
 		if err != nil {
 			issues = append(issues, ValidationIssue{
 				Type:     "info",
@@ -193,15 +193,19 @@ func checkRequiredSections(text string) []ValidationIssue {
 // datePattern — паттерн для поиска дат в тексте (ДД.ММ.ГГГГ, ДД/ММ/ГГГГ, ГГГГ-ММ-ДД).
 var datePattern = regexp.MustCompile(`\d{2}[./-]\d{2}[./-]\d{4}|\d{4}[./-]\d{2}[./-]\d{2}`)
 
-// innPattern — паттерн для поиска ИНН (10 или 12 цифр).
-var innPattern = regexp.MustCompile(`\bИНН\s*[:№]?\s*\d{10,12}\b|\b\d{10,12}\b.*ИНН`)
+// innPattern — паттерн для поиска ИНН (10 или 12 цифр после слова ИНН).
+var innPattern = regexp.MustCompile(`ИНН\s*[:№]?\s*\d{10,12}`)
 
-// ogrnPattern — паттерн для поиска ОГРН (13 или 15 цифр).
-var ogrnPattern = regexp.MustCompile(`\bОГРН\s*[:№]?\s*\d{13,15}\b|\b\d{13,15}\b.*ОГРН`)
+// ogrnPattern — паттерн для поиска ОГРН (13 или 15 цифр после слова ОГРН).
+var ogrnPattern = regexp.MustCompile(`ОГРН\s*[:№]?\s*\d{13,15}`)
 
 // checkRegulatoryReferences проверяет ссылки на нормативные документы через RAG.
 func (a *ValidatorAgent) checkRegulatoryReferences(ctx context.Context, text string) ([]ValidationIssue, error) {
 	var issues []ValidationIssue
+
+	if a.ragService == nil {
+		return issues, nil
+	}
 
 	// Ищем паттерны ссылок на нормативные документы.
 	refPatterns := []*regexp.Regexp{
@@ -307,7 +311,7 @@ func checkFormatPatterns(text string) []ValidationIssue {
 }
 
 // checkProcedureChecklist проверяет документ против чек-листа процедуры.
-func (a *ValidatorAgent) checkProcedureChecklist(ctx context.Context, procedureType, clientID string) ([]ValidationIssue, error) {
+func (a *ValidatorAgent) checkProcedureChecklist(ctx context.Context, procedureType, clientID, text string) ([]ValidationIssue, error) {
 	var issues []ValidationIssue
 
 	if a.checklistStore == nil {

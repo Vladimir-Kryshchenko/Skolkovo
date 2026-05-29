@@ -4,9 +4,11 @@ package rag
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/google/uuid"
 
+	"baza-skolkovo/src/classifier"
 	"baza-skolkovo/src/common/embed"
 	"baza-skolkovo/src/common/extract"
 	"baza-skolkovo/src/common/model"
@@ -22,15 +24,22 @@ const (
 
 // Service связывает реестр документов, эмбеддинги и Qdrant.
 type Service struct {
-	Store store.Store
-	Qdr   *qdrant.Client
-	Emb   embed.Embedder
-	Dim   int
+	Store      store.Store
+	Qdr        *qdrant.Client
+	Emb        embed.Embedder
+	Dim        int
+	Classifier *classifier.DocumentClassifier // опционально, для авто-классификации
 }
 
 // New создаёт RAG-сервис.
 func New(st store.Store, qdr *qdrant.Client, emb embed.Embedder, dim int) *Service {
 	return &Service{Store: st, Qdr: qdr, Emb: emb, Dim: dim}
+}
+
+// WithClassifier устанавливает классификатор для автоматической категрации документов.
+func (s *Service) WithClassifier(cls *classifier.DocumentClassifier) *Service {
+	s.Classifier = cls
+	return s
 }
 
 // Init гарантирует существование коллекции Qdrant.
@@ -59,6 +68,22 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 	chunks := chunkText(text, chunkSize, chunkOverlap)
 	if len(chunks) == 0 {
 		return 0, fmt.Errorf("пустой текст после извлечения")
+	}
+
+	// Классификация документа после chunking (если классификатор включён).
+	if s.Classifier != nil && doc.Category == "" {
+		result, err := s.Classifier.Classify(ctx, text, doc.Title)
+		if err != nil {
+			log.Printf("[rag:classifier] ошибка классификации документа %s: %v", docID, err)
+		} else if result.Category != "" {
+			// Сохраняем категорию в реестр.
+			doc.Category = result.Category
+			if err := s.Store.Upsert(ctx, doc); err != nil {
+				log.Printf("[rag:classifier] не удалось сохранить категорию для %s: %v", docID, err)
+			} else {
+				log.Printf("[rag:classifier] документ %s классифицирован как %s (confidence=%.2f)", docID, result.Category, result.Confidence)
+			}
+		}
 	}
 
 	if err := s.Qdr.DeleteByDocument(ctx, docID); err != nil {

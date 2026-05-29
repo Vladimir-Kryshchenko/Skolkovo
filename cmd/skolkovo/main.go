@@ -24,6 +24,7 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -35,9 +36,14 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"baza-skolkovo/src/admin"
+	"baza-skolkovo/src/agents"
+	chat_widget "baza-skolkovo/src/chat_widget"
+	"baza-skolkovo/src/classifier"
 	"baza-skolkovo/src/common/config"
 	"baza-skolkovo/src/common/embed"
 	"baza-skolkovo/src/common/model"
@@ -52,6 +58,7 @@ import (
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	"baza-skolkovo/src/pipeline"
+	"baza-skolkovo/src/portal"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/telegram"
@@ -114,10 +121,14 @@ func openStore(ctx context.Context, cfg config.Config) (store.Store, error) {
 	return store.Open(ctx, cfg)
 }
 
-func newRAG(cfg config.Config, st store.Store) *rag.Service {
+func newRAG(cfg config.Config, st store.Store, cls *classifier.DocumentClassifier) *rag.Service {
 	qdr := qdrant.New(cfg.QdrantURL, cfg.QdrantColl)
 	emb := embed.NewTEIClient(cfg.TEIURL)
-	return rag.New(st, qdr, emb, cfg.EmbeddingDim)
+	svc := rag.New(st, qdr, emb, cfg.EmbeddingDim)
+	if cls != nil {
+		svc.WithClassifier(cls)
+	}
+	return svc
 }
 
 func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
@@ -171,7 +182,7 @@ func cmdIndex(cfg config.Config, args []string) error {
 	}
 	defer st.Close()
 
-	svc := newRAG(cfg, st)
+	svc := newRAG(cfg, st, nil)
 	if err := svc.Init(ctx); err != nil {
 		return fmt.Errorf("инициализация Qdrant: %w", err)
 	}
@@ -269,7 +280,7 @@ func cmdFetch(cfg config.Config) error {
 		return err
 	}
 
-	svc := newRAG(cfg, st)
+	svc := newRAG(cfg, st, nil)
 	indexFn := func(ctx context.Context, id string) error {
 		if err := svc.Init(ctx); err != nil {
 			return err
@@ -294,7 +305,7 @@ func cmdNews(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	svc := newRAG(cfg, st)
+	svc := newRAG(cfg, st, nil)
 	if err := svc.Init(ctx); err != nil {
 		log.Printf("[news] Qdrant недоступен: %v (новости сохранятся без индексации)", err)
 		svc = nil
@@ -552,7 +563,7 @@ func cmdSync(cfg config.Config) error {
 		return err
 	}
 	defer st.Close()
-	return newPipeline(cfg, st, newRAG(cfg, st)).RunOnce(ctx)
+	return newPipeline(cfg, st, newRAG(cfg, st, nil)).RunOnce(ctx)
 }
 
 func cmdMCP(cfg config.Config) error {
@@ -561,7 +572,7 @@ func cmdMCP(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	svc := newRAG(cfg, st)
+	svc := newRAG(cfg, st, nil)
 	if err := svc.Init(ctx); err != nil {
 		log.Printf("[mcp] предупреждение: Qdrant недоступен: %v", err)
 	}
@@ -584,7 +595,7 @@ func cmdAdmin(cfg config.Config) error {
 
 	// Создаём основной сервер админки.
 	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st))
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil))
 
 	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту.
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
@@ -599,7 +610,8 @@ func cmdAdmin(cfg config.Config) error {
 	return srv.ListenAndServe()
 }
 
-// cmdServe запускает планировщик, MCP-сервер и админку одновременно.
+// cmdServe запускает планировщик, MCP-сервер, админку, портал, чат-виджет
+// и регистрирует ИИ-агентов.
 func cmdServe(cfg config.Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -609,13 +621,38 @@ func cmdServe(cfg config.Config) error {
 		return err
 	}
 	defer st.Close()
-	svc := newRAG(cfg, st)
 
-	// Создаём MCP-сервер и регистрируем все инструменты.
+	// --- Классификатор ---
+	var cls *classifier.DocumentClassifier
+	if cfg.ClassifierEnabled {
+		emb := embed.NewTEIClient(cfg.TEIURL)
+		cls = classifier.NewDocumentClassifier(emb, classifier.ClassifierConfig{Threshold: 0.5})
+		if err := cls.PrecomputeCategoryEmbeddings(ctx, classifier.DefaultCategories); err != nil {
+			log.Printf("[serve:classifier] предупреждение: не удалось предвычислить эмбеддинги категорий: %v", err)
+		} else {
+			log.Printf("[serve:classifier] эмбеддинги %d категорий предвычислены", len(classifier.DefaultCategories))
+		}
+	}
+
+	svc := newRAG(cfg, st, cls)
+
+	// --- MCP-сервер ---
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
 	registerExtraMCPTools(mcpSrv.MCPServer(), st)
+	registerAgentMCPTools(mcpSrv.MCPServer(), st, svc, cfg)
 
-	// Запускаем админку резидентства на отдельном порту.
+	// --- Prometheus /metrics на отдельном порту ---
+	promAddr := ":9090"
+	promMux := http.NewServeMux()
+	promMux.Handle("/metrics", promhttp.Handler())
+	go func() {
+		log.Printf("[prometheus] метрики доступны на %s/metrics", promAddr)
+		if err := http.ListenAndServe(promAddr, promMux); err != nil {
+			log.Printf("[prometheus] остановлен: %v", err)
+		}
+	}()
+
+	// --- Админка резидентства ---
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
 	go func() {
@@ -639,15 +676,57 @@ func cmdServe(cfg config.Config) error {
 		}
 	}()
 
-	// Запускаем полные синхронизации по расписанию.
-	newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
+	// --- Портал клиента ---
+	if cfg.PortalEnabled {
+		go func() {
+			portalCfg := portal.PortalConfig{
+				Addr:      cfg.PortalAddr,
+				BaseURL:   "http://localhost" + cfg.PortalAddr,
+				MCPURL:    "http://localhost" + cfg.MCPAddr,
+				MCPAPIKey: cfg.MCPAPIKey,
+			}
+			stores := buildResidencyStores(st)
+			portalStores := portal.PortalStores{
+				ClientStore:    stores.ClientStore,
+				ChecklistStore: stores.ChecklistStore,
+				DeadlineStore:  stores.DeadlineStore,
+				TemplateStore:  stores.TemplateStore,
+				DocumentStore:  st,
+			}
+			ps := portal.NewPortalServer(portalCfg, portalStores)
+			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
+			if err := ps.Start(ctx); err != nil {
+				log.Printf("[portal] остановлен: %v", err)
+			}
+		}()
+	}
 
-	// Запускаем Telegram-бот, если токен установлен.
+	// --- Чат-виджет ---
+	if cfg.ChatWidgetEnabled {
+		go func() {
+			widgetCfg := chat_widget.WidgetConfig{
+				MCPURL:         "http://localhost" + cfg.MCPAddr,
+				MCPAPIKey:      cfg.MCPAPIKey,
+				ListenAddr:     cfg.ChatWidgetAddr,
+				WelcomeMessage: "Здравствуйте! Чем могу помочь?",
+			}
+			ws := chat_widget.NewWidgetServer(widgetCfg)
+			log.Printf("[widget] запуск на %s", cfg.ChatWidgetAddr)
+			if err := ws.Start(ctx); err != nil {
+				log.Printf("[widget] остановлен: %v", err)
+			}
+		}()
+	}
+
+	// --- Планировщик ---
+	go newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
+
+	// --- Telegram-бот ---
 	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
 		go runTelegramBot(ctx, cfg, st)
 	}
 
-	// Планировщик для новых модулей.
+	// --- Планировщик для новых модулей ---
 	go scheduleNewModules(ctx, cfg, st)
 
 	<-ctx.Done()
@@ -776,6 +855,113 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, nil, nil)
 }
 
+// registerAgentMCPTools создаёт ИИ-агентов и регистрирует их MCP-инструменты.
+func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag.Service, cfg config.Config) {
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		log.Printf("[mcp:agents] требуется backend=postgres для регистрации агентов")
+		return
+	}
+	pool := ps.Pool()
+	pcs := store.NewPostgresClientStore(pool)
+
+	// Создаём агентов.
+	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
+	validator := agents.NewValidatorAgent(ragSvc, pcs)
+	monitorStores := agents.MonitorStores{
+		DocStore:      st,
+		EventStore:    store.NewPostgresSourceStore(pool),
+		ContestStore:  store.NewPostgresSourceStore(pool),
+		ClientStore:   pcs,
+		DeadlineStore: pcs,
+	}
+	monitor := agents.NewMonitorAgent(monitorStores)
+	coordStores := agents.CoordinatorStores{
+		ClientStore:    pcs,
+		ChecklistStore: pcs,
+		DeadlineStore:  pcs,
+		TemplateStore:  pcs,
+	}
+	coordinator := agents.NewCoordinatorAgent(coordStores)
+
+	// ask_consultant — вопрос к консультанту.
+	mcpSrv.AddTool(
+		mcp.NewTool("ask_consultant",
+			mcp.WithDescription("Задать вопрос ИИ-консультанту по базе документов Сколково. Возвращает ответ с источниками."),
+			mcp.WithString("question", mcp.Required(), mcp.Description("Текст вопроса")),
+			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			question := req.GetString("question", "")
+			clientID := req.GetString("client_id", "")
+			resp, err := consultant.Ask(ctx, question, clientID)
+			if err != nil {
+				return mcp.NewToolResultError("ошибка консультанта: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(resp.Answer), nil
+		},
+	)
+
+	// validate_document — валидация документа по чек-листу.
+	mcpSrv.AddTool(
+		mcp.NewTool("validate_document",
+			mcp.WithDescription("Проверить документ по чек-листу процедуры. Возвращает отчёт с проблемами и оценкой."),
+			mcp.WithString("document_text", mcp.Required(), mcp.Description("Полный текст документа")),
+			mcp.WithString("procedure_type", mcp.Required(), mcp.Description("Тип процедуры: entry, reporting, extension, exit")),
+			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			docText := req.GetString("document_text", "")
+			procType := req.GetString("procedure_type", "")
+			clientID := req.GetString("client_id", "")
+			report, err := validator.ValidateDocument(ctx, docText, procType, clientID)
+			if err != nil {
+				return mcp.NewToolResultError("ошибка валидации: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(toJSON(report)), nil
+		},
+	)
+
+	// get_next_steps — рекомендации следующих шагов для клиента.
+	mcpSrv.AddTool(
+		mcp.NewTool("get_next_steps",
+			mcp.WithDescription("Получить рекомендации следующих шагов для клиента по чек-листу."),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			clientID := req.GetString("client_id", "")
+			steps, err := coordinator.GetNextSteps(ctx, clientID)
+			if err != nil {
+				return mcp.NewToolResultError("ошибка координатора: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(toJSON(steps)), nil
+		},
+	)
+
+	// subscribe_to_changes — подписка на изменения документов.
+	mcpSrv.AddTool(
+		mcp.NewTool("subscribe_to_changes",
+			mcp.WithDescription("Подписать клиента на уведомления об изменениях в указанных категориях документов."),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
+			mcp.WithString("categories", mcp.Required(), mcp.Description("Категории через запятую: regulations, events, contests, reporting")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			clientID := req.GetString("client_id", "")
+			catsStr := req.GetString("categories", "")
+			cats := strings.Split(catsStr, ",")
+			for i := range cats {
+				cats[i] = strings.TrimSpace(cats[i])
+			}
+			if err := monitor.Subscribe(ctx, clientID, cats); err != nil {
+				return mcp.NewToolResultError("ошибка подписки: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(fmt.Sprintf("Клиент %s подписан на: %s", clientID, catsStr)), nil
+		},
+	)
+
+	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes")
+}
+
 // buildResidencyStores собирает Stores для админки резидентства.
 func buildResidencyStores(st store.Store) admin.Stores {
 	var stores admin.Stores
@@ -835,6 +1021,14 @@ func mustRun(err error) {
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
 		os.Exit(1)
 	}
+}
+
+func toJSON(v any) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
 }
 
 func usage() {

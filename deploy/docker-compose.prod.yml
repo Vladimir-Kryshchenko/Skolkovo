@@ -85,7 +85,8 @@ services:
       - reports_data:/data/reports
     networks: [internal]
 
-  # Reverse-proxy + TLS (self-signed). Единственный публичный вход.
+    # Reverse-proxy + TLS. Единственный публичный вход.
+  # Для Let's Encrypt: замените volume certs → certbot и используйте nginx-letsencrypt.conf
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -95,8 +96,48 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/nginx/certs:ro
+      - ./nginx/nginx-letsencrypt.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/letsencrypt:ro
+      - certbot-webroot:/var/www/certbot
+    environment:
+      - DOMAIN=${DOMAIN:-skolkovo.example.com}
+    networks: [internal]
+
+  # ─── Monitoring Stack ────────────────────────────────────────────────
+
+  # Prometheus: сбор метрик
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts:/etc/prometheus/alerts:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=10GB"
+      - "--web.enable-lifecycle"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+    networks: [internal]
+
+  # Grafana: визуализация
+  grafana:
+    image: grafana/grafana-oss:latest
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    volumes:
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-}
     networks: [internal]
 
 networks:
@@ -109,3 +150,6 @@ volumes:
   pg_data:
   docs_data:
   reports_data:
+  certbot-webroot:
+  prometheus_data:
+  grafana_data:

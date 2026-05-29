@@ -145,7 +145,7 @@ func (a *MonitorAgent) GenerateDigest(ctx context.Context, clientID string, days
 	var stageContext string
 	if a.clientStore != nil {
 		client, err := a.clientStore.GetClient(ctx, clientID)
-		if err == nil {
+		if err == nil && client != nil {
 			stageContext = string(client.ResidencyStage)
 		}
 	}
@@ -267,7 +267,7 @@ func (a *MonitorAgent) analyzeImpact(ctx context.Context, doc model.Document) ([
 	}
 
 	// Получаем всех клиентов (пустой tenantID и stage — берём всех).
-	clients, err := a.clientStore.ListClients(ctx, "", "")
+	clients, err := a.clientStore.ListClients(ctx, "", model.ResidencyStage(""))
 	if err != nil {
 		return nil, err
 	}

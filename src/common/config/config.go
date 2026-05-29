@@ -49,6 +49,17 @@ type Config struct {
 	// Telegram-каналы
 	TelegramChannels  string // comma-separated список каналов
 	TelegramRssHubURL string // URL RSSHub-инстанса для Telegram
+
+	// Портал клиента
+	PortalEnabled bool
+	PortalAddr    string
+
+	// Чат-виджет
+	ChatWidgetEnabled bool
+	ChatWidgetAddr    string
+
+	// Классификатор документов
+	ClassifierEnabled bool
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -94,6 +105,17 @@ func Load() Config {
 		// Telegram-каналы
 		TelegramChannels:  env("TELEGRAM_CHANNELS", ""),
 		TelegramRssHubURL: env("TELEGRAM_RSS_HUB_URL", "https://rsshub.rssforever.com/telegram/channel/"),
+
+		// Портал клиента
+		PortalEnabled: envBool("PORTAL_ENABLED", false),
+		PortalAddr:    env("PORTAL_ADDR", ":8092"),
+
+		// Чат-виджет
+		ChatWidgetEnabled: envBool("CHAT_WIDGET_ENABLED", false),
+		ChatWidgetAddr:    env("CHAT_WIDGET_ADDR", ":8093"),
+
+		// Классификатор документов
+		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
 	}
 }
 
@@ -117,6 +139,15 @@ func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(key string, def bool) bool {
+	if v := os.Getenv(key); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			return b
 		}
 	}
 	return def

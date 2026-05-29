@@ -50,6 +50,7 @@ import (
 	"baza-skolkovo/src/common/qdrant"
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/contests"
+	"baza-skolkovo/src/eligibility"
 	"baza-skolkovo/src/events"
 	"baza-skolkovo/src/faq"
 	"baza-skolkovo/src/fetcher"
@@ -59,7 +60,9 @@ import (
 	"baza-skolkovo/src/notify"
 	"baza-skolkovo/src/pipeline"
 	"baza-skolkovo/src/portal"
+	"baza-skolkovo/src/preferences"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/regulations"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/telegram"
 	"baza-skolkovo/src/tgbot"
@@ -105,6 +108,12 @@ func main() {
 		mustRun(cmdMCP(cfg))
 	case "admin":
 		mustRun(cmdAdmin(cfg))
+	case "preferences":
+		mustRun(cmdPreferences(cfg))
+	case "regulations":
+		mustRun(cmdRegulations(cfg))
+	case "eligibility":
+		mustRun(cmdEligibility(cfg, args))
 	case "serve":
 		mustRun(cmdServe(cfg))
 	case "embed":
@@ -791,13 +800,49 @@ func cmdServe(cfg config.Config) error {
 	// --- Планировщик ---
 	go newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
 
+	// --- Telegram-нотификатор консультанту ---
+	tgNotifier := notify.NewTelegramNotifier(
+		os.Getenv("TELEGRAM_BOT_TOKEN"),
+		cfg.ConsultantTelegramChatID,
+	)
+	if tgNotifier.Enabled() {
+		log.Printf("[serve:notify] Telegram-уведомления консультанту включены")
+	}
+
 	// --- Telegram-бот ---
 	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
 		go runTelegramBot(ctx, cfg, st)
 	}
 
+	// --- Консультантский дашборд ---
+	if cfg.ConsultantEnabled {
+		go func() {
+			consultantStores := admin.ConsultantDashboardStores{}
+			if ps, ok := st.(*store.PostgresStore); ok {
+				pcs := store.NewPostgresClientStore(ps.Pool())
+				consultantStores.ClientStore = pcs
+				consultantStores.DeadlineStore = pcs
+				consultantStores.ChecklistStore = pcs
+			}
+			if consultantStores.ClientStore != nil {
+				mux := admin.RegisterConsultantRoutes(nil, consultantStores)
+				log.Printf("[consultant] дашборд запускается на %s", cfg.ConsultantAddr)
+				if err := http.ListenAndServe(cfg.ConsultantAddr, mux); err != nil {
+					log.Printf("[consultant] остановлен: %v", err)
+				}
+			} else {
+				log.Printf("[consultant] пропущен: требуется backend=postgres")
+			}
+		}()
+	}
+
 	// --- Планировщик для новых модулей ---
 	go scheduleNewModules(ctx, cfg, st)
+
+	// --- Ежедневная сводка консультанту ---
+	if tgNotifier.Enabled() {
+		go runDailySummary(ctx, cfg, st, tgNotifier)
+	}
 
 	<-ctx.Done()
 	log.Println("[serve] останов по сигналу")
@@ -820,8 +865,82 @@ func embedTest(cfg config.Config) error {
 	return nil
 }
 
+// runDailySummary отправляет ежедневную сводку консультанту в заданный час.
+func runDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg *notify.TelegramNotifier) {
+	for {
+		now := time.Now()
+		nextRun := time.Date(now.Year(), now.Month(), now.Day(), cfg.DailySummaryHour, 0, 0, 0, now.Location())
+		if !nextRun.After(now) {
+			nextRun = nextRun.Add(24 * time.Hour)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Until(nextRun)):
+		}
+
+		if err := sendDailySummary(ctx, cfg, st, tg); err != nil {
+			log.Printf("[daily-summary] ошибка: %v", err)
+		}
+	}
+}
+
+// sendDailySummary собирает статистику и отправляет сводку.
+func sendDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg *notify.TelegramNotifier) error {
+	summary := notify.DailySummary{}
+
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pcs := store.NewPostgresClientStore(ps.Pool())
+
+		clients, err := pcs.ListClients(ctx, "", model.ResidencyStage(""))
+		if err == nil {
+			summary.ActiveClients = len(clients)
+			now := time.Now()
+
+			for _, c := range clients {
+				deadlines, _ := pcs.ListDeadlines(ctx, c.ID, 30)
+				for _, d := range deadlines {
+					daysLeft := int(d.DueDate.Sub(now).Hours() / 24)
+					if daysLeft < 0 {
+						summary.OverdueCount++
+						summary.UrgentClients = append(summary.UrgentClients, notify.UrgentClientInfo{
+							Name:   c.Name,
+							ID:     c.ID,
+							Reason: fmt.Sprintf("просрочен: %s", d.Title),
+						})
+					} else if daysLeft <= 3 {
+						summary.UrgentCount++
+						summary.UrgentClients = append(summary.UrgentClients, notify.UrgentClientInfo{
+							Name:   c.Name,
+							ID:     c.ID,
+							Reason: fmt.Sprintf("дедлайн через %d дн.: %s", daysLeft, d.Title),
+						})
+					}
+				}
+				// Проверяем "застрявших" клиентов (нет изменений > 14 дней).
+				if int(now.Sub(c.UpdatedAt).Hours()/24) >= 14 {
+					summary.StuckCount++
+				}
+			}
+		}
+	}
+
+	// Число изменений документов за сутки.
+	docs, err := st.List(ctx, store.Filter{Status: model.StatusActive})
+	if err == nil {
+		yesterday := time.Now().AddDate(0, 0, -1)
+		for _, d := range docs {
+			if d.FetchedAt.After(yesterday) {
+				summary.ChangedDocs++
+			}
+		}
+	}
+
+	return tg.SendDailySummary(ctx, summary)
+}
+
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
-// FAQ и Telegram-каналов.
+// FAQ, Telegram-каналов, льгот и НПА.
 func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) {
 	ticker := time.NewTicker(cfg.ScrapeInterval)
 	defer ticker.Stop()
@@ -901,6 +1020,46 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 					} else {
 						_, _ = telegram.IngestPosts(ctx, parsed, tgStore)
 					}
+				}
+			}
+
+			// Льготы резидентов
+			if cfg.PreferencesEnabled {
+				log.Printf("[serve:preferences] синхронизация льгот")
+				prefCfg := preferences.PreferencesConfig{
+					SourceURLs: []string{cfg.PreferencesURL},
+					Category:   "Льготы",
+				}
+				mon := preferences.NewMonitor(prefCfg, st, nil)
+				if res, err := mon.Run(ctx); err != nil {
+					log.Printf("[serve:preferences] ошибка: %v", err)
+				} else {
+					log.Printf("[serve:preferences] готово: новых %d, обновлено %d", res.New, res.Updated)
+				}
+			}
+
+			// НПА
+			if cfg.RegulationsEnabled {
+				log.Printf("[serve:regulations] синхронизация НПА")
+				var extraURLs []string
+				if cfg.RegulationsExtraURLs != "" {
+					for _, u := range strings.Split(cfg.RegulationsExtraURLs, ",") {
+						if u = strings.TrimSpace(u); u != "" {
+							extraURLs = append(extraURLs, u)
+						}
+					}
+				}
+				regCfg := regulations.RegulationsConfig{
+					SearchURL:   cfg.RegulationsSearchURL,
+					ExtraURLs:   extraURLs,
+					SearchQuery: "Сколково",
+					Category:    "НПА",
+				}
+				mon := regulations.NewMonitor(regCfg, st, nil)
+				if res, err := mon.Run(ctx); err != nil {
+					log.Printf("[serve:regulations] ошибка: %v", err)
+				} else {
+					log.Printf("[serve:regulations] готово: новых %d, обновлено %d", res.New, res.Updated)
 				}
 			}
 		}
@@ -1029,7 +1188,57 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 		},
 	)
 
-	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes")
+	// draft_document — подготовка черновика документа для клиента.
+	draftingStores := agents.DraftingStores{
+		ClientStore:    pcs,
+		TemplateStore:  pcs,
+		ChecklistStore: pcs,
+	}
+	drafter := agents.NewDocumentDraftingAgent(draftingStores, ragSvc)
+
+	mcpSrv.AddTool(
+		mcp.NewTool("draft_document",
+			mcp.WithDescription("Подготовить черновик документа для клиента (заявка, описание проекта, отчёт, продление, выход). Возвращает заполненный текст в Markdown."),
+			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
+			mcp.WithString("document_type", mcp.Required(), mcp.Description("Тип документа: application, project_description, report, extension_request, exit_notice, ird_description")),
+			mcp.WithString("extra_context", mcp.Description("Дополнительный контекст от консультанта")),
+		),
+		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			draftReq := agents.DraftRequest{
+				ClientID:     req.GetString("client_id", ""),
+				DocumentType: req.GetString("document_type", ""),
+				ExtraContext: req.GetString("extra_context", ""),
+			}
+			result, err := drafter.Draft(ctx, draftReq)
+			if err != nil {
+				return mcp.NewToolResultError("ошибка подготовки документа: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(toJSON(result)), nil
+		},
+	)
+
+	// check_eligibility — проверка компании по ИНН.
+	if cfg.EligibilityEnabled {
+		eligChecker := eligibility.NewChecker(eligibility.Config{
+			DadataAPIKey: cfg.DadataAPIKey,
+		})
+		mcpSrv.AddTool(
+			mcp.NewTool("check_eligibility",
+				mcp.WithDescription("Проверить, может ли компания стать резидентом Сколково. Принимает ИНН, возвращает отчёт с оценкой, проблемами и рекомендациями."),
+				mcp.WithString("inn", mcp.Required(), mcp.Description("ИНН компании (10 или 12 цифр)")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				inn := req.GetString("inn", "")
+				report, err := eligChecker.CheckByINN(ctx, inn)
+				if err != nil {
+					return mcp.NewToolResultError("ошибка проверки: " + err.Error()), nil
+				}
+				return mcp.NewToolResultText(toJSON(report)), nil
+			},
+		)
+	}
+
+	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes, draft_document, check_eligibility")
 }
 
 // buildResidencyStores собирает Stores для админки резидентства.
@@ -1089,6 +1298,118 @@ func runTelegramBot(ctx context.Context, cfg config.Config, st store.Store) {
 	}
 }
 
+// cmdPreferences парсит льготы резидентов Сколково и сохраняет в хранилище.
+func cmdPreferences(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	svc := newRAG(cfg, st, nil)
+	if err := svc.Init(ctx); err != nil {
+		log.Printf("[preferences] Qdrant недоступен: %v (без индексации)", err)
+		svc = nil
+	}
+
+	prefCfg := preferences.PreferencesConfig{
+		SourceURLs: []string{cfg.PreferencesURL},
+		Category:   "Льготы",
+	}
+	mon := preferences.NewMonitor(prefCfg, st, svc)
+	res, err := mon.Run(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Льготы: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	return nil
+}
+
+// cmdRegulations парсит НПА по Сколково и сохраняет в хранилище.
+func cmdRegulations(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	var extraURLs []string
+	if cfg.RegulationsExtraURLs != "" {
+		for _, u := range strings.Split(cfg.RegulationsExtraURLs, ",") {
+			u = strings.TrimSpace(u)
+			if u != "" {
+				extraURLs = append(extraURLs, u)
+			}
+		}
+	}
+
+	regCfg := regulations.RegulationsConfig{
+		SearchURL:  cfg.RegulationsSearchURL,
+		ExtraURLs:  extraURLs,
+		SearchQuery: "Сколково",
+		Category:   "НПА",
+	}
+	mon := regulations.NewMonitor(regCfg, st, nil)
+	res, err := mon.Run(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("НПА: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	return nil
+}
+
+// cmdEligibility проверяет компанию по ИНН на соответствие требованиям Сколково.
+func cmdEligibility(cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("использование: skolkovo eligibility <ИНН>")
+	}
+	inn := strings.TrimSpace(args[0])
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	checker := eligibility.NewChecker(eligibility.Config{
+		DadataAPIKey: cfg.DadataAPIKey,
+	})
+
+	report, err := checker.CheckByINN(ctx, inn)
+	if err != nil {
+		return fmt.Errorf("проверка ИНН %s: %w", inn, err)
+	}
+
+	fmt.Printf("\n=== Проверка eligibility для ИНН %s ===\n", inn)
+	if report.Company != nil {
+		fmt.Printf("Компания: %s\n", report.Company.FullName)
+		fmt.Printf("Статус: %s\n", report.Company.Status)
+		fmt.Printf("МСП: %v (%s)\n", report.Company.IsMSP, report.Company.MSPCategory)
+	}
+	fmt.Printf("Оценка: %d/100\n", report.Score)
+	fmt.Printf("Может стать резидентом: %v\n", report.Eligible)
+	if len(report.Issues) > 0 {
+		fmt.Println("\nПроблемы:")
+		for _, iss := range report.Issues {
+			fmt.Printf("  ❌ %s\n", iss)
+		}
+	}
+	if len(report.Warnings) > 0 {
+		fmt.Println("\nПредупреждения:")
+		for _, w := range report.Warnings {
+			fmt.Printf("  ⚠️  %s\n", w)
+		}
+	}
+	if len(report.Recommendations) > 0 {
+		fmt.Println("\nРекомендации:")
+		for _, r := range report.Recommendations {
+			fmt.Printf("  → %s\n", r)
+		}
+	}
+	return nil
+}
+
 func mustRun(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
@@ -1105,5 +1426,32 @@ func toJSON(v any) string {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Использование: skolkovo <scrape|catalog|index|fetch|news|events|contests|faq|telegram|sync|migrate|seed|mcp|admin|serve|embed>")
+	fmt.Fprintln(os.Stderr, "Использование: skolkovo <подкоманда>")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Сбор данных:")
+	fmt.Fprintln(os.Stderr, "  scrape        — каталог документов из RSS+HTML dochub.sk.ru")
+	fmt.Fprintln(os.Stderr, "  catalog       — полное перечисление каталога (headless browser)")
+	fmt.Fprintln(os.Stderr, "  fetch         — скачать тела файлов (обход WAF, chromedp)")
+	fmt.Fprintln(os.Stderr, "  news          — синхронизировать новости из RSS")
+	fmt.Fprintln(os.Stderr, "  events        — парсинг мероприятий")
+	fmt.Fprintln(os.Stderr, "  contests      — парсинг конкурсов и грантов")
+	fmt.Fprintln(os.Stderr, "  faq           — парсинг FAQ")
+	fmt.Fprintln(os.Stderr, "  telegram      — парсинг Telegram-каналов")
+	fmt.Fprintln(os.Stderr, "  preferences   — льготы резидентов Сколково (налоговые, таможенные)")
+	fmt.Fprintln(os.Stderr, "  regulations   — НПА по Сколково (244-ФЗ, постановления Правительства)")
+	fmt.Fprintln(os.Stderr, "  sync          — полный цикл: документы + новости + льготы + НПА + индексация")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Аналитика:")
+	fmt.Fprintln(os.Stderr, "  index         — проиндексировать активные документы в Qdrant (RAG)")
+	fmt.Fprintln(os.Stderr, "  eligibility   — проверить компанию по ИНН: соответствует ли требованиям")
+	fmt.Fprintln(os.Stderr, "  embed         — проверить доступность TEI (вычислить тестовый эмбеддинг)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "База данных:")
+	fmt.Fprintln(os.Stderr, "  migrate       — применить миграции PostgreSQL")
+	fmt.Fprintln(os.Stderr, "  seed          — загрузить стандартные чек-листы")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Серверы:")
+	fmt.Fprintln(os.Stderr, "  mcp           — MCP-сервер (открытый API)")
+	fmt.Fprintln(os.Stderr, "  admin         — веб-панель администратора")
+	fmt.Fprintln(os.Stderr, "  serve         — всё сразу: планировщик + MCP + админка + портал + бот + дашборд")
 }

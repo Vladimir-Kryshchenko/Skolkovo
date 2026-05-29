@@ -60,6 +60,32 @@ type Config struct {
 
 	// Классификатор документов
 	ClassifierEnabled bool
+
+	// Льготы резидентов (preferences)
+	PreferencesEnabled bool
+	PreferencesURL     string // основной URL страницы льгот
+
+	// НПА (regulations)
+	RegulationsEnabled    bool
+	RegulationsSearchURL  string // URL поиска на regulation.gov.ru
+	RegulationsExtraURLs  string // дополнительные URL через запятую
+
+	// Проверка eligibility по ИНН
+	EligibilityEnabled bool
+	DadataAPIKey       string // API-ключ DaData для ЕГРЮЛ
+
+	// Telegram-уведомления консультанту
+	ConsultantTelegramChatID int64 // chat_id консультанта (не клиентский бот)
+
+	// Консультантский дашборд
+	ConsultantAddr    string // адрес для консультантского дашборда
+	ConsultantEnabled bool
+
+	// Аудит-лог MCP
+	MCPAuditEnabled bool
+
+	// Ежедневная сводка консультанту
+	DailySummaryHour int // час отправки ежедневной сводки (0-23, по умолчанию 9)
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -116,6 +142,32 @@ func Load() Config {
 
 		// Классификатор документов
 		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
+
+		// Льготы резидентов
+		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),
+		PreferencesURL:     env("PREFERENCES_URL", "https://sk.ru/residents/preferences/"),
+
+		// НПА
+		RegulationsEnabled:   envBool("REGULATIONS_ENABLED", true),
+		RegulationsSearchURL: env("REGULATIONS_SEARCH_URL", "https://regulation.gov.ru/Regulation/Npa/Search"),
+		RegulationsExtraURLs: env("REGULATIONS_EXTRA_URLS", ""),
+
+		// Eligibility
+		EligibilityEnabled: envBool("ELIGIBILITY_ENABLED", true),
+		DadataAPIKey:       env("DADATA_API_KEY", ""),
+
+		// Telegram-уведомления консультанту
+		ConsultantTelegramChatID: envInt64("CONSULTANT_TELEGRAM_CHAT_ID", 0),
+
+		// Консультантский дашборд
+		ConsultantAddr:    env("CONSULTANT_ADDR", ":8094"),
+		ConsultantEnabled: envBool("CONSULTANT_ENABLED", true),
+
+		// Аудит-лог MCP
+		MCPAuditEnabled: envBool("MCP_AUDIT_ENABLED", true),
+
+		// Ежедневная сводка
+		DailySummaryHour: envInt("DAILY_SUMMARY_HOUR", 9),
 	}
 }
 
@@ -138,6 +190,15 @@ func env(key, def string) string {
 func envInt(key string, def int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(key string, def int64) int64 {
+	if v := os.Getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
 		}
 	}

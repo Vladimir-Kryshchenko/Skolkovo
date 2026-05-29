@@ -34,6 +34,21 @@ type Config struct {
 	ProxyURL        string // прокси для загрузчика (например, резидентный) — обход WAF
 	FetchLimit      int    // сколько документов скачивать за прогон (0 — все)
 	FetchWait       time.Duration
+
+	// Мероприятия
+	EventsRSSURL    string
+	EventsSourceURL string
+
+	// Конкурсы и гранты
+	ContestsURL string
+	GrantsURL   string
+
+	// FAQ
+	FAQURL string
+
+	// Telegram-каналы
+	TelegramChannels  string // comma-separated список каналов
+	TelegramRssHubURL string // URL RSSHub-инстанса для Telegram
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -64,6 +79,21 @@ func Load() Config {
 		ProxyURL:        env("PROXY_URL", ""),
 		FetchLimit:      envInt("FETCH_LIMIT", 0),
 		FetchWait:       envDuration("FETCH_WAIT", 7*time.Second),
+
+		// Мероприятия
+		EventsRSSURL:    env("EVENTS_RSS_URL", ""),
+		EventsSourceURL: env("EVENTS_SOURCE_URL", "https://sk.ru/events/"),
+
+		// Конкурсы и гранты
+		ContestsURL: env("CONTESTS_URL", "https://sk.ru/foundation/contests/"),
+		GrantsURL:   env("GRANTS_URL", "https://sk.ru/foundation/grants/"),
+
+		// FAQ
+		FAQURL: env("FAQ_URL", "https://sk.ru/foundation/faq/"),
+
+		// Telegram-каналы
+		TelegramChannels:  env("TELEGRAM_CHANNELS", ""),
+		TelegramRssHubURL: env("TELEGRAM_RSS_HUB_URL", "https://rsshub.rssforever.com/telegram/channel/"),
 	}
 }
 

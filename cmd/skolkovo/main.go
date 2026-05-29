@@ -7,7 +7,13 @@
 //	index [-force]  — проиндексировать действующие документы в RAG          (E2)
 //	fetch           — скачать тела файлов через headless-браузер (E1, обход WAF)
 //	news            — синхронизировать новости/RSS в RAG                    (E5)
+//	events          — парсинг мероприятий
+//	contests        — парсинг конкурсов и грантов
+//	faq             — парсинг FAQ
+//	telegram        — парсинг Telegram-каналов
 //	sync            — полный цикл: документы + новости + индексация + отчёт
+//	migrate         — применить миграции БД
+//	seed            — seeding стандартных чек-листов
 //	mcp             — запустить открытый MCP-сервер                         (E3)
 //	admin           — запустить админку                                     (E4)
 //	serve           — всё сразу: планировщик + MCP + админка                (E3+E4+E5)
@@ -27,6 +33,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/common/config"
 	"baza-skolkovo/src/common/embed"
@@ -35,6 +43,7 @@ import (
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/fetcher"
 	mcpserver "baza-skolkovo/src/mcp_server"
+	"baza-skolkovo/src/migrate"
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	"baza-skolkovo/src/pipeline"
@@ -64,8 +73,20 @@ func main() {
 		mustRun(cmdFetch(cfg))
 	case "news":
 		mustRun(cmdNews(cfg))
+	case "events":
+		mustRun(cmdEvents(cfg))
+	case "contests":
+		mustRun(cmdContests(cfg))
+	case "faq":
+		mustRun(cmdFAQ(cfg))
+	case "telegram":
+		mustRun(cmdTelegram(cfg))
 	case "sync":
 		mustRun(cmdSync(cfg))
+	case "migrate":
+		mustRun(cmdMigrate(cfg))
+	case "seed":
+		mustRun(cmdSeed(cfg))
 	case "mcp":
 		mustRun(cmdMCP(cfg))
 	case "admin":
@@ -280,6 +301,112 @@ func cmdNews(cfg config.Config) error {
 	return nil
 }
 
+// --- новые модули ---
+
+func cmdEvents(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	log.Printf("[events] парсинг мероприятий из %s", cfg.EventsSourceURL)
+	// TODO: реализовать парсер мероприятий (RSS + headless-обход)
+	fmt.Println("Мероприятия: модуль в разработке")
+	return nil
+}
+
+func cmdContests(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	log.Printf("[contests] парсинг конкурсов из %s и грантов из %s", cfg.ContestsURL, cfg.GrantsURL)
+	// TODO: реализовать парсер конкурсов и грантов
+	fmt.Println("Конкурсы: модуль в разработке")
+	return nil
+}
+
+func cmdFAQ(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	log.Printf("[faq] парсинг FAQ из %s", cfg.FAQURL)
+	// TODO: реализовать парсер FAQ
+	fmt.Println("FAQ: модуль в разработке")
+	return nil
+}
+
+func cmdTelegram(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	channels := strings.Split(cfg.TelegramChannels, ",")
+	var active []string
+	for _, ch := range channels {
+		ch = strings.TrimSpace(ch)
+		if ch != "" {
+			active = append(active, ch)
+		}
+	}
+
+	log.Printf("[telegram] парсинг %d каналов через %s", len(active), cfg.TelegramRssHubURL)
+	// TODO: реализовать парсер Telegram-каналов через RSSHub
+	fmt.Println("Telegram: модуль в разработке")
+	return nil
+}
+
+// cmdMigrate применяет миграции БД из директории migrations/.
+func cmdMigrate(cfg config.Config) error {
+	ctx := context.Background()
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	migrationsDir := "./migrations"
+	return migrate.ApplyMigrations(ctx, pool, migrationsDir)
+}
+
+// cmdSeed загружает стандартные чек-листы (entry, reporting, extension, exit).
+func cmdSeed(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// Стандартные чек-листы для резидентов Сколково.
+	checklists := map[string]string{
+		"entry":     "Чек-лист входа резидента: договор, статус, документы",
+		"reporting": "Чек-лист отчётности: финансовые и технические отчёты, сроки",
+		"extension": "Чек-лист продления: заявление, обоснование, приложения",
+		"exit":      "Чек-лист выхода: уведомление, закрытие обязательств",
+	}
+
+	log.Printf("[seed] загрузка %d стандартных чек-листов", len(checklists))
+	// TODO: реализовать запись чек-листов в БД / RAG
+	for kind, desc := range checklists {
+		fmt.Printf("  [%s] %s\n", kind, desc)
+	}
+	fmt.Println("Seed: модуль в разработке")
+	return nil
+}
+
 func cmdSync(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)
@@ -325,7 +452,18 @@ func cmdServe(cfg config.Config) error {
 	defer st.Close()
 	svc := newRAG(cfg, st)
 
+	// Регистрируем новые MCP-инструменты для событий, конкурсов, FAQ и Telegram.
+	// TODO: передать обработчики новых инструментов в mcpserver.New()
+	_ = cfg.EventsRSSURL // placeholder для будущих MCP tools
+	_ = cfg.ContestsURL
+	_ = cfg.FAQURL
+	_ = cfg.TelegramChannels
+
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
+
+	// Админка с маршрутами для новых модулей.
+	// TODO: передать конфигурацию новых модулей в admin.New() для регистрации
+	// маршрутов /events, /contests, /faq, /telegram
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
 
@@ -340,7 +478,14 @@ func cmdServe(cfg config.Config) error {
 		}
 	}()
 
+	// Запускаем полные синхронизации по расписанию.
 	newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
+
+	// Планировщик для новых модулей (заглушки).
+	go scheduleNewModules(ctx, cfg, st)
+
+	<-ctx.Done()
+	log.Println("[serve] останов по сигналу")
 	return nil
 }
 
@@ -360,6 +505,38 @@ func embedTest(cfg config.Config) error {
 	return nil
 }
 
+// scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
+// FAQ и Telegram-каналов. Заглушка — реальная реализация появится с модулями.
+func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) {
+	_ = st // TODO: использовать при реализации парсеров
+	ticker := time.NewTicker(cfg.ScrapeInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if cfg.EventsSourceURL != "" {
+				log.Printf("[serve:events] запуск парсинга мероприятий")
+				// TODO: вызвать парсер мероприятий
+			}
+			if cfg.ContestsURL != "" {
+				log.Printf("[serve:contests] запуск парсинга конкурсов")
+				// TODO: вызвать парсер конкурсов
+			}
+			if cfg.FAQURL != "" {
+				log.Printf("[serve:faq] запуск парсинга FAQ")
+				// TODO: вызвать парсер FAQ
+			}
+			if cfg.TelegramChannels != "" {
+				log.Printf("[serve:telegram] запуск парсинга Telegram-каналов")
+				// TODO: вызвать парсер Telegram
+			}
+		}
+	}
+}
+
 func mustRun(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
@@ -368,5 +545,5 @@ func mustRun(err error) {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "Использование: skolkovo <scrape|catalog|index|fetch|news|sync|mcp|admin|serve|embed>")
+	fmt.Fprintln(os.Stderr, "Использование: skolkovo <scrape|catalog|index|fetch|news|events|contests|faq|telegram|sync|migrate|seed|mcp|admin|serve|embed>")
 }

@@ -23,6 +23,17 @@ import (
 	"baza-skolkovo/src/common/store"
 )
 
+// RegisterResidencyTools регистрирует инструменты управления резидентством на MCP-сервере.
+func RegisterResidencyTools(
+	srv *server.MCPServer,
+	st store.ClientStore,
+	checklistStore store.ChecklistStore,
+	deadlineStore store.DeadlineStore,
+	templateStore store.TemplateStore,
+) {
+	registerResidencyTools(srv, st, checklistStore, deadlineStore, templateStore)
+}
+
 // registerResidencyTools регистрирует инструменты управления резидентством на MCP-сервере.
 func registerResidencyTools(
 	srv *server.MCPServer,

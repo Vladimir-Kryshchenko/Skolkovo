@@ -31,6 +31,7 @@ type Server struct {
 	apiKey   string
 	limiters *limiterSet
 	addr     string
+	mcpSrv   *server.MCPServer // кэшированный MCPServer (ленивая инициализация)
 }
 
 // New создаёт MCP-сервер.
@@ -44,8 +45,12 @@ func New(addr, apiKey string, rateRPS int, ragSvc *rag.Service, st store.Store) 
 	}
 }
 
-// buildMCP регистрирует инструменты MCP.
+// buildMCP регистрирует базовые инструменты MCP и возвращает MCPServer.
+// Лениво создаёт и кэширует экземпляр.
 func (s *Server) buildMCP() *server.MCPServer {
+	if s.mcpSrv != nil {
+		return s.mcpSrv
+	}
 	m := server.NewMCPServer("baza-skolkovo", "0.1.0", server.WithToolCapabilities(true))
 
 	m.AddTool(
@@ -79,7 +84,13 @@ func (s *Server) buildMCP() *server.MCPServer {
 		s.handleList,
 	)
 
+	s.mcpSrv = m
 	return m
+}
+
+// MCPServer возвращает внутренний MCPServer для регистрации дополнительных инструментов.
+func (s *Server) MCPServer() *server.MCPServer {
+	return s.buildMCP()
 }
 
 func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

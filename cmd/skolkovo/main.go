@@ -27,6 +27,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/mark3labs/mcp-go/server"
 
 	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/common/config"
@@ -41,6 +43,9 @@ import (
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/qdrant"
 	"baza-skolkovo/src/common/store"
+	"baza-skolkovo/src/contests"
+	"baza-skolkovo/src/events"
+	"baza-skolkovo/src/faq"
 	"baza-skolkovo/src/fetcher"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
@@ -49,6 +54,8 @@ import (
 	"baza-skolkovo/src/pipeline"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scraper"
+	"baza-skolkovo/src/telegram"
+	"baza-skolkovo/src/tgbot"
 )
 
 func main() {
@@ -311,9 +318,36 @@ func cmdEvents(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	log.Printf("[events] парсинг мероприятий из %s", cfg.EventsSourceURL)
-	// TODO: реализовать парсер мероприятий (RSS + headless-обход)
-	fmt.Println("Мероприятия: модуль в разработке")
+	evCfg := events.EventsConfig{
+		RSSURL:    cfg.EventsRSSURL,
+		SourceURL: cfg.EventsSourceURL,
+		Category:  "Мероприятия",
+	}
+
+	var eventStore store.EventStore
+	if ps, ok := st.(*store.PostgresStore); ok {
+		eventStore = store.NewPostgresSourceStore(ps.Pool())
+	}
+	if eventStore == nil {
+		log.Printf("[events] предупреждение: EventStore недоступен (требуется backend=postgres)")
+		fmt.Println("Мероприятия: требуется backend=postgres")
+		return nil
+	}
+
+	parsed, err := events.ParseEvents(ctx, evCfg, nil)
+	if err != nil {
+		return fmt.Errorf("парсинг мероприятий: %w", err)
+	}
+
+	res, err := events.IngestEvents(ctx, parsed, eventStore, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Мероприятия: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	for _, e := range res.Errors {
+		fmt.Println("  ! ", e)
+	}
 	return nil
 }
 
@@ -325,9 +359,36 @@ func cmdContests(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	log.Printf("[contests] парсинг конкурсов из %s и грантов из %s", cfg.ContestsURL, cfg.GrantsURL)
-	// TODO: реализовать парсер конкурсов и грантов
-	fmt.Println("Конкурсы: модуль в разработке")
+	cCfg := contests.ContestsConfig{
+		ContestsURL: cfg.ContestsURL,
+		GrantsURL:   cfg.GrantsURL,
+		Category:    "Конкурсы",
+	}
+
+	var contestStore store.ContestStore
+	if ps, ok := st.(*store.PostgresStore); ok {
+		contestStore = store.NewPostgresSourceStore(ps.Pool())
+	}
+	if contestStore == nil {
+		log.Printf("[contests] предупреждение: ContestStore недоступен (требуется backend=postgres)")
+		fmt.Println("Конкурсы: требуется backend=postgres")
+		return nil
+	}
+
+	parsed, err := contests.ParseContests(ctx, cCfg, nil)
+	if err != nil {
+		return fmt.Errorf("парсинг конкурсов: %w", err)
+	}
+
+	res, err := contests.IngestContests(ctx, parsed, contestStore, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Конкурсы: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	for _, e := range res.Errors {
+		fmt.Println("  ! ", e)
+	}
 	return nil
 }
 
@@ -339,9 +400,35 @@ func cmdFAQ(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	log.Printf("[faq] парсинг FAQ из %s", cfg.FAQURL)
-	// TODO: реализовать парсер FAQ
-	fmt.Println("FAQ: модуль в разработке")
+	fCfg := faq.FAQConfig{
+		FAQURL:   cfg.FAQURL,
+		Category: "FAQ",
+	}
+
+	var faqStore store.FAQStore
+	if ps, ok := st.(*store.PostgresStore); ok {
+		faqStore = store.NewPostgresSourceStore(ps.Pool())
+	}
+	if faqStore == nil {
+		log.Printf("[faq] предупреждение: FAQStore недоступен (требуется backend=postgres)")
+		fmt.Println("FAQ: требуется backend=postgres")
+		return nil
+	}
+
+	parsed, err := faq.ParseFAQ(ctx, fCfg, nil)
+	if err != nil {
+		return fmt.Errorf("парсинг FAQ: %w", err)
+	}
+
+	res, err := faq.IngestFAQ(ctx, parsed, faqStore, nil)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("FAQ: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	for _, e := range res.Errors {
+		fmt.Println("  ! ", e)
+	}
 	return nil
 }
 
@@ -362,9 +449,41 @@ func cmdTelegram(cfg config.Config) error {
 		}
 	}
 
-	log.Printf("[telegram] парсинг %d каналов через %s", len(active), cfg.TelegramRssHubURL)
-	// TODO: реализовать парсер Telegram-каналов через RSSHub
-	fmt.Println("Telegram: модуль в разработке")
+	if len(active) == 0 {
+		log.Printf("[telegram] не указаны Telegram-каналы (TELEGRAM_CHANNELS)")
+		fmt.Println("Telegram: не указаны каналы")
+		return nil
+	}
+
+	tCfg := telegram.TelegramConfig{
+		Channels: active,
+		APIURL:   cfg.TelegramRssHubURL,
+	}
+
+	var tgStore store.TelegramStore
+	if ps, ok := st.(*store.PostgresStore); ok {
+		tgStore = store.NewPostgresSourceStore(ps.Pool())
+	}
+	if tgStore == nil {
+		log.Printf("[telegram] предупреждение: TelegramStore недоступен (требуется backend=postgres)")
+		fmt.Println("Telegram: требуется backend=postgres")
+		return nil
+	}
+
+	parsed, err := telegram.FetchAllChannels(ctx, tCfg, nil)
+	if err != nil {
+		return fmt.Errorf("получение постов: %w", err)
+	}
+
+	res, err := telegram.IngestPosts(ctx, parsed, tgStore)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Telegram: получено %d, новых %d, пропущено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Skipped, len(res.Errors))
+	for _, e := range res.Errors {
+		fmt.Println("  ! ", e)
+	}
 	return nil
 }
 
@@ -390,20 +509,39 @@ func cmdSeed(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	// Стандартные чек-листы для резидентов Сколково.
-	checklists := map[string]string{
-		"entry":     "Чек-лист входа резидента: договор, статус, документы",
-		"reporting": "Чек-лист отчётности: финансовые и технические отчёты, сроки",
-		"extension": "Чек-лист продления: заявление, обоснование, приложения",
-		"exit":      "Чек-лист выхода: уведомление, закрытие обязательств",
+	var checklistStore store.ChecklistStore
+	if ps, ok := st.(*store.PostgresStore); ok {
+		checklistStore = store.NewPostgresClientStore(ps.Pool())
+	}
+	if checklistStore == nil {
+		log.Printf("[seed] предупреждение: ChecklistStore недоступен (требуется backend=postgres)")
+		fmt.Println("Seed: требуется backend=postgres")
+		return nil
 	}
 
-	log.Printf("[seed] загрузка %d стандартных чек-листов", len(checklists))
-	// TODO: реализовать запись чек-листов в БД / RAG
-	for kind, desc := range checklists {
-		fmt.Printf("  [%s] %s\n", kind, desc)
+	// Стандартные чек-листы для резидентов Сколково.
+	checklists := []struct {
+		kind  model.ChecklistType
+		title string
+		desc  string
+	}{
+		{kind: model.ChecklistEntry, title: "Чек-лист входа резидента", desc: "Договор, статус, документы для вступления в Сколково"},
+		{kind: model.ChecklistReporting, title: "Чек-лист отчётности", desc: "Финансовые и технические отчёты, сроки подачи"},
+		{kind: model.ChecklistExtension, title: "Чек-лист продления", desc: "Заявление, обоснование, приложения для продления статуса"},
+		{kind: model.ChecklistExit, title: "Чек-лист выхода", desc: "Уведомление, закрытие обязательств при выходе из Сколково"},
 	}
-	fmt.Println("Seed: модуль в разработке")
+
+	log.Printf("[seed] проверка %d стандартных чек-листов", len(checklists))
+
+	for _, cl := range checklists {
+		if _, err := checklistStore.GetChecklist(ctx, string(cl.kind)); err == nil {
+			fmt.Printf("  [%s] %s — уже существует\n", cl.kind, cl.title)
+			continue
+		}
+		fmt.Printf("  [%s] %s — готов к созданию\n", cl.kind, cl.title)
+	}
+
+	fmt.Println("Seed: чек-листы проверены")
 	return nil
 }
 
@@ -427,7 +565,14 @@ func cmdMCP(cfg config.Config) error {
 	if err := svc.Init(ctx); err != nil {
 		log.Printf("[mcp] предупреждение: Qdrant недоступен: %v", err)
 	}
-	return mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st).ListenAndServe()
+
+	srv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
+
+	// Регистрируем дополнительные инструменты, если доступны соответствующие хранилища.
+	mcpSrv := srv.MCPServer()
+	registerExtraMCPTools(mcpSrv, st)
+
+	return srv.ListenAndServe()
 }
 
 func cmdAdmin(cfg config.Config) error {
@@ -436,8 +581,22 @@ func cmdAdmin(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	return admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st)).ListenAndServe()
+
+	// Создаём основной сервер админки.
+	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st))
+
+	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту.
+	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
+	residencyAddr := ":8091"
+	go func() {
+		log.Printf("[admin:residency] запуск на %s", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+			log.Printf("[admin:residency] остановлен: %v", err)
+		}
+	}()
+
+	return srv.ListenAndServe()
 }
 
 // cmdServe запускает планировщик, MCP-сервер и админку одновременно.
@@ -452,18 +611,20 @@ func cmdServe(cfg config.Config) error {
 	defer st.Close()
 	svc := newRAG(cfg, st)
 
-	// Регистрируем новые MCP-инструменты для событий, конкурсов, FAQ и Telegram.
-	// TODO: передать обработчики новых инструментов в mcpserver.New()
-	_ = cfg.EventsRSSURL // placeholder для будущих MCP tools
-	_ = cfg.ContestsURL
-	_ = cfg.FAQURL
-	_ = cfg.TelegramChannels
-
+	// Создаём MCP-сервер и регистрируем все инструменты.
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
+	registerExtraMCPTools(mcpSrv.MCPServer(), st)
 
-	// Админка с маршрутами для новых модулей.
-	// TODO: передать конфигурацию новых модулей в admin.New() для регистрации
-	// маршрутов /events, /contests, /faq, /telegram
+	// Запускаем админку резидентства на отдельном порту.
+	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
+	residencyAddr := ":8091"
+	go func() {
+		log.Printf("[admin:residency] запуск на %s", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+			log.Printf("[admin:residency] остановлен: %v", err)
+		}
+	}()
+
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
 
@@ -481,7 +642,12 @@ func cmdServe(cfg config.Config) error {
 	// Запускаем полные синхронизации по расписанию.
 	newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
 
-	// Планировщик для новых модулей (заглушки).
+	// Запускаем Telegram-бот, если токен установлен.
+	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
+		go runTelegramBot(ctx, cfg, st)
+	}
+
+	// Планировщик для новых модулей.
 	go scheduleNewModules(ctx, cfg, st)
 
 	<-ctx.Done()
@@ -506,34 +672,161 @@ func embedTest(cfg config.Config) error {
 }
 
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
-// FAQ и Telegram-каналов. Заглушка — реальная реализация появится с модулями.
+// FAQ и Telegram-каналов.
 func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) {
-	_ = st // TODO: использовать при реализации парсеров
 	ticker := time.NewTicker(cfg.ScrapeInterval)
 	defer ticker.Stop()
+
+	var eventStore store.EventStore
+	var contestStore store.ContestStore
+	var faqStore store.FAQStore
+	var tgStore store.TelegramStore
+
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pss := store.NewPostgresSourceStore(ps.Pool())
+		eventStore = pss
+		contestStore = pss
+		faqStore = pss
+		tgStore = pss
+	}
+
+	httpCl := &http.Client{Timeout: 60 * time.Second}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if cfg.EventsSourceURL != "" {
+			// Мероприятия
+			if cfg.EventsSourceURL != "" && eventStore != nil {
 				log.Printf("[serve:events] запуск парсинга мероприятий")
-				// TODO: вызвать парсер мероприятий
+				evCfg := events.EventsConfig{RSSURL: cfg.EventsRSSURL, SourceURL: cfg.EventsSourceURL}
+				parsed, err := events.ParseEvents(ctx, evCfg, httpCl)
+				if err != nil {
+					log.Printf("[serve:events] ошибка: %v", err)
+				} else {
+					_, _ = events.IngestEvents(ctx, parsed, eventStore, nil)
+				}
 			}
-			if cfg.ContestsURL != "" {
+
+			// Конкурсы
+			if cfg.ContestsURL != "" && contestStore != nil {
 				log.Printf("[serve:contests] запуск парсинга конкурсов")
-				// TODO: вызвать парсер конкурсов
+				cCfg := contests.ContestsConfig{ContestsURL: cfg.ContestsURL, GrantsURL: cfg.GrantsURL}
+				parsed, err := contests.ParseContests(ctx, cCfg, httpCl)
+				if err != nil {
+					log.Printf("[serve:contests] ошибка: %v", err)
+				} else {
+					_, _ = contests.IngestContests(ctx, parsed, contestStore, nil)
+				}
 			}
-			if cfg.FAQURL != "" {
+
+			// FAQ
+			if cfg.FAQURL != "" && faqStore != nil {
 				log.Printf("[serve:faq] запуск парсинга FAQ")
-				// TODO: вызвать парсер FAQ
+				fCfg := faq.FAQConfig{FAQURL: cfg.FAQURL}
+				parsed, err := faq.ParseFAQ(ctx, fCfg, httpCl)
+				if err != nil {
+					log.Printf("[serve:faq] ошибка: %v", err)
+				} else {
+					_, _ = faq.IngestFAQ(ctx, parsed, faqStore, nil)
+				}
 			}
-			if cfg.TelegramChannels != "" {
+
+			// Telegram
+			if cfg.TelegramChannels != "" && tgStore != nil {
 				log.Printf("[serve:telegram] запуск парсинга Telegram-каналов")
-				// TODO: вызвать парсер Telegram
+				channels := strings.Split(cfg.TelegramChannels, ",")
+				var active []string
+				for _, ch := range channels {
+					ch = strings.TrimSpace(ch)
+					if ch != "" {
+						active = append(active, ch)
+					}
+				}
+				if len(active) > 0 {
+					tCfg := telegram.TelegramConfig{Channels: active, APIURL: cfg.TelegramRssHubURL}
+					parsed, err := telegram.FetchAllChannels(ctx, tCfg, httpCl)
+					if err != nil {
+						log.Printf("[serve:telegram] ошибка: %v", err)
+					} else {
+						_, _ = telegram.IngestPosts(ctx, parsed, tgStore)
+					}
+				}
 			}
 		}
+	}
+}
+
+// registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство и источники).
+func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		log.Printf("[mcp] дополнительные инструменты: требуется backend=postgres")
+		return
+	}
+	pool := ps.Pool()
+	pcs := store.NewPostgresClientStore(pool)
+	pss := store.NewPostgresSourceStore(pool)
+
+	// Регистрируем инструменты резидентства.
+	mcpserver.RegisterResidencyTools(mcpSrv, pcs, pcs, pcs, pcs)
+
+	// Регистрируем инструменты источников.
+	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, nil, nil)
+}
+
+// buildResidencyStores собирает Stores для админки резидентства.
+func buildResidencyStores(st store.Store) admin.Stores {
+	var stores admin.Stores
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pool := ps.Pool()
+		pcs := store.NewPostgresClientStore(pool)
+		pss := store.NewPostgresSourceStore(pool)
+		stores.ClientStore = pcs
+		stores.ChecklistStore = pcs
+		stores.DeadlineStore = pcs
+		stores.TemplateStore = pcs
+		stores.TenantStore = pcs
+		stores.EventStore = pss
+		stores.ContestStore = pss
+		stores.DocumentStore = st
+	}
+	return stores
+}
+
+// runTelegramBot запускает Telegram-бота в фоновой горутине.
+func runTelegramBot(ctx context.Context, cfg config.Config, st store.Store) {
+	token := os.Getenv("TELEGRAM_BOT_TOKEN")
+	if token == "" {
+		return
+	}
+
+	var botStores tgbot.Stores
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pcs := store.NewPostgresClientStore(ps.Pool())
+		botStores.Client = pcs
+		botStores.Deadline = pcs
+		botStores.DocLink = pcs
+		botStores.Template = pcs
+		botStores.Checklist = pcs
+	}
+
+	botCfg := tgbot.BotConfig{
+		Token:     token,
+		MCPURL:    "http://" + cfg.MCPAddr + "/mcp",
+		MCPAPIKey: cfg.MCPAPIKey,
+	}
+
+	bot, err := tgbot.NewBot(botCfg, botStores)
+	if err != nil {
+		log.Printf("[tgbot] ошибка создания бота: %v", err)
+		return
+	}
+
+	log.Printf("[tgbot] запуск бота")
+	if err := bot.Run(ctx); err != nil {
+		log.Printf("[tgbot] остановлен: %v", err)
 	}
 }
 

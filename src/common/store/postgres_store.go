@@ -119,6 +119,11 @@ func (s *PostgresStore) Close() error {
 	return nil
 }
 
+// Pool возвращает underlying pgxpool.Pool для создания расширенных хранилищ.
+func (s *PostgresStore) Pool() *pgxpool.Pool {
+	return s.pool
+}
+
 func (s *PostgresStore) exec1(ctx context.Context, sql, id string, arg any) error {
 	tag, err := s.pool.Exec(ctx, sql, id, arg)
 	if err != nil {

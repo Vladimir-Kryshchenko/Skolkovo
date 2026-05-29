@@ -111,6 +111,66 @@ func (c *Client) DeleteByDocument(ctx context.Context, docID string) error {
 	return c.do(ctx, http.MethodPost, "/collections/"+c.Collection+"/points/delete?wait=true", body, nil)
 }
 
+// ScrollPoint — точка, возвращаемая методом Scroll.
+type ScrollPoint struct {
+	ID      string         `json:"id"`
+	Vector  []float32      `json:"vector,omitempty"`
+	Payload map[string]any `json:"payload"`
+}
+
+type scrollResponse struct {
+	Result struct {
+		Points   []ScrollPoint `json:"points"`
+		NextPage *string       `json:"next_page_offset,omitempty"`
+	} `json:"result"`
+}
+
+// Scroll постранично читает точки из коллекции с фильтром.
+// limit — сколько точек за раз (0 = по умолчанию 10), offset — с какой точки начать ("", или значение из NextPage).
+// Возвращает точки и следующий offset (nil если страниц больше нет).
+func (c *Client) Scroll(ctx context.Context, limit int, offset *string, filter map[string]any, withVector bool) ([]ScrollPoint, *string, error) {
+	body := map[string]any{
+		"limit":        limit,
+		"with_payload": true,
+		"with_vector":  withVector,
+	}
+	if offset != nil && *offset != "" {
+		body["offset"] = *offset
+	}
+	if filter != nil {
+		body["filter"] = filter
+	}
+	var out scrollResponse
+	if err := c.do(ctx, http.MethodPost, "/collections/"+c.Collection+"/points/scroll", body, &out); err != nil {
+		return nil, nil, err
+	}
+	return out.Result.Points, out.Result.NextPage, nil
+}
+
+// ScrollByDocument получает все точки документа через Scroll API.
+func (c *Client) ScrollByDocument(ctx context.Context, docID string) ([]ScrollPoint, error) {
+	filter := map[string]any{
+		"must": []any{
+			map[string]any{"key": "document_id", "match": map[string]any{"value": docID}},
+		},
+	}
+
+	var allPoints []ScrollPoint
+	var offset *string
+	for {
+		points, nextPage, err := c.Scroll(ctx, 100, offset, filter, false)
+		if err != nil {
+			return nil, err
+		}
+		allPoints = append(allPoints, points...)
+		if nextPage == nil {
+			break
+		}
+		offset = nextPage
+	}
+	return allPoints, nil
+}
+
 // FilterActive — фильтр Qdrant: только действующие документы.
 func FilterActive() map[string]any {
 	return map[string]any{

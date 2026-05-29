@@ -58,6 +58,7 @@ services:
       DOCS_DIR: /data/docs
       REGISTRY_PATH: /data/docs/Метаданные/реестр_документов.json
       REPORT_DIR: /data/reports
+      CHROME_PATH: /usr/bin/chromium
     ports:
       - "8080:8080"   # MCP
       - "8090:8090"   # админка
@@ -71,3 +72,17 @@ volumes:
   pg_data:
   docs_data:
   reports_data:
+
+  # NGINX reverse-proxy (вынесен из-под compose, подключён к сети вручную)
+  # Если хотите управлять через compose — раскомментируйте:
+  # nginx:
+  #   image: nginx:alpine
+  #   restart: unless-stopped
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #     - ./certs:/etc/nginx/certs:ro
+  #   depends_on:
+  #     - skolkovo

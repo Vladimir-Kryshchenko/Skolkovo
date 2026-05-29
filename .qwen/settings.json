@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "baza-skolkovo": {
+      "httpUrl": "https://213.136.75.7/mcp",
+      "headers": {
+        "X-API-Key": "517a4b18d8701532ce5e9d50671395b8602a9f9e68691f1d"
+      },
+      "timeout": 30000,
+      "trust": true
+    }
+  }
+}

@@ -309,7 +309,8 @@ func cmdAdmin(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	return admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir, st, newRAG(cfg, st)).ListenAndServe()
+	return admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st)).ListenAndServe()
 }
 
 // cmdServe запускает планировщик, MCP-сервер и админку одновременно.
@@ -325,7 +326,8 @@ func cmdServe(cfg config.Config) error {
 	svc := newRAG(cfg, st)
 
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
-	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir, st, svc)
+	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
 
 	go func() {
 		if err := mcpSrv.ListenAndServe(); err != nil {

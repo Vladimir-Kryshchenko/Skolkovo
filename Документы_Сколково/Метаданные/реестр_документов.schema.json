@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Реестр документов База Сколково",
+  "description": "Схема записи реестра документов. Каждый документ — один объект массива documents.",
+  "type": "object",
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "source_url", "status", "fetched_at", "file_hash"],
+        "properties": {
+          "id": { "type": "string", "description": "Уникальный идентификатор документа" },
+          "title": { "type": "string", "description": "Название документа" },
+          "source_url": { "type": "string", "format": "uri", "description": "URL первоисточника на dochub.sk.ru" },
+          "local_path": { "type": "string", "description": "Путь к файлу в Документы_Сколково/" },
+          "published_at": { "type": "string", "format": "date", "description": "Дата публикации на сайте" },
+          "fetched_at": { "type": "string", "format": "date-time", "description": "Дата/время загрузки парсером" },
+          "status": {
+            "type": "string",
+            "enum": ["на_проверке", "действует", "устарел", "архив", "отклонён"],
+            "description": "Статус жизненного цикла документа"
+          },
+          "category": { "type": "string", "description": "Категория/классификатор" },
+          "version_label": { "type": "string", "description": "Метка версии/редакции" },
+          "valid_from": { "type": "string", "format": "date" },
+          "valid_to": { "type": ["string", "null"], "format": "date" },
+          "supersedes": { "type": ["string", "null"], "description": "id документа, который заменён данным" },
+          "file_hash": { "type": "string", "description": "SHA-256 файла для контроля изменений" },
+          "indexed": { "type": "boolean", "description": "Проиндексирован ли в RAG-базе" }
+        }
+      }
+    }
+  },
+  "required": ["documents"]
+}

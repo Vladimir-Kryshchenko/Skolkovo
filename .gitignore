@@ -1,0 +1,38 @@
+# Данные, индексы, векторная БД
+/data/
+*.sqlite
+*.db
+
+# Скачанные первоисточники (большие файлы) — по решению команды
+# /Документы_Сколково/Действующие/
+# /Документы_Сколково/Архив/
+
+# Секреты и окружение
+.env
+.env.local
+*.key
+secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Node
+node_modules/
+dist/
+build/
+
+# Windows / системное
+desktop.ini
+*.gdoc
+Thumbs.db
+.DS_Store
+
+# Логи
+*.log
+logs/

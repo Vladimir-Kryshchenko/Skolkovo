@@ -1,0 +1,73 @@
+name: baza-skolkovo
+
+services:
+  # Векторная БД
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # REST/Dashboard
+      - "6334:6334"   # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  # Локальные эмбеддинги multilingual-e5 (HuggingFace Text Embeddings Inference)
+  # CPU-образ. Для GPU использовать образ без суффикса -cpu и добавить deploy.resources.
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    restart: unless-stopped
+    command: ["--model-id", "intfloat/multilingual-e5-base"]
+    ports:
+      - "8081:80"
+    volumes:
+      - tei_data:/data
+
+  # Реестр метаданных и БД админки
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-skolkovo}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-skolkovo}
+      POSTGRES_DB: ${POSTGRES_DB:-skolkovo}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  # Сам сервис: планировщик + открытый MCP + админка
+  skolkovo:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+      - tei
+      - postgres
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      TEI_URL: http://tei:80
+      POSTGRES_DSN: postgres://${POSTGRES_USER:-skolkovo}:${POSTGRES_PASSWORD:-skolkovo}@postgres:5432/${POSTGRES_DB:-skolkovo}?sslmode=disable
+      STORE_BACKEND: ${STORE_BACKEND:-postgres}
+      MCP_API_KEY: ${MCP_API_KEY:-change-me-please}
+      ADMIN_USER: ${ADMIN_USER:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      NEWS_RSS_URL: ${NEWS_RSS_URL:-https://sk.ru/news/rss/}
+      NOTIFY_WEBHOOK: ${NOTIFY_WEBHOOK:-}
+      DOCS_DIR: /data/docs
+      REGISTRY_PATH: /data/docs/Метаданные/реестр_документов.json
+      REPORT_DIR: /data/reports
+    ports:
+      - "8080:8080"   # MCP
+      - "8090:8090"   # админка
+    volumes:
+      - docs_data:/data/docs
+      - reports_data:/data/reports
+
+volumes:
+  qdrant_data:
+  tei_data:
+  pg_data:
+  docs_data:
+  reports_data:

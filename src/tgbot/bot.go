@@ -18,6 +18,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"baza-skolkovo/src/agents"
 	"baza-skolkovo/src/common/store"
 )
 
@@ -42,9 +43,10 @@ type Stores struct {
 
 // Bot — Telegram-бот для системы резидентства.
 type Bot struct {
-	api     *tgbotapi.BotAPI
-	stores  Stores
-	config  BotConfig
+	api        *tgbotapi.BotAPI
+	stores     Stores
+	config     BotConfig
+	consultant *agents.ConsultantAgent
 
 	// authMutex защищает map авторизаций.
 	authMutex sync.RWMutex
@@ -53,7 +55,7 @@ type Bot struct {
 }
 
 // NewBot создаёт новый экземпляр бота.
-func NewBot(config BotConfig, stores Stores) (*Bot, error) {
+func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(config.Token)
 	if err != nil {
 		return nil, fmt.Errorf("инициализация Telegram Bot API: %w", err)
@@ -63,6 +65,7 @@ func NewBot(config BotConfig, stores Stores) (*Bot, error) {
 		api:           api,
 		stores:        stores,
 		config:        config,
+		consultant:    consultant,
 		chatIDToEmail: make(map[int64]string),
 	}
 

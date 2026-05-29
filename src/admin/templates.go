@@ -28,6 +28,8 @@ header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: cente
 .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
 .header-actions button:hover { background: rgba(255,255,255,.25); }
+.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
+.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
 /* Main */
 main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 /* Stats */
@@ -142,6 +144,10 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
 <header>
   <h1>📚 База Сколково</h1>
   <div class="header-actions">
+    <a href="/?tab=documents" class="nav-btn">📋 Документы</a>
+    <a href="/diff" class="nav-btn">🔀 Diff</a>
+    <a href="/analytics" class="nav-btn">📊 Аналитика</a>
+    <a href="/graph" class="nav-btn">🕸️ Граф</a>
     <button onclick="runAction('scrape', this)" title="Парсинг RSS (~20 документов)">📥 Парсинг RSS</button>
     <button onclick="runAction('index', this)" title="Индексация всех документов со статусом 'действует'">🧠 Индексация</button>
     <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">🔄 Полный синк</button>
@@ -392,4 +398,234 @@ async function deindexDoc(id) {
 </div>
 {{end}}
 {{end}}
+
+{{/* ======================== DIFF TEMPLATE ======================== */}}
+{{define "diff-layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Diff — База Сколково</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f0f2f5; --surface: #fff; --primary: #1e40af; --primary-hover: #1e3a8a;
+  --primary-light: #eff6ff; --text: #1e293b; --text-secondary: #64748b;
+  --border: #e2e8f0; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --green: #16a34a; --green-bg: #f0fdf4; --red: #dc2626; --red-bg: #fef2f2;
+}
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
+header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
+.header-actions button:hover { background: rgba(255,255,255,.25); }
+.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
+.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
+main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 20px; }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); }
+.form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
+.form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 250px; }
+.form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+.form-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; font-family: inherit; }
+.form-group select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,.1); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: inherit; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-success { background: var(--green); color: #fff; }
+.btn-success:hover { background: #15803d; }
+.error-box { background: var(--red-bg); color: var(--red); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; border: 1px solid #fecaca; font-size: 13px; }
+.diff-result { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.diff-result iframe { width: 100%; height: 70vh; border: none; }
+.diff-summary { display: flex; gap: 16px; margin-bottom: 12px; }
+.diff-stat { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.diff-stat.added { background: var(--green-bg); color: var(--green); }
+.diff-stat.removed { background: var(--red-bg); color: var(--red); }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 База Сколково</h1>
+  <div class="header-actions">
+    <a href="/?tab=documents" class="nav-btn">📋 Документы</a>
+    <a href="/diff" class="nav-btn" style="background:rgba(255,255,255,.25)">🔀 Diff</a>
+    <a href="/analytics" class="nav-btn">📊 Аналитика</a>
+    <a href="/graph" class="nav-btn">🕸️ Граф</a>
+    <button onclick="runAction('scrape', this)">📥 Парсинг RSS</button>
+    <button onclick="runAction('index', this)">🧠 Индексация</button>
+    <button onclick="runAction('sync', this)">🔄 Полный синк</button>
+  </div>
+</header>
+<main>
+<div class="card">
+  <h2>🔀 Сравнение документов</h2>
+  <form method="post" action="/diff" id="diffForm">
+    <div class="form-row">
+      <div class="form-group">
+        <label for="doc1">Документ 1</label>
+        <select name="doc1" id="doc1" required>
+          <option value="">— выберите —</option>
+          {{range .Docs}}<option value="{{.ID}}" {{if eq .ID .Doc1ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="doc2">Документ 2</label>
+        <select name="doc2" id="doc2" required>
+          <option value="">— выберите —</option>
+          {{range .Docs}}<option value="{{.ID}}" {{if eq .ID .Doc2ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" id="compareBtn">🔀 Сравнить</button>
+    </div>
+  </form>
+  {{if .Error}}<div class="error-box">⚠️ {{.Error}}</div>{{end}}
+</div>
+{{if .DiffHTML}}
+<div class="card">
+  <h2>📋 Результат сравнения</h2>
+  <div class="diff-result">
+    {{.DiffHTML}}
+  </div>
+</div>
+{{end}}
+</main>
+<script>
+async function runAction(action, btn) {
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span>';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/' + action, { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) { alert(data.msg || 'Готово'); location.reload(); }
+    else { alert('Ошибка: ' + (data.error || 'неизвестно')); }
+  } catch(e) { alert('Ошибка сети: ' + e.message); }
+  finally { btn.innerHTML = orig; btn.disabled = false; }
+}
+</script>
+</body>
+</html>{{end}}
+
+{{/* ======================== GRAPH TEMPLATE ======================== */}}
+{{define "graph-layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Граф связей — База Сколково</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f0f2f5; --surface: #fff; --primary: #1e40af; --primary-hover: #1e3a8a;
+  --text: #1e293b; --text-secondary: #64748b; --border: #e2e8f0; --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.08);
+}
+body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
+header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
+.header-actions button:hover { background: rgba(255,255,255,.25); }
+.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
+.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
+main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 20px; }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); }
+#graph-container { width: 100%; height: 75vh; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+.legend-item { display: flex; align-items: center; gap: 6px; }
+.legend-color { width: 24px; height: 4px; border-radius: 2px; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📚 База Сколково</h1>
+  <div class="header-actions">
+    <a href="/?tab=documents" class="nav-btn">📋 Документы</a>
+    <a href="/diff" class="nav-btn">🔀 Diff</a>
+    <a href="/analytics" class="nav-btn">📊 Аналитика</a>
+    <a href="/graph" class="nav-btn" style="background:rgba(255,255,255,.25)">🕸️ Граф</a>
+    <button onclick="runAction('scrape', this)">📥 Парсинг RSS</button>
+    <button onclick="runAction('index', this)">🧠 Индексация</button>
+    <button onclick="runAction('sync', this)">🔄 Полный синк</button>
+  </div>
+</header>
+<main>
+<div class="card">
+  <h2>🕸️ Граф связей документов</h2>
+  <div class="legend">
+    <div class="legend-item"><div class="legend-color" style="background:#2563eb"></div><span>references</span></div>
+    <div class="legend-item"><div class="legend-color" style="background:#dc2626"></div><span>supersedes</span></div>
+    <div class="legend-item"><div class="legend-color" style="background:#16a34a"></div><span>related</span></div>
+  </div>
+  <div id="graph-container"></div>
+</div>
+</main>
+<script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
+<script>
+const graphData = {{.GraphJSON}};
+const nodes = new vis.DataSet(graphData.nodes.map(n => ({
+  id: n.id,
+  label: n.label,
+  group: n.group,
+  title: n.title,
+  shape: 'dot',
+  size: 20,
+  font: { size: 12, face: 'Inter' }
+})));
+const edges = new vis.DataSet(graphData.edges.map(e => ({
+  from: e.from,
+  to: e.to,
+  label: e.label,
+  color: { color: e.color || '#6b7280' },
+  dashes: e.dashes || false,
+  font: { size: 10, align: 'middle' },
+  smooth: { type: 'continuous' }
+})));
+const container = document.getElementById('graph-container');
+const data = { nodes, edges };
+const options = {
+  physics: {
+    enabled: true,
+    stabilization: { iterations: 150 },
+    solver: 'forceAtlas2Based',
+    forceAtlas2Based: { gravitationalConstant: -80, springLength: 120, springConstant: 0.05 }
+  },
+  interaction: { hover: true, zoomView: true, zoomSpeed: 0.1 },
+  groups: {
+    default: { color: { background: '#3b82f6', border: '#1e40af' } }
+  }
+};
+const network = new vis.Network(container, data, options);
+network.on('click', function(params) {
+  if (params.nodes.length > 0) {
+    const nodeId = params.nodes[0];
+    const node = nodes.get(nodeId);
+    if (node && node.id) {
+      window.open('/?q=' + encodeURIComponent(node.label), '_blank');
+    }
+  }
+});
+async function runAction(action, btn) {
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span>';
+  btn.disabled = true;
+  try {
+    const r = await fetch('/api/' + action, { method: 'POST' });
+    const data = await r.json();
+    if (data.ok) { alert(data.msg || 'Готово'); location.reload(); }
+    else { alert('Ошибка: ' + (data.error || 'неизвестно')); }
+  } catch(e) { alert('Ошибка сети: ' + e.message); }
+  finally { btn.innerHTML = orig; btn.disabled = false; }
+}
+</script>
+</body>
+</html>{{end}}
 `))

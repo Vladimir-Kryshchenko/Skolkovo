@@ -320,7 +320,7 @@ func (b *Bot) cmdDocs(chatID int64, page int) {
 }
 
 // ---------------------------------------------------------------------------
-// /ask — вопрос через MCP.
+// /ask — вопрос через ConsultantAgent.
 // ---------------------------------------------------------------------------
 
 func (b *Bot) cmdAsk(chatID int64, fullText string) {
@@ -334,18 +334,62 @@ func (b *Bot) cmdAsk(chatID int64, fullText string) {
 		return
 	}
 
+	// Получаем clientID по chatID
+	clientID := ""
+	if client, err := b.getClientByChatID(chatID); err == nil && client != nil {
+		clientID = client.ID
+	}
+
 	b.sendReply(chatID, "🔍 Ищу ответ на ваш вопрос...")
 
-	// Для MVP: отвечаем заглушкой, пока MCP ask_consultant не реализован.
-	// TODO: подключить MCP ask_consultant при готовности.
-	answer := fmt.Sprintf(
-		"💬 *Ваш вопрос:* %s\n\n"+
-			"⚠️ Функция `ask_consultant` ещё не подключена.\n"+
-			"Ваш вопрос сохранён и будет обработан в ближайшее время.",
-		question,
-	)
+	if b.consultant == nil {
+		b.sendReply(chatID,
+			"⚠️ Консультант временно недоступен. Попробуйте позже.")
+		return
+	}
 
-	b.sendReply(chatID, answer)
+	resp, err := b.consultant.Ask(context.Background(), question, clientID)
+	if err != nil {
+		b.sendReply(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
+		return
+	}
+
+	// Разбиваем ответ на части, если он длиннее 4096 символов (Telegram limit)
+	answer := resp.Answer
+	if answer == "" {
+		answer = "Ответ не найден."
+	}
+
+	// Добавляем источники, если есть
+	if len(resp.Sources) > 0 {
+		var sourcesText string
+		for _, s := range resp.Sources {
+			sourcesText += fmt.Sprintf("\n• %s", s.Title)
+			if s.SourceURL != "" {
+				sourcesText += fmt.Sprintf(" (%s)", s.SourceURL)
+			}
+		}
+		answer += "\n\n📚 Источники:" + sourcesText
+	}
+
+	// Разбиваем на сообщения по 4096 символов
+	const maxLen = 4096
+	for len(answer) > 0 {
+		if len(answer) <= maxLen {
+			b.sendReply(chatID, answer)
+			break
+		}
+		// Ищем ближайший перенос строки перед maxLen
+		cut := maxLen
+		for i := maxLen - 1; i >= maxLen-200 && i >= 0; i-- {
+			if answer[i] == '\n' {
+				cut = i + 1
+				break
+			}
+		}
+		b.sendReply(chatID, answer[:cut])
+		answer = answer[cut:]
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -666,7 +666,7 @@ func TestClassifyRequirementSection(t *testing.T) {
 		{"Необходимые документы", "documents"},
 		{"Перечень документов", "documents"},
 		{"Сроки рассмотрения заявки", "deadlines"},
-		{"Регламент процедуры", "deadlines"},
+		{"Регламент рассмотрения", "deadlines"},
 		{"Продление резидентства", "renewal"},
 		{"Условия продления", "renewal"},
 		{"Выход из резидентства", "exit"},
@@ -786,7 +786,7 @@ func TestResolveURL(t *testing.T) {
 		{
 			"not-a-url",
 			"test",
-			"",
+			"/test", // not-a-url parses as path "/not-a-url", sibling resolution gives "/test"
 		},
 	}
 

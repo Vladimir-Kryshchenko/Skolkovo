@@ -20,10 +20,12 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/analytics"
 	"baza-skolkovo/src/collector"
 	"baza-skolkovo/src/common/extract"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
+	"baza-skolkovo/src/diff"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scheduler"
 )
@@ -31,6 +33,7 @@ import (
 // Server — HTTP-админка.
 type Server struct {
 	store       store.Store
+	linkStore   store.DocumentLinkStore
 	rag         *rag.Service
 	schedStore  *scheduler.Store
 	reportStore *scheduler.ReportStore
@@ -51,6 +54,12 @@ func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 		store: st, rag: ragSvc, addr: addr, user: user, pass: pass, docsDir: docsDir,
 		chromePath: chromePath, proxyURL: proxyURL, fetchWait: fetchWait, sourceURL: sourceURL,
 	}
+}
+
+// WithLinkStore устанавливает хранилище связей документов.
+func (s *Server) WithLinkStore(ls store.DocumentLinkStore) *Server {
+	s.linkStore = ls
+	return s
 }
 
 // docView — строка таблицы для шаблона.
@@ -129,6 +138,22 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/settings", s.handleAPISettings)
 	mux.HandleFunc("POST /api/settings", s.handleAPISettingsUpdate)
 	mux.HandleFunc("GET /api/reports", s.handleAPIReports)
+
+	// Diff — сравнение версий документов
+	mux.HandleFunc("GET /diff", s.handleDiffPage)
+	mux.HandleFunc("POST /diff", s.handleDiffCompare)
+	mux.HandleFunc("GET /api/diff/{id1}/{id2}", s.handleAPIDiff)
+
+	// Аналитика
+	mux.HandleFunc("GET /analytics", s.handleAnalyticsPage)
+	mux.HandleFunc("GET /api/analytics", s.handleAPIAnalytics)
+	mux.HandleFunc("GET /api/analytics/export", s.handleAnalyticsExport)
+
+	// Граф связей документов
+	mux.HandleFunc("GET /graph", s.handleGraphPage)
+	mux.HandleFunc("GET /api/graph/{document_id}", s.handleAPIGraphDoc)
+	mux.HandleFunc("POST /api/graph", s.handleAPIGraphCreateLink)
+	mux.HandleFunc("DELETE /api/graph/{link_id}", s.handleAPIGraphDeleteLink)
 
 	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик)", s.addr)
 	return http.ListenAndServe(s.addr, s.auth(mux))
@@ -963,4 +988,458 @@ func (s *Server) handleAPIReports(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(reports)
+}
+
+// ===========================================================================
+// Diff — сравнение версий документов
+// ===========================================================================
+
+type diffPageData struct {
+	Docs     []model.Document
+	Doc1ID   string
+	Doc2ID   string
+	DiffHTML string
+	Error    string
+}
+
+// handleDiffPage показывает форму выбора двух документов для сравнения.
+func (s *Server) handleDiffPage(w http.ResponseWriter, r *http.Request) {
+	docs, _ := s.store.List(r.Context(), store.Filter{})
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
+
+	data := diffPageData{Docs: docs}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
+		log.Println("[admin] diff шаблон:", err)
+	}
+}
+
+// handleDiffCompare обрабатывает POST-форму сравнения.
+func (s *Server) handleDiffCompare(w http.ResponseWriter, r *http.Request) {
+	id1 := r.FormValue("doc1")
+	id2 := r.FormValue("doc2")
+
+	if id1 == "" || id2 == "" {
+		http.Error(w, "Выберите два документа", http.StatusBadRequest)
+		return
+	}
+
+	s.renderDiff(w, r, id1, id2)
+}
+
+// handleAPIDiff отдаёт результат сравнения в JSON.
+func (s *Server) handleAPIDiff(w http.ResponseWriter, r *http.Request) {
+	id1 := r.PathValue("id1")
+	id2 := r.PathValue("id2")
+
+	if id1 == "" || id2 == "" {
+		jsonResp(w, false, "", "Укажите оба ID документов")
+		return
+	}
+
+	text1, _, err := s.extractDocText(r.Context(), id1)
+	if err != nil {
+		jsonResp(w, false, "", "Документ 1: "+err.Error())
+		return
+	}
+	text2, _, err := s.extractDocText(r.Context(), id2)
+	if err != nil {
+		jsonResp(w, false, "", "Документ 2: "+err.Error())
+		return
+	}
+
+	result := diff.CompareDocuments(text1, text2)
+
+	doc1Info, _ := s.store.Get(r.Context(), id1)
+	doc2Info, _ := s.store.Get(r.Context(), id2)
+	resp := map[string]interface{}{
+		"ok":       true,
+		"doc1":     doc1Info.Title,
+		"doc2":     doc2Info.Title,
+		"summary":  result.Summary,
+		"added":    len(result.AddedLines),
+		"removed":  len(result.RemovedLines),
+		"sections": len(result.ModifiedSections),
+		"html":     diff.ToHTML(result),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// renderDiff загружает документы, сравнивает и показывает HTML-результат.
+func (s *Server) renderDiff(w http.ResponseWriter, r *http.Request, id1, id2 string) {
+	text1, _, err := s.extractDocText(r.Context(), id1)
+	if err != nil {
+		s.renderDiffPage(w, r, id1, id2, "", "Документ 1: "+err.Error())
+		return
+	}
+	text2, _, err := s.extractDocText(r.Context(), id2)
+	if err != nil {
+		s.renderDiffPage(w, r, id1, id2, "", "Документ 2: "+err.Error())
+		return
+	}
+
+	result := diff.CompareDocuments(text1, text2)
+	htmlContent := diff.ToHTML(result)
+	s.renderDiffPage(w, r, id1, id2, htmlContent, "")
+}
+
+// renderDiffPage рисует страницу diff с формой и результатом.
+func (s *Server) renderDiffPage(w http.ResponseWriter, r *http.Request, id1, id2, diffHTML, errMsg string) {
+	docs, _ := s.store.List(r.Context(), store.Filter{})
+	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
+
+	data := diffPageData{
+		Docs:     docs,
+		Doc1ID:   id1,
+		Doc2ID:   id2,
+		DiffHTML: diffHTML,
+		Error:    errMsg,
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
+		log.Println("[admin] diff шаблон:", err)
+	}
+}
+
+// extractDocText извлекает текст из документа (файл или заглушка).
+func (s *Server) extractDocText(ctx context.Context, id string) (string, model.Document, error) {
+	doc, err := s.store.Get(ctx, id)
+	if err != nil {
+		return "", model.Document{}, err
+	}
+	if doc.LocalPath == "" {
+		return "", doc, fmt.Errorf("нет локального файла")
+	}
+	if _, err := os.Stat(doc.LocalPath); os.IsNotExist(err) {
+		return "", doc, fmt.Errorf("файл не найден: %s", doc.LocalPath)
+	}
+
+	ext := strings.ToLower(filepath.Ext(doc.LocalPath))
+	if ext == ".pdf" {
+		if extract.IsSupported(doc.LocalPath) {
+			text, err := extract.Text(doc.LocalPath)
+			if err != nil {
+				return "", doc, fmt.Errorf("извлечение текста: %w", err)
+			}
+			return text, doc, nil
+		}
+		// Fallback: read as raw
+		data, err := os.ReadFile(doc.LocalPath)
+		if err != nil {
+			return "", doc, err
+		}
+		return string(data), doc, nil
+	}
+
+	if extract.IsSupported(doc.LocalPath) {
+		text, err := extract.Text(doc.LocalPath)
+		if err != nil {
+			return "", doc, fmt.Errorf("извлечение текста: %w", err)
+		}
+		return text, doc, nil
+	}
+
+	// Текстовые форматы
+	data, err := os.ReadFile(doc.LocalPath)
+	if err != nil {
+		return "", doc, err
+	}
+	return string(data), doc, nil
+}
+
+// ===========================================================================
+// Аналитика
+// ===========================================================================
+
+// handleAnalyticsPage показывает HTML-дашборд аналитики.
+func (s *Server) handleAnalyticsPage(w http.ResponseWriter, r *http.Request) {
+	report := s.collectAnalyticsReport(r.Context())
+	htmlContent := analytics.ToHTML(report)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	fmt.Fprint(w, htmlContent)
+}
+
+// handleAPIAnalytics отдаёт отчёт аналитики в JSON.
+func (s *Server) handleAPIAnalytics(w http.ResponseWriter, r *http.Request) {
+	report := s.collectAnalyticsReport(r.Context())
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+// handleAnalyticsExport экспортирует отчёт в CSV.
+func (s *Server) handleAnalyticsExport(w http.ResponseWriter, r *http.Request) {
+	report := s.collectAnalyticsReport(r.Context())
+	format := r.URL.Query().Get("format")
+	if format == "" {
+		format = "csv"
+	}
+
+	switch format {
+	case "csv":
+		csvContent := analytics.ToCSV(report)
+		w.Header().Set("Content-Type", "text/csv")
+		w.Header().Set("Content-Disposition", "attachment; filename=analytics.csv")
+		fmt.Fprint(w, csvContent)
+	case "json":
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Disposition", "attachment; filename=analytics.json")
+		_ = json.NewEncoder(w).Encode(report)
+	default:
+		http.Error(w, "Unsupported format: "+format, http.StatusBadRequest)
+	}
+}
+
+// collectAnalyticsReport собирает отчёт из доступных хранилищ.
+func (s *Server) collectAnalyticsReport(ctx context.Context) *analytics.AnalyticsReport {
+	// Заглушки для отсутствующих хранилищ — передаём nil-совместимые заглушки
+	report := analytics.CollectReport(
+		ctx,
+		s.store,
+		nil, // clientStore
+		nil, // checklistStore
+		nil, // deadlineStore
+		nil, // eventStore
+		nil, // contestStore
+	)
+	return report
+}
+
+// ===========================================================================
+// Граф связей документов
+// ===========================================================================
+
+type graphData struct {
+	Nodes []graphNode `json:"nodes"`
+	Edges []graphEdge `json:"edges"`
+}
+
+type graphNode struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Group string `json:"group"`
+	Title string `json:"title"`
+}
+
+type graphEdge struct {
+	From   string `json:"from"`
+	To     string `json:"to"`
+	Label  string `json:"label,omitempty"`
+	Color  string `json:"color,omitempty"`
+	Dashes bool   `json:"dashes,omitempty"`
+}
+
+// handleGraphPage показывает визуализацию графа связей.
+func (s *Server) handleGraphPage(w http.ResponseWriter, r *http.Request) {
+	graph := s.buildGraphData(r.Context())
+
+	data := struct {
+		GraphJSON string
+	}{
+		GraphJSON: graphToJSON(graph),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "graph-layout", data); err != nil {
+		log.Println("[admin] graph шаблон:", err)
+	}
+}
+
+// handleAPIGraphDoc отдаёт связи конкретного документа в JSON.
+func (s *Server) handleAPIGraphDoc(w http.ResponseWriter, r *http.Request) {
+	if s.linkStore == nil {
+		jsonResp(w, false, "", "Хранилище связей не настроено")
+		return
+	}
+
+	docID := r.PathValue("document_id")
+	linkType := model.DocumentLinkType(r.URL.Query().Get("type"))
+
+	links, err := s.linkStore.GetDocumentLinks(r.Context(), docID, linkType)
+	if err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+
+	// Собираем граф для одного документа
+	nodes := make(map[string]*model.Document)
+	for _, l := range links {
+		if _, ok := nodes[l.SourceID]; !ok {
+			if d, err := s.store.Get(r.Context(), l.SourceID); err == nil {
+				nodes[l.SourceID] = &d
+			}
+		}
+		if _, ok := nodes[l.TargetID]; !ok {
+			if d, err := s.store.Get(r.Context(), l.TargetID); err == nil {
+				nodes[l.TargetID] = &d
+			}
+		}
+	}
+
+	graph := graphData{}
+	for id, doc := range nodes {
+		graph.Nodes = append(graph.Nodes, graphNode{
+			ID:    id,
+			Label: doc.Title,
+			Group: doc.Category,
+			Title: fmt.Sprintf("%s [%s]", doc.Title, id),
+		})
+	}
+	for _, l := range links {
+		graph.Edges = append(graph.Edges, graphEdge{
+			From:  l.SourceID,
+			To:    l.TargetID,
+			Label: string(l.LinkType),
+			Color: linkTypeColor(l.LinkType),
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(graph)
+}
+
+// handleAPIGraphCreateLink создаёт новую связь между документами.
+func (s *Server) handleAPIGraphCreateLink(w http.ResponseWriter, r *http.Request) {
+	if s.linkStore == nil {
+		jsonResp(w, false, "", "Хранилище связей не настроено")
+		return
+	}
+
+	var req struct {
+		SourceID string `json:"source_id"`
+		TargetID string `json:"target_id"`
+		LinkType string `json:"link_type"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResp(w, false, "", "Ошибка разбора JSON")
+		return
+	}
+
+	link := &model.DocumentLink{
+		SourceID:  req.SourceID,
+		TargetID:  req.TargetID,
+		LinkType:  model.DocumentLinkType(req.LinkType),
+		CreatedAt: time.Now(),
+	}
+
+	if err := s.linkStore.CreateDocumentLink(r.Context(), link); err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+
+	jsonResp(w, true, "Связь создана", "")
+}
+
+// handleAPIGraphDeleteLink удаляет связь между документами.
+func (s *Server) handleAPIGraphDeleteLink(w http.ResponseWriter, r *http.Request) {
+	if s.linkStore == nil {
+		jsonResp(w, false, "", "Хранилище связей не настроено")
+		return
+	}
+
+	linkID := r.PathValue("link_id")
+	if err := s.linkStore.DeleteDocumentLink(r.Context(), linkID); err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+
+	jsonResp(w, true, "Связь удалена", "")
+}
+
+// buildGraphData строит полный граф из всех связей.
+func (s *Server) buildGraphData(ctx context.Context) graphData {
+	var links []*model.DocumentLink
+	var err error
+
+	if s.linkStore != nil {
+		links, err = s.linkStore.ListAllLinks(ctx)
+		if err != nil {
+			log.Printf("[admin/graph] ошибка загрузки связей: %v", err)
+		}
+	}
+
+	// Также собираем связи из Supersedes
+	docs, _ := s.store.List(ctx, store.Filter{})
+	for _, d := range docs {
+		if d.Supersedes != "" {
+			links = append(links, &model.DocumentLink{
+				ID:        "supersedes-" + d.ID,
+				SourceID:  d.ID,
+				TargetID:  d.Supersedes,
+				LinkType:  model.LinkSupersedes,
+				CreatedAt: time.Now(),
+			})
+		}
+	}
+
+	// Собираем уникальные документы
+	docMap := make(map[string]*model.Document)
+	for _, l := range links {
+		if _, ok := docMap[l.SourceID]; !ok {
+			if d, err := s.store.Get(ctx, l.SourceID); err == nil {
+				docMap[l.SourceID] = &d
+			} else {
+				docMap[l.SourceID] = &model.Document{ID: l.SourceID, Title: l.SourceID, Category: "unknown"}
+			}
+		}
+		if _, ok := docMap[l.TargetID]; !ok {
+			if d, err := s.store.Get(ctx, l.TargetID); err == nil {
+				docMap[l.TargetID] = &d
+			} else {
+				docMap[l.TargetID] = &model.Document{ID: l.TargetID, Title: l.TargetID, Category: "unknown"}
+			}
+		}
+	}
+
+	graph := graphData{}
+	// Nodes
+	for id, doc := range docMap {
+		group := doc.Category
+		if group == "" {
+			group = "uncategorized"
+		}
+		graph.Nodes = append(graph.Nodes, graphNode{
+			ID:    id,
+			Label: truncate(doc.Title, 60),
+			Group: group,
+			Title: fmt.Sprintf("%s [%s]\nСтатус: %s", doc.Title, id, doc.Status),
+		})
+	}
+	// Edges
+	for _, l := range links {
+		graph.Edges = append(graph.Edges, graphEdge{
+			From:   l.SourceID,
+			To:     l.TargetID,
+			Label:  string(l.LinkType),
+			Color:  linkTypeColor(l.LinkType),
+			Dashes: l.LinkType == model.LinkSupersedes,
+		})
+	}
+
+	return graph
+}
+
+func linkTypeColor(lt model.DocumentLinkType) string {
+	switch lt {
+	case model.LinkReferences:
+		return "#2563eb" // blue
+	case model.LinkSupersedes:
+		return "#dc2626" // red
+	case model.LinkRelated:
+		return "#16a34a" // green
+	default:
+		return "#6b7280" // gray
+	}
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+func graphToJSON(g graphData) string {
+	data, _ := json.Marshal(g)
+	return string(data)
 }

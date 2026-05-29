@@ -532,27 +532,97 @@ func cmdSeed(cfg config.Config) error {
 
 	// Стандартные чек-листы для резидентов Сколково.
 	checklists := []struct {
-		kind  model.ChecklistType
-		title string
-		desc  string
+		kind    model.ChecklistType
+		title   string
+		desc    string
+		version string
+		steps   []model.ChecklistStepDef
 	}{
-		{kind: model.ChecklistEntry, title: "Чек-лист входа резидента", desc: "Договор, статус, документы для вступления в Сколково"},
-		{kind: model.ChecklistReporting, title: "Чек-лист отчётности", desc: "Финансовые и технические отчёты, сроки подачи"},
-		{kind: model.ChecklistExtension, title: "Чек-лист продления", desc: "Заявление, обоснование, приложения для продления статуса"},
-		{kind: model.ChecklistExit, title: "Чек-лист выхода", desc: "Уведомление, закрытие обязательств при выходе из Сколково"},
+		{
+			kind:    model.ChecklistEntry,
+			title:   "Вход в резидентство",
+			desc:    "Договор, статус, документы для вступления в Сколково",
+			version: "1.0",
+			steps: []model.ChecklistStepDef{
+				{ID: "entry-1", Title: "Подготовка документов", Description: "Подготовка выписки из ЕГРЮЛ, справки об отсутствии задолженности, описания проекта", Order: 1, DeadlineDays: 14},
+				{ID: "entry-2", Title: "Подача заявки через личный кабинет", Description: "", Order: 2, DeadlineDays: 1},
+				{ID: "entry-3", Title: "Прохождение экспертизы", Description: "Предоставление дополнительных документов по запросу", Order: 3, DeadlineDays: 30},
+				{ID: "entry-4", Title: "Заключение договора с Фондом", Description: "", Order: 4, DeadlineDays: 7},
+				{ID: "entry-5", Title: "Получение статуса резидента", Description: "", Order: 5, DeadlineDays: 1},
+			},
+		},
+		{
+			kind:    model.ChecklistReporting,
+			title:   "Квартальная отчётность",
+			desc:    "Финансовые и технические отчёты, сроки подачи",
+			version: "1.0",
+			steps: []model.ChecklistStepDef{
+				{ID: "reporting-1", Title: "Сбор данных за квартал", Description: "Финансовые показатели, данные о проекте", Order: 1, DeadlineDays: 10},
+				{ID: "reporting-2", Title: "Заполнение квартального отчёта", Description: "", Order: 2, DeadlineDays: 3},
+				{ID: "reporting-3", Title: "Проверка отчёта", Description: "", Order: 3, DeadlineDays: 2},
+				{ID: "reporting-4", Title: "Отправка отчёта в Фонд", Description: "", Order: 4, DeadlineDays: 1},
+				{ID: "reporting-5", Title: "Подтверждение получения", Description: "", Order: 5, DeadlineDays: 5},
+			},
+		},
+		{
+			kind:    model.ChecklistExtension,
+			title:   "Продление резидентства",
+			desc:    "Заявление, обоснование, приложения для продления статуса",
+			version: "1.0",
+			steps: []model.ChecklistStepDef{
+				{ID: "extension-1", Title: "Проверка условий продления", Description: "Отсутствие задолженности, выполнение программы", Order: 1, DeadlineDays: 14},
+				{ID: "extension-2", Title: "Подготовка заявления на продление", Description: "", Order: 2, DeadlineDays: 3},
+				{ID: "extension-3", Title: "Подача заявления", Description: "", Order: 3, DeadlineDays: 1},
+				{ID: "extension-4", Title: "Прохождение проверки Фондом", Description: "", Order: 4, DeadlineDays: 30},
+				{ID: "extension-5", Title: "Заключение дополнительного соглашения", Description: "", Order: 5, DeadlineDays: 7},
+			},
+		},
+		{
+			kind:    model.ChecklistExit,
+			title:   "Выход из проекта",
+			desc:    "Уведомление, закрытие обязательств при выходе из Сколково",
+			version: "1.0",
+			steps: []model.ChecklistStepDef{
+				{ID: "exit-1", Title: "Уведомление Фонда о выходе", Description: "Письменное уведомление за 30 дней", Order: 1, DeadlineDays: 1},
+				{ID: "exit-2", Title: "Подготовка заключительного отчёта", Description: "", Order: 2, DeadlineDays: 14},
+				{ID: "exit-3", Title: "Возврат неиспользованных средств", Description: "Если применимо", Order: 3, DeadlineDays: 30},
+				{ID: "exit-4", Title: "Подтверждение выхода", Description: "", Order: 4, DeadlineDays: 7},
+			},
+		},
 	}
 
 	log.Printf("[seed] проверка %d стандартных чек-листов", len(checklists))
 
 	for _, cl := range checklists {
-		if _, err := checklistStore.GetChecklist(ctx, string(cl.kind)); err == nil {
-			fmt.Printf("  [%s] %s — уже существует\n", cl.kind, cl.title)
+		// Проверяем существует ли чек-лист по procedure_type.
+		existing, err := checklistStore.GetChecklist(ctx, string(cl.kind))
+		if err == nil && existing != nil {
+			fmt.Printf("  [%s] %s — уже существует, пропуск\n", cl.kind, cl.title)
 			continue
 		}
-		fmt.Printf("  [%s] %s — готов к созданию\n", cl.kind, cl.title)
+
+		// Сериализуем шаги в JSON.
+		stepsJSON, err := json.Marshal(cl.steps)
+		if err != nil {
+			return fmt.Errorf("сериализация шагов [%s]: %w", cl.kind, err)
+		}
+
+		checklist := &model.Checklist{
+			ID:            string(cl.kind),
+			Title:         cl.title,
+			ProcedureType: cl.kind,
+			Steps:         stepsJSON,
+			Version:       cl.version,
+			CreatedAt:     time.Now(),
+		}
+
+		if err := checklistStore.CreateChecklist(ctx, checklist); err != nil {
+			return fmt.Errorf("создание чек-листа [%s]: %w", cl.kind, err)
+		}
+		fmt.Printf("  [%s] %s — создан (%d шагов)\n", cl.kind, cl.title, len(cl.steps))
 	}
 
-	fmt.Println("Seed: чек-листы проверены")
+	fmt.Println("Seed: чек-листы созданы")
 	return nil
 }
 
@@ -1004,7 +1074,10 @@ func runTelegramBot(ctx context.Context, cfg config.Config, st store.Store) {
 		MCPAPIKey: cfg.MCPAPIKey,
 	}
 
-	bot, err := tgbot.NewBot(botCfg, botStores)
+	// Создаём консультанта для бота
+	consultant := agents.NewConsultantAgent(nil, "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
+
+	bot, err := tgbot.NewBot(botCfg, botStores, consultant)
 	if err != nil {
 		log.Printf("[tgbot] ошибка создания бота: %v", err)
 		return

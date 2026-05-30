@@ -151,6 +151,7 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
     <button onclick="runAction('scrape', this)" title="Парсинг RSS (~20 документов)">📥 Парсинг RSS</button>
     <button onclick="runAction('index', this)" title="Индексация всех документов со статусом 'действует'">🧠 Индексация</button>
     <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">🔄 Полный синк</button>
+    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов (RAG-карта сайта и др.)">📚 Индекс структуры</button>
   </div>
 </header>
 <main>
@@ -458,6 +459,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
     <button onclick="runAction('scrape', this)">📥 Парсинг RSS</button>
     <button onclick="runAction('index', this)">🧠 Индексация</button>
     <button onclick="runAction('sync', this)">🔄 Полный синк</button>
+    <button onclick="runAction('seed-local', this)" title="Индексировать .md-файлы (RAG-карта сайта)">📚 Индекс структуры</button>
   </div>
 </header>
 <main>
@@ -555,6 +557,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
     <button onclick="runAction('scrape', this)">📥 Парсинг RSS</button>
     <button onclick="runAction('index', this)">🧠 Индексация</button>
     <button onclick="runAction('sync', this)">🔄 Полный синк</button>
+    <button onclick="runAction('seed-local', this)" title="Индексировать .md-файлы (RAG-карта сайта)">📚 Индекс структуры</button>
   </div>
 </header>
 <main>

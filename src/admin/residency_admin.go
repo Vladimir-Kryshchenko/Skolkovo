@@ -89,18 +89,6 @@ func RegisterResidencyRoutes(mux *http.ServeMux, stores Stores) *http.ServeMux {
 	return mux
 }
 
-// auth — middleware HTTP Basic Auth.
-func (s *ResidencyServer) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.user == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		// Для простоты используем те же креды, что и основная админка
-		next.ServeHTTP(w, r)
-	})
-}
-
 // redirect — редирект с flash-сообщением.
 func residencyRedirect(w http.ResponseWriter, r *http.Request, path, msg, kind string) {
 	q := url.Values{}

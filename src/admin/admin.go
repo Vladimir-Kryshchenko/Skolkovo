@@ -131,6 +131,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/scrape", s.handleAPIScrape)
 	mux.HandleFunc("POST /api/index", s.handleAPIIndex)
 	mux.HandleFunc("POST /api/sync", s.handleAPISync)
+	mux.HandleFunc("POST /api/seed-local", s.handleAPISeedLocal)
 
 	// API для коллектора (полный цикл)
 	mux.HandleFunc("POST /api/collect", s.handleAPICollect)
@@ -177,6 +178,25 @@ func (s *Server) ListenAndServe() error {
 
 	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик, ИИ)", s.addr)
 	return http.ListenAndServe(s.addr, s.auth(mux))
+}
+
+// BasicAuth возвращает middleware HTTP Basic Auth для любого handler.
+// Если user пуст — пропускает без проверки.
+func BasicAuth(user, pass, realm string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if user == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		u, p, ok := r.BasicAuth()
+		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
+			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
+			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // auth — middleware HTTP Basic Auth (если заданы логин/пароль).
@@ -557,6 +577,94 @@ func (s *Server) handleAPISync(w http.ResponseWriter, r *http.Request) {
 		log.Println("[admin/api] полный синк запущен (заглушка — используйте skolkovo sync)")
 	}()
 	jsonResp(w, true, "Полный синк запущен в фоне.", "")
+}
+
+// handleAPISeedLocal регистрирует и индексирует все .md-файлы из DocsDir в RAG.
+// Идемпотентно: уже зарегистрированные файлы (по LocalPath) не дублируются.
+func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
+	if s.rag == nil {
+		jsonResp(w, false, "", "RAG-сервис не подключён")
+		return
+	}
+	if s.docsDir == "" {
+		jsonResp(w, false, "", "DocsDir не задан")
+		return
+	}
+	jsonResp(w, true, "Индексация локальных документов запущена в фоне.", "")
+	go func() {
+		ctx := context.Background()
+
+		// Собираем уже известные LocalPath чтобы не дублировать.
+		existing, _ := s.store.List(ctx, store.Filter{})
+		knownPaths := make(map[string]bool, len(existing))
+		for _, d := range existing {
+			if d.LocalPath != "" {
+				knownPaths[d.LocalPath] = true
+			}
+		}
+
+		var added, indexed, skipped int
+		err := filepath.WalkDir(s.docsDir, func(path string, de os.DirEntry, err error) error {
+			if err != nil || de.IsDir() {
+				return err
+			}
+			if strings.ToLower(filepath.Ext(path)) != ".md" {
+				return nil
+			}
+			absPath := filepath.ToSlash(path)
+			if knownPaths[absPath] {
+				skipped++
+				return nil
+			}
+
+			// Генерируем детерминированный ID из пути.
+			h := sha256.Sum256([]byte(absPath))
+			docID := "local-" + hex.EncodeToString(h[:8])
+
+			// Выводим заголовок из первой строки файла.
+			title := filepath.Base(path)
+			if data, rerr := os.ReadFile(path); rerr == nil {
+				for _, line := range strings.SplitN(string(data), "\n", 10) {
+					line = strings.TrimSpace(strings.TrimPrefix(line, "#"))
+					if line != "" && !strings.HasPrefix(line, "---") {
+						title = line
+						break
+					}
+				}
+			}
+
+			now := time.Now()
+			doc := model.Document{
+				ID:        docID,
+				Title:     title,
+				LocalPath: absPath,
+				SourceURL: "file://" + absPath,
+				Status:    model.StatusActive,
+				Category:  "RAG Структура сайта",
+				FetchedAt: now,
+			}
+			if uerr := s.store.Upsert(ctx, doc); uerr != nil {
+				log.Printf("[admin/seed-local] upsert %s: %v", absPath, uerr)
+				return nil
+			}
+			added++
+			knownPaths[absPath] = true
+
+			n, ierr := s.rag.IndexDocument(ctx, docID)
+			if ierr != nil {
+				log.Printf("[admin/seed-local] index %s: %v", absPath, ierr)
+			} else {
+				log.Printf("[admin/seed-local] %s проиндексирован (%d фрагментов)", title, n)
+				indexed++
+			}
+			return nil
+		})
+		if err != nil {
+			log.Printf("[admin/seed-local] walkdir: %v", err)
+		}
+		log.Printf("[admin/seed-local] завершено: добавлено=%d проиндексировано=%d пропущено=%d",
+			added, indexed, skipped)
+	}()
 }
 
 // handleViewOriginal извлекает текст из исходного файла и показывает его.

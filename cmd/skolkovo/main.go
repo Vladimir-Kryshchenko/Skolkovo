@@ -930,6 +930,10 @@ func cmdServe(cfg config.Config) error {
 		adminSrv.WithNPAStore(pss)
 	}
 
+	// Подключаем менеджер прокси к админке.
+	pm := admin.NewProxyManager(ctx)
+	adminSrv.WithProxyManager(pm)
+
 	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
 		aiStore := aimodels.NewStore(ps.Pool())

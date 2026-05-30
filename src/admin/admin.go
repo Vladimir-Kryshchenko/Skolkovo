@@ -34,24 +34,25 @@ import (
 
 // Server — HTTP-админка.
 type Server struct {
-	store       store.Store
-	linkStore   store.DocumentLinkStore
-	changeStore changes.Store
-	prefStore   store.PreferenceStore
-	npaStore    store.NPAStore
-	rag         *rag.Service
-	schedStore  *scheduler.Store
-	reportStore *scheduler.ReportStore
-	aiStore     *aimodels.Store // ИИ-модели и агенты (опционально, требует Postgres)
-	addr        string
-	user        string
-	pass        string
-	docsDir     string
-	chromePath  string
-	proxyURL    string
-	fetchWait   time.Duration
-	sourceURL   string
-	authStore   *adminAuthStore
+	store        store.Store
+	linkStore    store.DocumentLinkStore
+	changeStore  changes.Store
+	prefStore    store.PreferenceStore
+	npaStore     store.NPAStore
+	rag          *rag.Service
+	schedStore   *scheduler.Store
+	reportStore  *scheduler.ReportStore
+	aiStore      *aimodels.Store // ИИ-модели и агенты (опционально, требует Postgres)
+	proxyManager *ProxyManager   // Управление прокси
+	addr         string
+	user         string
+	pass         string
+	docsDir      string
+	chromePath   string
+	proxyURL     string
+	fetchWait    time.Duration
+	sourceURL    string
+	authStore    *adminAuthStore
 }
 
 // New создаёт админку.
@@ -94,6 +95,12 @@ func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
 // WithNPAStore устанавливает хранилище НПА.
 func (s *Server) WithNPAStore(ns store.NPAStore) *Server {
 	s.npaStore = ns
+	return s
+}
+
+// WithProxyManager устанавливает менеджер прокси.
+func (s *Server) WithProxyManager(pm *ProxyManager) *Server {
+	s.proxyManager = pm
 	return s
 }
 
@@ -215,6 +222,11 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /regulations/preferences/{id}/delete", s.requireAuth(s.handleDeletePreference))
 	mux.HandleFunc("POST /regulations/npa", s.requireAuth(s.handleCreateNPA))
 	mux.HandleFunc("POST /regulations/npa/{id}/delete", s.requireAuth(s.handleDeleteNPA))
+
+	// Управление прокси
+	mux.HandleFunc("GET /proxy", s.requireAuth(s.handleProxyPage))
+	mux.HandleFunc("POST /api/proxy/test", s.requireAuthJSON(s.handleAPITestProxy))
+	mux.HandleFunc("POST /api/proxy/switch", s.requireAuthJSON(s.handleAPISwitchProxy))
 
 	// ИИ Конфигурация — модели и агенты
 	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))

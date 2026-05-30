@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/aimodels"
 	"baza-skolkovo/src/analytics"
 	"baza-skolkovo/src/collector"
 	"baza-skolkovo/src/common/extract"
@@ -37,6 +38,7 @@ type Server struct {
 	rag         *rag.Service
 	schedStore  *scheduler.Store
 	reportStore *scheduler.ReportStore
+	aiStore     *aimodels.Store // ИИ-модели и агенты (опционально, требует Postgres)
 	addr        string
 	user        string
 	pass        string
@@ -155,7 +157,25 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/graph", s.handleAPIGraphCreateLink)
 	mux.HandleFunc("DELETE /api/graph/{link_id}", s.handleAPIGraphDeleteLink)
 
-	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик)", s.addr)
+	// ИИ Конфигурация — модели и агенты
+	mux.HandleFunc("GET /ai/models", s.handleAIModelsPage)
+	mux.HandleFunc("GET /ai/models/new", s.handleAIModelNew)
+	mux.HandleFunc("POST /ai/models/create", s.handleAIModelCreate)
+	mux.HandleFunc("GET /ai/models/{id}/edit", s.handleAIModelEdit)
+	mux.HandleFunc("POST /ai/models/{id}/update", s.handleAIModelUpdate)
+	mux.HandleFunc("POST /api/ai/models/{id}/delete", s.handleAIModelDelete)
+	mux.HandleFunc("POST /api/ai/models/{id}/test", s.handleAIModelTest)
+	mux.HandleFunc("POST /api/ai/models/seed-qwen", s.handleAISeedQwen)
+
+	mux.HandleFunc("GET /ai/agents", s.handleAIAgentsPage)
+	mux.HandleFunc("GET /ai/agents/new", s.handleAIAgentNew)
+	mux.HandleFunc("POST /ai/agents/create", s.handleAIAgentCreate)
+	mux.HandleFunc("GET /ai/agents/{id}/edit", s.handleAIAgentEdit)
+	mux.HandleFunc("POST /ai/agents/{id}/update", s.handleAIAgentUpdate)
+	mux.HandleFunc("POST /api/ai/agents/{id}/delete", s.handleAIAgentDelete)
+	mux.HandleFunc("POST /api/ai/agents/{id}/test", s.handleAIAgentTest)
+
+	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик, ИИ)", s.addr)
 	return http.ListenAndServe(s.addr, s.auth(mux))
 }
 

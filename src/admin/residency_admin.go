@@ -2,6 +2,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -320,8 +321,34 @@ func (s *ResidencyServer) handleClientStageTransition(w http.ResponseWriter, r *
 		return
 	}
 
+	s.autoReportingDeadline(ctx, id, toStage)
+
 	residencyRedirect(w, r, "/clients/"+id,
 		fmt.Sprintf("Стадия изменена: %s → %s", transition.FromStage, transition.ToStage), "ok")
+}
+
+// autoReportingDeadline создаёт дедлайн квартальной отчётности при переходе на
+// стадию «отчётность» (если ещё нет незакрытого). No-op без DeadlineStore.
+func (s *ResidencyServer) autoReportingDeadline(ctx context.Context, clientID string, to model.ResidencyStage) {
+	if to != model.StageReporting || s.stores.DeadlineStore == nil {
+		return
+	}
+	if existing, err := s.stores.DeadlineStore.ListDeadlines(ctx, clientID, 0); err == nil {
+		for _, d := range existing {
+			if d.Type == model.DeadlineReporting && d.Status != model.DeadlineCompleted {
+				return
+			}
+		}
+	}
+	_ = s.stores.DeadlineStore.CreateDeadline(ctx, &model.Deadline{
+		ID:        generateUUID(),
+		ClientID:  clientID,
+		Title:     "Квартальный отчёт резидента",
+		DueDate:   time.Now().AddDate(0, 0, 90),
+		Type:      model.DeadlineReporting,
+		Status:    model.DeadlineUpcoming,
+		CreatedAt: time.Now(),
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -828,6 +855,8 @@ func (s *ResidencyServer) handleAPIClientStageTransition(w http.ResponseWriter, 
 		residencyJSONResp(w, false, "", err.Error(), nil)
 		return
 	}
+
+	s.autoReportingDeadline(ctx, id, req.ToStage)
 
 	residencyJSONResp(w, true, "Стадия изменена", "", map[string]interface{}{
 		"transition": transition,

@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"crypto/sha1"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
@@ -59,6 +60,7 @@ import (
 	"baza-skolkovo/src/fetcher"
 	"baza-skolkovo/src/generator"
 	"baza-skolkovo/src/health"
+	"baza-skolkovo/src/mailer"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
 	"baza-skolkovo/src/news"
@@ -68,6 +70,7 @@ import (
 	"baza-skolkovo/src/preferences"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/regulations"
+	"baza-skolkovo/src/residents"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/telegram"
 	"baza-skolkovo/src/tgbot"
@@ -101,6 +104,8 @@ func main() {
 		mustRun(cmdContests(cfg))
 	case "faq":
 		mustRun(cmdFAQ(cfg))
+	case "residents":
+		mustRun(cmdResidents(cfg))
 	case "telegram":
 		mustRun(cmdTelegram(cfg))
 	case "sync":
@@ -127,6 +132,8 @@ func main() {
 		mustRun(cmdServe(cfg))
 	case "embed":
 		mustRun(embedTest(cfg))
+	case "doctor":
+		mustRun(cmdDoctor(cfg))
 	default:
 		usage()
 		os.Exit(2)
@@ -517,6 +524,39 @@ func cmdFAQ(cfg config.Config) error {
 	return nil
 }
 
+func cmdResidents(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		log.Printf("[residents] предупреждение: требуется backend=postgres")
+		fmt.Println("Резиденты: требуется backend=postgres")
+		return nil
+	}
+	residentStore := store.NewPostgresSourceStore(ps.Pool())
+
+	parsed, err := residents.ParseResidents(ctx, residents.Config{SourceURL: cfg.ResidentsURL}, nil)
+	if err != nil {
+		return fmt.Errorf("парсинг реестра резидентов: %w", err)
+	}
+
+	res, err := residents.IngestResidents(ctx, parsed, residentStore)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Резиденты: получено %d, новых %d, обновлено %d, ошибок %d\n",
+		res.Fetched, res.New, res.Updated, len(res.Errors))
+	for _, e := range res.Errors {
+		fmt.Println("  ! ", e)
+	}
+	return nil
+}
+
 func cmdTelegram(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)
@@ -572,7 +612,7 @@ func cmdTelegram(cfg config.Config) error {
 	return nil
 }
 
-// cmdMigrate применяет миграции БД из директории migrations/.
+// cmdMigrate применяет миграции БД.
 func cmdMigrate(cfg config.Config) error {
 	ctx := context.Background()
 	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
@@ -581,8 +621,48 @@ func cmdMigrate(cfg config.Config) error {
 	}
 	defer pool.Close()
 
-	migrationsDir := "./migrations"
-	return migrate.ApplyMigrations(ctx, pool, migrationsDir)
+	dir := resolveMigrationsDir(cfg.MigrationsDir)
+	if dir == "" {
+		return fmt.Errorf("директория миграций не найдена (искал %s, ./deploy/migrations)", cfg.MigrationsDir)
+	}
+	return migrate.ApplyMigrations(ctx, pool, dir)
+}
+
+// resolveMigrationsDir возвращает первую существующую директорию миграций из
+// настроенного пути и распространённых fallback-расположений ("" — не найдена).
+func resolveMigrationsDir(configured string) string {
+	candidates := []string{configured, "./migrations", "./deploy/migrations"}
+	for _, d := range candidates {
+		if d == "" {
+			continue
+		}
+		if info, err := os.Stat(d); err == nil && info.IsDir() {
+			return d
+		}
+	}
+	return ""
+}
+
+// autoMigrate применяет миграции при старте serve (best-effort): без директории
+// миграций сервис продолжит работу, но реляционные таблицы могут отсутствовать.
+func autoMigrate(ctx context.Context, cfg config.Config) {
+	if !cfg.AutoMigrate {
+		return
+	}
+	dir := resolveMigrationsDir(cfg.MigrationsDir)
+	if dir == "" {
+		log.Printf("[serve:migrate] предупреждение: директория миграций не найдена (%s) — пропуск авто-миграций", cfg.MigrationsDir)
+		return
+	}
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		log.Printf("[serve:migrate] предупреждение: не удалось подключиться к БД: %v", err)
+		return
+	}
+	defer pool.Close()
+	if err := migrate.ApplyMigrations(ctx, pool, dir); err != nil {
+		log.Printf("[serve:migrate] предупреждение: миграции не применены: %v", err)
+	}
 }
 
 // cmdSeed загружает стандартные чек-листы (entry, reporting, extension, exit).
@@ -766,6 +846,9 @@ func cmdServe(cfg config.Config) error {
 	}
 	defer st.Close()
 
+	// --- Авто-миграции БД (создают реляционные таблицы до старта подсистем) ---
+	autoMigrate(ctx, cfg)
+
 	// --- Классификатор ---
 	var cls *classifier.DocumentClassifier
 	if cfg.ClassifierEnabled {
@@ -832,6 +915,13 @@ func cmdServe(cfg config.Config) error {
 			stores := buildResidencyStores(st)
 			gen := newGenerator(cfg, st)
 			ensureDefaultTemplates(gen, cfg.GeneratorTemplateDir)
+			mlr := mailer.New(mailer.Config{
+				Host:     cfg.SMTPHost,
+				Port:     cfg.SMTPPort,
+				Username: cfg.SMTPUser,
+				Password: cfg.SMTPPassword,
+				From:     cfg.SMTPFrom,
+			})
 			portalStores := portal.PortalStores{
 				ClientStore:    stores.ClientStore,
 				ChecklistStore: stores.ChecklistStore,
@@ -839,6 +929,7 @@ func cmdServe(cfg config.Config) error {
 				TemplateStore:  stores.TemplateStore,
 				DocumentStore:  st,
 				Generator:      gen,
+				Mailer:         mlr,
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -914,6 +1005,82 @@ func cmdServe(cfg config.Config) error {
 
 	<-ctx.Done()
 	log.Println("[serve] останов по сигналу")
+	return nil
+}
+
+// cmdDoctor проверяет доступность инфраструктуры (PostgreSQL, Qdrant, TEI) и
+// наличие миграций. Удобно для smoke-теста после развёртывания.
+func cmdDoctor(cfg config.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	type check struct {
+		name string
+		err  error
+	}
+	var checks []check
+
+	// PostgreSQL
+	func() {
+		pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+		if err != nil {
+			checks = append(checks, check{"PostgreSQL (подключение)", err})
+			return
+		}
+		defer pool.Close()
+		var one int
+		err = pool.QueryRow(ctx, "SELECT 1").Scan(&one)
+		checks = append(checks, check{"PostgreSQL (запрос)", err})
+	}()
+
+	// Qdrant
+	checks = append(checks, check{"Qdrant", httpHealth(ctx, strings.TrimRight(cfg.QdrantURL, "/")+"/healthz")})
+
+	// TEI (эмбеддинги)
+	func() {
+		c := embed.NewTEIClient(cfg.TEIURL)
+		_, err := c.Embed(ctx, []string{embed.PrefixQuery + "проверка связи"})
+		checks = append(checks, check{"TEI (эмбеддинги)", err})
+	}()
+
+	// Миграции на диске
+	if dir := resolveMigrationsDir(cfg.MigrationsDir); dir == "" {
+		checks = append(checks, check{"Миграции (каталог)", fmt.Errorf("не найден (%s)", cfg.MigrationsDir)})
+	} else {
+		checks = append(checks, check{"Миграции (каталог " + dir + ")", nil})
+	}
+
+	fmt.Println("Проверка инфраструктуры «База Сколково»:")
+	allOK := true
+	for _, c := range checks {
+		if c.err != nil {
+			allOK = false
+			fmt.Printf("  ❌ %s: %v\n", c.name, c.err)
+		} else {
+			fmt.Printf("  ✅ %s\n", c.name)
+		}
+	}
+	if !allOK {
+		return fmt.Errorf("часть проверок не прошла")
+	}
+	fmt.Println("Все проверки пройдены — инфраструктура готова.")
+	return nil
+}
+
+// httpHealth выполняет GET и считает успехом статус 2xx.
+func httpHealth(ctx context.Context, url string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("статус %d", resp.StatusCode)
+	}
 	return nil
 }
 
@@ -1017,6 +1184,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	var contestStore store.ContestStore
 	var faqStore store.FAQStore
 	var tgStore store.TelegramStore
+	var residentStore store.ResidentStore
 	var healthStore health.Store
 	var changeStore changes.Recorder
 
@@ -1026,6 +1194,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		contestStore = pss
 		faqStore = pss
 		tgStore = pss
+		residentStore = pss
 		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			healthStore = hs
 		}
@@ -1091,6 +1260,19 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 				} else {
 					res, ingErr := faq.IngestFAQ(ctx, parsed, faqStore, nil, changeStore)
 					recordHealth("faq", res.New+res.Updated, ingErr)
+				}
+			}
+
+			// Реестр резидентов
+			if cfg.ResidentsEnabled && cfg.ResidentsURL != "" && residentStore != nil {
+				log.Printf("[serve:residents] запуск парсинга реестра резидентов")
+				parsed, err := residents.ParseResidents(ctx, residents.Config{SourceURL: cfg.ResidentsURL}, httpCl)
+				if err != nil {
+					log.Printf("[serve:residents] ошибка: %v", err)
+					recordHealth("residents", 0, err)
+				} else {
+					res, ingErr := residents.IngestResidents(ctx, parsed, residentStore, changeStore)
+					recordHealth("residents", res.New+res.Updated, ingErr)
 				}
 			}
 
@@ -1181,8 +1363,8 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 	// Регистрируем инструменты резидентства.
 	mcpserver.RegisterResidencyTools(mcpSrv, pcs, pcs, pcs, pcs)
 
-	// Регистрируем инструменты источников.
-	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, nil, nil)
+	// Регистрируем инструменты источников (включая реестр резидентов).
+	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
 
 	// Лента изменений: get_recent_changes.
 	ctx := context.Background()
@@ -1358,10 +1540,11 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 	if gen := newGenerator(cfg, st); gen != nil {
 		mcpSrv.AddTool(
 			mcp.NewTool("generate_document",
-				mcp.WithDescription("Сгенерировать готовый файл документа (PDF/DOCX) для клиента из шаблона. Возвращает путь к файлу. Список шаблонов: list_document_templates."),
+				mcp.WithDescription("Сгенерировать готовый файл документа (PDF/DOCX) для клиента из шаблона. Возвращает путь к файлу; при inline=true также base64-содержимое для скачивания. Список шаблонов: list_document_templates."),
 				mcp.WithString("template_id", mcp.Required(), mcp.Description("Идентификатор шаблона (имя файла, напр. Заявление_на_резидентство.go.tpl)")),
 				mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
 				mcp.WithString("variables", mcp.Description("Доп. переменные в формате key=value через запятую (опционально)")),
+				mcp.WithBoolean("inline", mcp.Description("Вернуть содержимое файла в base64 (для скачивания удалённым клиентом)")),
 			),
 			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				templateID := req.GetString("template_id", "")
@@ -1378,7 +1561,19 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 				if err != nil {
 					return mcp.NewToolResultError("ошибка генерации: " + err.Error()), nil
 				}
-				return mcp.NewToolResultText(toJSON(map[string]string{"path": out})), nil
+				result := map[string]any{
+					"path":     out,
+					"filename": filepath.Base(out),
+				}
+				if req.GetBool("inline", false) {
+					data, rerr := os.ReadFile(out)
+					if rerr != nil {
+						return mcp.NewToolResultError("файл сгенерирован, но не читается: " + rerr.Error()), nil
+					}
+					result["content_base64"] = base64.StdEncoding.EncodeToString(data)
+					result["size_bytes"] = len(data)
+				}
+				return mcp.NewToolResultText(toJSON(result)), nil
 			},
 		)
 
@@ -1623,7 +1818,7 @@ func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store)
 	}
 
 	// Счётчики расширенных источников.
-	eventsN, contestsN, faqN, tgN := -1, -1, -1, -1
+	eventsN, contestsN, faqN, tgN, residentsN := -1, -1, -1, -1, -1
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		if n, err := pss.CountEvents(ctx); err == nil {
@@ -1638,6 +1833,9 @@ func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store)
 		if n, err := pss.CountPosts(ctx, ""); err == nil {
 			tgN = n
 		}
+		if n, err := pss.CountResidents(ctx); err == nil {
+			residentsN = n
+		}
 	}
 
 	cov := []audit.Coverage{
@@ -1650,7 +1848,7 @@ func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store)
 		{Key: "preferences", Name: "Льготы резидентов", URL: cfg.PreferencesURL, Enabled: cfg.PreferencesEnabled, HealthState: healthByName["preferences"], ItemsLastRun: itemsLastRun["preferences"], Items: prefN},
 		{Key: "regulations", Name: "НПА (244-ФЗ и поправки)", URL: cfg.RegulationsSearchURL, Enabled: cfg.RegulationsEnabled, HealthState: healthByName["regulations"], ItemsLastRun: itemsLastRun["regulations"], Items: npaN},
 		{Key: "telegram", Name: "Telegram-каналы", URL: cfg.TelegramRssHubURL, Enabled: cfg.TelegramChannels != "", HealthState: healthByName["telegram"], ItemsLastRun: itemsLastRun["telegram"], Items: tgN},
-		{Key: "residents", Name: "Реестр резидентов", URL: "", Enabled: false, HealthState: healthByName["residents"], Items: -1, Note: "парсер реестра резидентов не настроен"},
+		{Key: "residents", Name: "Реестр резидентов", URL: cfg.ResidentsURL, Enabled: cfg.ResidentsEnabled, HealthState: healthByName["residents"], ItemsLastRun: itemsLastRun["residents"], Items: residentsN},
 	}
 
 	rep := audit.Build(cov)
@@ -1830,6 +2028,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  events        — парсинг мероприятий")
 	fmt.Fprintln(os.Stderr, "  contests      — парсинг конкурсов и грантов")
 	fmt.Fprintln(os.Stderr, "  faq           — парсинг FAQ")
+	fmt.Fprintln(os.Stderr, "  residents     — парсинг реестра резидентов Сколково")
 	fmt.Fprintln(os.Stderr, "  telegram      — парсинг Telegram-каналов")
 	fmt.Fprintln(os.Stderr, "  preferences   — льготы резидентов Сколково (налоговые, таможенные)")
 	fmt.Fprintln(os.Stderr, "  regulations   — НПА по Сколково (244-ФЗ, постановления Правительства)")
@@ -1841,6 +2040,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  generate      — сгенерировать документ из шаблона (PDF/DOCX) для клиента")
 	fmt.Fprintln(os.Stderr, "  audit         — отчёт о полноте охвата источников Сколково")
 	fmt.Fprintln(os.Stderr, "  embed         — проверить доступность TEI (вычислить тестовый эмбеддинг)")
+	fmt.Fprintln(os.Stderr, "  doctor        — smoke-тест инфраструктуры: PostgreSQL + Qdrant + TEI + миграции")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "База данных:")
 	fmt.Fprintln(os.Stderr, "  migrate       — применить миграции PostgreSQL")

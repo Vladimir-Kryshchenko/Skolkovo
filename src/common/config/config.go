@@ -46,6 +46,10 @@ type Config struct {
 	// FAQ
 	FAQURL string
 
+	// Реестр резидентов
+	ResidentsEnabled bool
+	ResidentsURL     string
+
 	// Telegram-каналы
 	TelegramChannels  string // comma-separated список каналов
 	TelegramRssHubURL string // URL RSSHub-инстанса для Telegram
@@ -90,6 +94,17 @@ type Config struct {
 	// Генератор документов
 	GeneratorTemplateDir string // директория шаблонов документов
 	GeneratorOutputDir   string // директория для сгенерированных документов
+
+	// Миграции БД
+	MigrationsDir string // директория с SQL-миграциями
+	AutoMigrate   bool   // применять миграции автоматически при запуске serve
+
+	// SMTP (отправка ссылок входа в портал)
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	SMTPFrom     string
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -131,6 +146,10 @@ func Load() Config {
 
 		// FAQ
 		FAQURL: env("FAQ_URL", "https://sk.ru/foundation/faq/"),
+
+		// Реестр резидентов
+		ResidentsEnabled: envBool("RESIDENTS_ENABLED", false),
+		ResidentsURL:     env("RESIDENTS_URL", "https://sk.ru/residents/"),
 
 		// Telegram-каналы
 		TelegramChannels:  env("TELEGRAM_CHANNELS", ""),
@@ -176,6 +195,17 @@ func Load() Config {
 		// Генератор документов
 		GeneratorTemplateDir: env("GENERATOR_TEMPLATE_DIR", "./templates"),
 		GeneratorOutputDir:   env("GENERATOR_OUTPUT_DIR", "./Документы_Сколково/Сгенерированные"),
+
+		// Миграции БД
+		MigrationsDir: env("MIGRATIONS_DIR", "./migrations"),
+		AutoMigrate:   envBool("AUTO_MIGRATE", true),
+
+		// SMTP
+		SMTPHost:     env("SMTP_HOST", ""),
+		SMTPPort:     envInt("SMTP_PORT", 587),
+		SMTPUser:     env("SMTP_USER", ""),
+		SMTPPassword: env("SMTP_PASSWORD", ""),
+		SMTPFrom:     env("SMTP_FROM", ""),
 	}
 }
 

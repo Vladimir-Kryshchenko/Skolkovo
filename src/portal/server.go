@@ -16,6 +16,7 @@ import (
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/generator"
+	"baza-skolkovo/src/mailer"
 )
 
 // PortalConfig — конфигурация портала.
@@ -35,6 +36,7 @@ type PortalStores struct {
 	DocStore       store.ClientDocumentStore
 	DocumentStore  store.Store                  // реестр документов (для скачивания)
 	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
+	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
 
 // PortalServer — HTTP-сервер личного кабинета.
@@ -230,7 +232,19 @@ func (ps *PortalServer) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Для MVP показываем ссылку на странице (в продакшене — отправка по email)
+	// Если настроен SMTP — отправляем ссылку на email и не раскрываем её на странице.
+	if ps.stores.Mailer != nil && ps.stores.Mailer.Enabled() {
+		body := fmt.Sprintf("Здравствуйте!\n\nДля входа в личный кабинет «База Сколково» перейдите по ссылке (действует 15 минут):\n\n%s\n\nЕсли вы не запрашивали вход, проигнорируйте это письмо.", link)
+		if err := ps.stores.Mailer.Send(r.Context(), email, "Вход в личный кабинет «База Сколково»", body); err != nil {
+			log.Printf("[portal] не удалось отправить ссылку на %s: %v", email, err)
+			http.Redirect(w, r, "/login?msg=Не+удалось+отправить+письмо,+попробуйте+позже&kind=err", http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/login?msg=Ссылка+для+входа+отправлена+на+ваш+email&kind=ok", http.StatusSeeOther)
+		return
+	}
+
+	// Fallback (dev): показываем ссылку прямо на странице.
 	http.Redirect(w, r, "/login?msg=Ссылка+для+входа:+&link="+url.QueryEscape(link)+"&kind=ok", http.StatusSeeOther)
 }
 

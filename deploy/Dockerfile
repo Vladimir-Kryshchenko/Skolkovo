@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /out/skolkovo /app/skolkovo
+# Миграции БД нужны в рантайме: serve применяет их автоматически при старте.
+COPY --from=build /src/deploy/migrations /app/migrations
 EXPOSE 8080 8090
 ENTRYPOINT ["/app/skolkovo"]
 CMD ["serve"]

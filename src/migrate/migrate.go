@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -40,7 +41,7 @@ type Migration struct {
 // AppliedMigration — запись из schema_migrations.
 type AppliedMigration struct {
 	Version   string
-	AppliedAt string
+	AppliedAt time.Time
 	Filename  string
 	Checksum  string
 }

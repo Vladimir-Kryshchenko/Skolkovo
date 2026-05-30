@@ -55,13 +55,31 @@ var aiTmpl = template.Must(template.New("ai").Funcs(template.FuncMap{
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f0f2f5; --surface: #fff; --primary: #1e40af; --primary-hover: #1e3a8a;
+  --bg: #f0f2f5; --surface: #fff; --surface-alt: #f8fafc; --primary: #1e40af; --primary-hover: #1e3a8a;
   --primary-light: #eff6ff; --text: #1e293b; --text-secondary: #64748b;
   --border: #e2e8f0; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
   --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -2px rgba(0,0,0,.05);
   --green: #16a34a; --green-bg: #f0fdf4; --yellow: #ca8a04; --yellow-bg: #fefce8;
   --red: #dc2626; --red-bg: #fef2f2; --blue: #2563eb; --purple: #7c3aed; --purple-bg: #f5f3ff;
   --gray: #6b7280; --gray-bg: #f3f4f6;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
+    --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
+    --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
+    --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
+    --gray: #94a3b8; --gray-bg: #334155;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
+  --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
+  --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
+  --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
+  --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
+  --gray: #94a3b8; --gray-bg: #334155;
 }
 body { font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
 header { background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%); color:#fff; padding:16px 28px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,.15); position:sticky; top:0; z-index:100; }
@@ -70,6 +88,7 @@ header h1 { font-size:18px; font-weight:600; display:flex; align-items:center; g
 .nav-btn:hover { background:rgba(255,255,255,.25); }
 .nav-btn.active { background:rgba(255,255,255,.35); border-color:rgba(255,255,255,.5); }
 main { max-width:1400px; margin:0 auto; padding:24px 28px; }
+@media(max-width:768px) { main { padding:16px; } .form-row { grid-template-columns:1fr; } }
 .tabs { display:flex; gap:4px; margin-bottom:20px; background:var(--surface); border-radius:var(--radius); padding:6px; box-shadow:var(--shadow); width:fit-content; }
 .tab { padding:8px 20px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; text-decoration:none; color:var(--text-secondary); transition:all .15s; }
 .tab:hover { background:var(--primary-light); color:var(--primary); }
@@ -79,9 +98,9 @@ main { max-width:1400px; margin:0 auto; padding:24px 28px; }
 .card-header h2 { font-size:15px; font-weight:600; }
 .card-body { padding:20px; }
 table { width:100%; border-collapse:collapse; }
-thead th { background:#f8fafc; padding:10px 14px; text-align:left; font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; border-bottom:2px solid var(--border); }
+thead th { background:var(--surface-alt); padding:10px 14px; text-align:left; font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; border-bottom:2px solid var(--border); }
 tbody td { padding:12px 14px; border-bottom:1px solid var(--border); font-size:13px; vertical-align:middle; }
-tbody tr:hover { background:#f8fafc; }
+tbody tr:hover { background:var(--surface-alt); }
 tbody tr:last-child td { border-bottom:none; }
 .badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; }
 .badge-green { background:var(--green-bg); color:var(--green); }
@@ -106,7 +125,7 @@ tbody tr:last-child td { border-bottom:none; }
 .form-group input, .form-group select, .form-group textarea {
   width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:6px;
   font-size:13px; font-family:inherit; outline:none; transition:border-color .15s,box-shadow .15s;
-  background:#fff;
+  background:var(--surface); color:var(--text);
 }
 .form-group input:focus,.form-group select:focus,.form-group textarea:focus {
   border-color:var(--primary); box-shadow:0 0 0 3px rgba(30,64,175,.1);
@@ -123,11 +142,11 @@ tbody tr:last-child td { border-bottom:none; }
 .pi-openai { background:#000; color:#fff; }
 .pi-anthropic { background:#d97706; color:#fff; }
 .pi-custom { background:#7c3aed; color:#fff; }
-.test-area { margin-top:24px; background:#f8fafc; border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
+.test-area { margin-top:24px; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
 .test-area h3 { font-size:13px; font-weight:600; margin-bottom:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; }
 .test-input { display:flex; gap:8px; align-items:flex-start; }
 .test-input textarea { flex:1; min-height:80px; }
-.test-result { margin-top:12px; background:#fff; border:1px solid var(--border); border-radius:6px; padding:14px; font-size:13px; min-height:60px; white-space:pre-wrap; line-height:1.6; }
+.test-result { margin-top:12px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:14px; font-size:13px; min-height:60px; white-space:pre-wrap; line-height:1.6; color:var(--text); }
 .test-result.loading { color:var(--text-secondary); font-style:italic; }
 .test-result.success { border-left:3px solid var(--green); }
 .test-result.error { border-left:3px solid var(--red); color:var(--red); }
@@ -142,20 +161,23 @@ tbody tr:last-child td { border-bottom:none; }
 .stat-card.green .n { color:var(--green); }
 .stat-card.purple { border-left:3px solid var(--purple); }
 .stat-card.purple .n { color:var(--purple); }
-.prompt-preview { font-family:'SF Mono','Fira Code',monospace; font-size:12px; background:#f8fafc; border:1px solid var(--border); border-radius:4px; padding:8px; max-height:80px; overflow:hidden; position:relative; cursor:pointer; }
-.prompt-preview::after { content:''; position:absolute; bottom:0; left:0; right:0; height:24px; background:linear-gradient(transparent,#f8fafc); }
+.prompt-preview { font-family:'SF Mono','Fira Code',monospace; font-size:12px; background:var(--surface-alt); border:1px solid var(--border); border-radius:4px; padding:8px; max-height:80px; overflow:hidden; position:relative; cursor:pointer; color:var(--text); }
+.prompt-preview::after { content:''; position:absolute; bottom:0; left:0; right:0; height:24px; background:linear-gradient(transparent,var(--surface-alt)); }
 .key-display { font-family:'SF Mono','Fira Code',monospace; font-size:12px; color:var(--text-secondary); }
 .actions-cell { display:flex; gap:4px; flex-wrap:wrap; }
 @media(max-width:768px) { .form-row { grid-template-columns:1fr; } main { padding:16px; } }
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>🤖 База Сколково — ИИ Конфигурация</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;">
-    <a href="/" class="nav-btn">← Документы</a>
-    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}">Модели</a>
-    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}">Агенты</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/" class="nav-btn" title="Вернуться к документам">← Документы</a>
+    <a href="/clients" class="nav-btn" title="Управление клиентами резидентства">🏢 Клиенты</a>
+    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}" title="ИИ-модели: API-ключи, провайдеры, параметры">Модели</a>
+    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}" title="ИИ-агенты: промпты, типы, настройки">Агенты</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" class="nav-btn" style="font-size:16px;min-width:36px;cursor:pointer;border:none">🌙</button>
   </div>
 </header>
 <main>
@@ -242,6 +264,21 @@ function seedQwen() {
     else { alert('Добавлено '+d.count+' моделей Qwen'); location.reload(); }
   });
 }
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  var btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+});
 </script>
 </body>
 </html>

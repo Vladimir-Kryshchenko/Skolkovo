@@ -973,13 +973,31 @@ func generateUUID() string {
 const residencyCSS = `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f0f2f5; --surface: #fff; --primary: #1e40af; --primary-hover: #1e3a8a;
+  --bg: #f0f2f5; --surface: #fff; --surface-alt: #f8fafc; --primary: #1e40af; --primary-hover: #1e3a8a;
   --primary-light: #eff6ff; --text: #1e293b; --text-secondary: #64748b;
   --border: #e2e8f0; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08);
   --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.1);
   --green: #16a34a; --green-bg: #f0fdf4; --yellow: #ca8a04; --yellow-bg: #fefce8;
   --red: #dc2626; --red-bg: #fef2f2; --blue: #2563eb; --purple: #7c3aed; --purple-bg: #f5f3ff;
   --gray: #6b7280; --gray-bg: #f3f4f6; --orange: #ea580c; --orange-bg: #fff7ed;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
+    --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
+    --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
+    --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
+    --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
+    --gray: #94a3b8; --gray-bg: #334155; --orange: #fb923c; --orange-bg: #1c0a00;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
+  --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
+  --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
+  --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
+  --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
+  --gray: #94a3b8; --gray-bg: #334155; --orange: #fb923c; --orange-bg: #1c0a00;
 }
 body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
 header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
@@ -1003,9 +1021,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .search-box input:focus { border-color: var(--primary); }
 .table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
 table { width: 100%; border-collapse: collapse; }
-thead th { background: #f8fafc; padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); }
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); }
 tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-tbody tr:hover { background: #f8fafc; }
+tbody tr:hover { background: var(--surface-alt); }
 .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
 .stage-подача_заявки { background: var(--gray-bg); color: var(--gray); }
 .stage-экспертиза { background: var(--yellow-bg); color: var(--yellow); }
@@ -1026,7 +1044,7 @@ tbody tr:hover { background: #f8fafc; }
 .flash { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 500; }
 .flash.ok { background: var(--green-bg); color: #15803d; border: 1px solid #bbf7d0; }
 .flash.err { background: var(--red-bg); color: #b91c1c; border: 1px solid #fecaca; }
-select, input[type=text], textarea { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; }
+select, input[type=text], textarea { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: inherit; background: var(--surface); color: var(--text); }
 select:focus, input[type=text]:focus, textarea:focus { border-color: var(--primary); }
 textarea { resize: vertical; min-height: 60px; }
 .card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 16px; }
@@ -1065,18 +1083,22 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 <title>Клиенты — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
-  <h1>🏢 Клиенты</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <h1>🏢 Клиенты — Резидентство</h1>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/" title="Документы базы знаний">📋 Документы</a>
+    <a href="/clients" title="Список всех клиентов">Клиенты</a>
+    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
+    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
+    <a href="/tenants" title="Организации и API-ключи">Тенанты</a>
+    <a href="/events-admin" title="Список мероприятий">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
+    <a href="/ai/models" title="ИИ-модели и агенты">🤖 ИИ</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1147,6 +1169,23 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  var btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+});
+</script>
 </body>
 </html>`))
 
@@ -1159,12 +1198,16 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 <title>{{.Client.Name}} — Карточка клиента</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>👤 {{.Client.Name}}</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">← Назад к списку</a>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/clients" title="Вернуться к списку клиентов">← Клиенты</a>
+    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
+    <a href="/checklists" title="Чек-листы">Чек-листы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1251,6 +1294,23 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
   </div>
 </div>
 </main>
+<script>
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  var btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+});
+</script>
 </body>
 </html>`))
 
@@ -1263,18 +1323,20 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 <title>Чек-листы — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>✅ Чек-листы</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Список клиентов">Клиенты</a>
+    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
+    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
+    <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1330,6 +1392,10 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))
 
@@ -1342,18 +1408,20 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 <title>Дедлайны — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>⏰ Дедлайны</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Список клиентов">Клиенты</a>
+    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
+    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
+    <a href="/tenants" title="Тенанты">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1396,6 +1464,10 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))
 
@@ -1408,18 +1480,20 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 <title>Шаблоны документов — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>📄 Шаблоны документов</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Список клиентов">Клиенты</a>
+    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
+    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
+    <a href="/tenants" title="Тенанты">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1460,6 +1534,10 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))
 
@@ -1472,18 +1550,20 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 <title>Тенанты — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>🏢 Тенанты</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Список клиентов">Клиенты</a>
+    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
+    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
+    <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1537,6 +1617,10 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))
 
@@ -1549,18 +1633,20 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 <title>Мероприятия — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
   <h1>📅 Мероприятия</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Клиенты">Клиенты</a>
+    <a href="/checklists" title="Чек-листы">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
+    <a href="/templates" title="Шаблоны">Шаблоны</a>
+    <a href="/tenants" title="Тенанты">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1619,6 +1705,10 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))
 
@@ -1631,18 +1721,20 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 <title>Конкурсы — Резидентство</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>` + residencyCSS + `</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
-  <h1>🏆 Конкурсы</h1>
-  <div style="display:flex;gap:8px">
-    <a href="/clients">Клиенты</a>
-    <a href="/checklists">Чек-листы</a>
-    <a href="/deadlines">Дедлайны</a>
-    <a href="/templates">Шаблоны</a>
-    <a href="/tenants">Тенанты</a>
-    <a href="/events-admin">Мероприятия</a>
-    <a href="/contests-admin">Конкурсы</a>
+  <h1>🏆 Конкурсы и гранты</h1>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    <a href="/clients" title="Клиенты">Клиенты</a>
+    <a href="/checklists" title="Чек-листы">Чек-листы</a>
+    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
+    <a href="/templates" title="Шаблоны">Шаблоны</a>
+    <a href="/tenants" title="Тенанты">Тенанты</a>
+    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
+    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
   </div>
 </header>
 <main>
@@ -1700,5 +1792,9 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 </div>
 {{end}}
 </main>
+<script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script>
 </body>
 </html>`))

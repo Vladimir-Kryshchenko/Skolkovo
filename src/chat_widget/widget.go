@@ -139,41 +139,59 @@ var chatPageHTML = template.Must(template.New("chat").Parse(`<!DOCTYPE html>
 <style>
 :root {
   --primary: {{.PrimaryColor}};
+  --bg: #f3f4f6; --surface: #fff; --msg-bg: #f3f4f6; --msg-code: #e5e7eb;
+  --text: #1f2937; --text-muted: #9ca3af; --border: #e5e7eb; --input-border: #d1d5db;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f172a; --surface: #1e293b; --msg-bg: #334155; --msg-code: #475569;
+    --text: #e2e8f0; --text-muted: #94a3b8; --border: #334155; --input-border: #475569;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f172a; --surface: #1e293b; --msg-bg: #334155; --msg-code: #475569;
+  --text: #e2e8f0; --text-muted: #94a3b8; --border: #334155; --input-border: #475569;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
-.chat-container { width: 100%; max-width: 520px; background: #fff; border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,.12); display: flex; flex-direction: column; height: 80vh; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+.chat-container { width: 100%; max-width: 520px; background: var(--surface); border-radius: 16px; box-shadow: 0 4px 24px rgba(0,0,0,.12); display: flex; flex-direction: column; height: 80vh; overflow: hidden; }
 .chat-header { background: var(--primary); color: #fff; padding: 16px 20px; display: flex; align-items: center; gap: 12px; }
 .chat-header img { height: 32px; border-radius: 4px; }
-.chat-header h2 { font-size: 18px; font-weight: 600; }
+.chat-header h2 { font-size: 18px; font-weight: 600; flex: 1; }
+.chat-header-btn { background: rgba(255,255,255,.2); color: #fff; border: 1px solid rgba(255,255,255,.3); border-radius: 6px; font-size: 14px; padding: 4px 8px; cursor: pointer; }
 .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
 .message { max-width: 85%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; word-wrap: break-word; }
 .message.user { align-self: flex-end; background: var(--primary); color: #fff; }
-.message.assistant { align-self: flex-start; background: #f3f4f6; color: #1f2937; }
+.message.assistant { align-self: flex-start; background: var(--msg-bg); color: var(--text); }
 .message.assistant p { margin: 0 0 8px; }
 .message.assistant p:last-child { margin-bottom: 0; }
-.message.assistant code { background: #e5e7eb; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
-.message.assistant pre { background: #e5e7eb; padding: 8px 12px; border-radius: 6px; overflow-x: auto; }
+.message.assistant code { background: var(--msg-code); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+.message.assistant pre { background: var(--msg-code); padding: 8px 12px; border-radius: 6px; overflow-x: auto; }
 .message.assistant pre code { background: none; padding: 0; }
-.chat-input-area { border-top: 1px solid #e5e7eb; padding: 12px; display: flex; gap: 8px; background: #fff; }
-.chat-input-area input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 10px 14px; font-size: 14px; outline: none; }
+.chat-input-area { border-top: 1px solid var(--border); padding: 12px; display: flex; gap: 8px; background: var(--surface); }
+.chat-input-area input { flex: 1; border: 1px solid var(--input-border); border-radius: 8px; padding: 10px 14px; font-size: 14px; outline: none; background: var(--surface); color: var(--text); }
 .chat-input-area input:focus { border-color: var(--primary); }
 .chat-input-area button { background: var(--primary); color: #fff; border: none; border-radius: 8px; padding: 10px 20px; font-weight: 600; cursor: pointer; }
 .chat-input-area button:disabled { opacity: .5; cursor: not-allowed; }
-.typing { color: #9ca3af; font-style: italic; font-size: 13px; padding: 0 16px 8px; }
+.typing { color: var(--text-muted); font-style: italic; font-size: 13px; padding: 0 16px 8px; }
+@media (max-width: 600px) {
+  .chat-container { height: 100vh; border-radius: 0; max-width: 100%; }
+}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <div class="chat-container">
   <div class="chat-header">
     {{if .LogoURL}}<img src="{{.LogoURL}}" alt="logo">{{end}}
     <h2>Консультант Сколково</h2>
+    <button class="chat-header-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">🌙</button>
   </div>
   <div class="chat-messages" id="messages"></div>
   <div class="typing" id="typing" style="display:none">Печатает…</div>
   <div class="chat-input-area">
-    <input id="input" type="text" placeholder="Введите сообщение…" autocomplete="off">
-    <button id="send" disabled>Отправить</button>
+    <input id="input" type="text" placeholder="Введите сообщение…" autocomplete="off" title="Нажмите Enter для отправки">
+    <button id="send" disabled title="Отправить сообщение (Enter)">Отправить</button>
   </div>
 </div>
 <script>
@@ -229,6 +247,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 
   createSession().then(function(){ addMessage('assistant', '{{.WelcomeMessage}}'); });
 })();
+
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  var btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+});
 </script>
 </body>
 </html>`))
@@ -273,7 +307,7 @@ const widgetJS = `
       '<div class="sk-header"><span class="sk-logo-wrap"></span><span>Консультант</span></div>'+
       '<div class="sk-messages" id="sk-msgs"></div>'+
       '<div class="sk-typing" id="sk-typing">Печатает&#8230;</div>'+
-      '<div class="sk-input-row"><input id="sk-input" type="text" placeholder="Сообщение&#8230;" autocomplete="off"><button id="sk-send">Send</button></div>'+
+      '<div class="sk-input-row"><input id="sk-input" type="text" placeholder="Сообщение&#8230;" autocomplete="off"><button id="sk-send" title="Отправить сообщение (Enter)">Отправить</button></div>'+
     '</div>';
 
   function initWidget(cfg) {

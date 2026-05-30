@@ -843,9 +843,8 @@ func cmdAdmin(cfg config.Config) error {
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
 	go func() {
-		handler := admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Baza Skolkovo Residency", residencyMux)
-		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, handler); err != nil {
+		log.Printf("[admin:residency] запуск на %s", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
@@ -902,9 +901,8 @@ func cmdServe(cfg config.Config) error {
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
 	go func() {
-		handler := admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Baza Skolkovo Residency", residencyMux)
-		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, handler); err != nil {
+		log.Printf("[admin:residency] запуск на %s", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
@@ -1022,9 +1020,8 @@ func cmdServe(cfg config.Config) error {
 			}
 			if consultantStores.ClientStore != nil {
 				mux := admin.RegisterConsultantRoutes(nil, consultantStores)
-				handler := admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Baza Skolkovo Consultant", mux)
-				log.Printf("[consultant] дашборд запускается на %s (BasicAuth)", cfg.ConsultantAddr)
-				if err := http.ListenAndServe(cfg.ConsultantAddr, handler); err != nil {
+				log.Printf("[consultant] дашборд запускается на %s", cfg.ConsultantAddr)
+				if err := http.ListenAndServe(cfg.ConsultantAddr, mux); err != nil {
 					log.Printf("[consultant] остановлен: %v", err)
 				}
 			} else {

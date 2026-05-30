@@ -14,9 +14,11 @@ services:
   # Локальные эмбеддинги multilingual-e5 (HuggingFace Text Embeddings Inference)
   # CPU-образ. Для GPU использовать образ без суффикса -cpu и добавить deploy.resources.
   tei:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
     restart: unless-stopped
     command: ["--model-id", "intfloat/multilingual-e5-base"]
+    environment:
+      HF_ENDPOINT: https://huggingface.co
     ports:
       - "8081:80"
     volumes:
@@ -49,7 +51,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       TEI_URL: http://tei:80
       POSTGRES_DSN: postgres://${POSTGRES_USER:-skolkovo}:${POSTGRES_PASSWORD:-skolkovo}@postgres:5432/${POSTGRES_DB:-skolkovo}?sslmode=disable
-      STORE_BACKEND: ${STORE_BACKEND:-postgres}
+      STORE_BACKEND: postgres
       MCP_API_KEY: ${MCP_API_KEY:-change-me-please}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
@@ -62,6 +64,11 @@ services:
     ports:
       - "8080:8080"   # MCP
       - "8090:8090"   # админка
+      - "8091:8091"   # резидентство-админ
+      - "8092:8092"   # портал клиента
+      - "8093:8093"   # чат-виджет
+      - "8094:8094"   # дашборд консультанта
+      - "9090:9090"   # prometheus метрики
     volumes:
       - docs_data:/data/docs
       - reports_data:/data/reports

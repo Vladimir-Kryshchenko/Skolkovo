@@ -238,53 +238,64 @@ func renderDashboard(rows []ClientRow) string {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Дашборд консультанта — База Сколково</title>
 <style>
+:root{--bg:#f4f5f7;--surface:#fff;--text:#172b4d;--text-muted:#6b778c;--border:#e0e0e0;--header-bg:#0052cc;--tr-hover:#fafbfc;--progress-bg:#e0e0e0}
+@media(prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#0f172a;--surface:#1e293b;--text:#e2e8f0;--text-muted:#94a3b8;--border:#334155;--header-bg:#1e40af;--tr-hover:#243357;--progress-bg:#334155}}
+:root[data-theme=dark]{--bg:#0f172a;--surface:#1e293b;--text:#e2e8f0;--text-muted:#94a3b8;--border:#334155;--header-bg:#1e40af;--tr-hover:#243357;--progress-bg:#334155}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#f4f5f7;color:#172b4d}
-.header{background:#0052cc;color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text)}
+.header{background:var(--header-bg);color:#fff;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .header h1{font-size:20px;font-weight:600}
 .header .time{font-size:13px;opacity:0.8}
+.header-right{display:flex;align-items:center;gap:10px}
+.theme-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;padding:6px 10px;font-size:16px;cursor:pointer;min-width:36px}
 .summary{display:flex;gap:16px;padding:20px 24px;flex-wrap:wrap}
-.summary-card{background:#fff;border-radius:8px;padding:16px 20px;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-.summary-card .label{font-size:12px;color:#6b778c;text-transform:uppercase;letter-spacing:.5px}
+.summary-card{background:var(--surface);border-radius:8px;padding:16px 20px;min-width:140px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+.summary-card .label{font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
 .summary-card .value{font-size:28px;font-weight:700;margin-top:4px}
 .summary-card.overdue .value{color:#de350b}
 .summary-card.critical .value{color:#ff5630}
 .summary-card.warning .value{color:#ff8b00}
 .summary-card.ok .value{color:#00875a}
 .table-wrap{padding:0 24px 24px}
-table{width:100%;border-collapse:collapse;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-th{background:#f4f5f7;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:#6b778c;padding:10px 14px;text-align:left;border-bottom:2px solid #e0e0e0}
-td{padding:12px 14px;border-bottom:1px solid #f0f0f0;font-size:14px;vertical-align:middle}
+table{width:100%;border-collapse:collapse;background:var(--surface);border-radius:8px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+th{background:var(--bg);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);padding:10px 14px;text-align:left;border-bottom:2px solid var(--border)}
+td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:14px;vertical-align:middle}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:#fafbfc}
+tr:hover td{background:var(--tr-hover)}
 .badge{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:600;white-space:nowrap}
 .badge-overdue{background:#ffebe6;color:#de350b}
 .badge-critical{background:#fff0e0;color:#ff5630}
 .badge-warning{background:#fffae6;color:#ff8b00}
 .badge-ok{background:#e3fcef;color:#00875a}
-.progress-bar{width:100%;height:8px;background:#e0e0e0;border-radius:4px;overflow:hidden}
+.progress-bar{width:100%;height:8px;background:var(--progress-bg);border-radius:4px;overflow:hidden}
 .progress-bar .fill{height:100%;background:#0052cc;border-radius:4px;transition:width .3s}
-.progress-label{font-size:11px;color:#6b778c;margin-top:2px}
+.progress-label{font-size:11px;color:var(--text-muted);margin-top:2px}
 .deadline-cell{font-size:13px}
 .deadline-cell .title{font-weight:500}
-.deadline-cell .date{color:#6b778c;font-size:12px;margin-top:2px}
+.deadline-cell .date{color:var(--text-muted);font-size:12px;margin-top:2px}
 .deadline-cell .days{font-weight:600}
 .days-overdue{color:#de350b}
 .days-critical{color:#ff5630}
 .days-warning{color:#ff8b00}
-.days-ok{color:#6b778c}
+.days-ok{color:var(--text-muted)}
 a.client-link{color:#0052cc;text-decoration:none;font-weight:500}
 a.client-link:hover{text-decoration:underline}
-.inn{font-size:12px;color:#6b778c}
-.empty{text-align:center;padding:40px;color:#6b778c}
+.inn{font-size:12px;color:var(--text-muted)}
+.empty{text-align:center;padding:40px;color:var(--text-muted)}
+@media(max-width:768px){.summary{gap:10px;padding:16px}.table-wrap{padding:0 16px 16px}table{font-size:12px}th,td{padding:8px 10px}}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 `)
 
 	sb.WriteString(fmt.Sprintf(`<div class="header">
-  <h1>Дашборд консультанта — База Сколково</h1>
-  <div class="time">%s</div>
+  <h1>📋 Дашборд консультанта</h1>
+  <div class="header-right">
+    <div class="time" title="Время последнего обновления">%s</div>
+    <a href="/" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);border-radius:6px;padding:7px 12px;font-size:13px;text-decoration:none" title="Вернуться к документам">← Документы</a>
+    <button id="themeBtn" class="theme-btn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">🌙</button>
+  </div>
 </div>
 `, now.Format("02.01.2006 15:04")))
 
@@ -374,7 +385,10 @@ a.client-link:hover{text-decoration:underline}
 		sb.WriteString("</tr>\n")
 	}
 
-	sb.WriteString("</tbody></table></div></body></html>")
+	sb.WriteString(`</tbody></table></div><script>
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
+document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+</script></body></html>`)
 	return sb.String()
 }
 

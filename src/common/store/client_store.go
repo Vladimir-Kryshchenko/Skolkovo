@@ -48,9 +48,10 @@ func validateClient(c *model.Client) error {
 	if c.ContactPhone != "" && !phoneRe.MatchString(c.ContactPhone) {
 		return ErrInvalidPhone
 	}
-	if strings.TrimSpace(c.TenantID) == "" {
-		return fmt.Errorf("TenantID: %w", ErrEmptyField)
-	}
+	// TenantID is optional — auto-assigned to default tenant if empty.
+	// if strings.TrimSpace(c.TenantID) == "" {
+	// 	return fmt.Errorf("TenantID: %w", ErrEmptyField)
+	// }
 	return nil
 }
 

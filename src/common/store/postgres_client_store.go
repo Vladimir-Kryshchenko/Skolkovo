@@ -99,7 +99,17 @@ func (s *PostgresClientStore) ListClients(ctx context.Context, tenantID string, 
 	var rows pgx.Rows
 	var err error
 
-	if stage == "" {
+	if tenantID == "" && stage == "" {
+		rows, err = s.db.Query(ctx, `
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+FROM clients
+ORDER BY created_at DESC`)
+	} else if tenantID == "" {
+		rows, err = s.db.Query(ctx, `
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+FROM clients WHERE residency_stage = $1
+ORDER BY created_at DESC`, string(stage))
+	} else if stage == "" {
 		rows, err = s.db.Query(ctx, `
 SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
 FROM clients WHERE tenant_id = $1
@@ -389,7 +399,17 @@ func (s *PostgresClientStore) ListDeadlines(ctx context.Context, clientID string
 	var rows pgx.Rows
 	var err error
 
-	if daysAhead <= 0 {
+	if clientID == "" && daysAhead <= 0 {
+		rows, err = s.db.Query(ctx, `
+SELECT id, client_id, title, due_date, type, status, notification_sent, created_at
+FROM deadlines
+ORDER BY due_date ASC`)
+	} else if clientID == "" {
+		rows, err = s.db.Query(ctx, `
+SELECT id, client_id, title, due_date, type, status, notification_sent, created_at
+FROM deadlines WHERE due_date <= now() + ($1 * interval '1 day')
+ORDER BY due_date ASC`, daysAhead)
+	} else if daysAhead <= 0 {
 		rows, err = s.db.Query(ctx, `
 SELECT id, client_id, title, due_date, type, status, notification_sent, created_at
 FROM deadlines WHERE client_id = $1

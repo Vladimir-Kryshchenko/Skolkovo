@@ -5,7 +5,6 @@ package admin
 import (
 	"context"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -47,14 +46,25 @@ type Server struct {
 	proxyURL    string
 	fetchWait   time.Duration
 	sourceURL   string
+	authStore   *adminAuthStore
 }
 
 // New создаёт админку.
 func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 	fetchWait time.Duration, st store.Store, ragSvc *rag.Service) *Server {
+	authStore := newAdminAuthStore()
+	// Добавляем пользователей из ENV
+	if user != "" && pass != "" {
+		authStore.AddUser(user, pass, "Администратор", RoleAdmin)
+	}
+	// Добавляем стандартного пользователя (если задан через доп. переменные)
+	authStore.AddUser("user", "user123", "Пользователь", RoleUser)
+	authStore.AddUser("viewer", "viewer123", "Наблюдатель", RoleViewer)
+
 	return &Server{
 		store: st, rag: ragSvc, addr: addr, user: user, pass: pass, docsDir: docsDir,
 		chromePath: chromePath, proxyURL: proxyURL, fetchWait: fetchWait, sourceURL: sourceURL,
+		authStore: authStore,
 	}
 }
 
@@ -89,6 +99,13 @@ type pageData struct {
 	Reports      []model.CollectorReport
 	Validation   *model.ValidationReport
 	NextRunStr   string
+	CurrentUser  *AdminSession
+}
+
+// loginPageData — данные для страницы входа.
+type loginPageData struct {
+	Flash     string
+	FlashKind string
 }
 
 // ListenAndServe запускает админку.
@@ -115,106 +132,210 @@ func (s *Server) ListenAndServe() error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /", s.handleIndex)
-	mux.HandleFunc("GET /stats", s.handleStats)
-	mux.HandleFunc("POST /documents/{id}/status", s.handleStatus)
-	mux.HandleFunc("POST /documents/{id}/category", s.handleCategory)
-	mux.HandleFunc("POST /documents/{id}/supersedes", s.handleSupersedes)
-	mux.HandleFunc("POST /documents/{id}/upload", s.handleUpload)
-	mux.HandleFunc("POST /documents/{id}/delete", s.handleDelete)
-	mux.HandleFunc("GET /documents/{id}/view-original", s.handleViewOriginal)
-	mux.HandleFunc("GET /documents/{id}/view-processed", s.handleViewProcessed)
-	mux.HandleFunc("GET /documents/{id}/download", s.handleDownload)
-	mux.HandleFunc("POST /documents/{id}/deindex", s.handleDeindex)
+
+	// Публичные маршруты (без авторизации)
+	mux.HandleFunc("GET /login", s.handleLoginPage)
+	mux.HandleFunc("POST /login", s.handleLoginSubmit)
+	mux.HandleFunc("GET /logout", s.handleLogout)
+
+	// Защищённые маршруты (требуют сессии)
+	mux.HandleFunc("GET /", s.requireAuth(s.handleIndex))
+	mux.HandleFunc("GET /stats", s.requireAuth(s.handleStats))
+	mux.HandleFunc("POST /documents/{id}/status", s.requireAuth(s.handleStatus))
+	mux.HandleFunc("POST /documents/{id}/category", s.requireAuth(s.handleCategory))
+	mux.HandleFunc("POST /documents/{id}/supersedes", s.requireAuth(s.handleSupersedes))
+	mux.HandleFunc("POST /documents/{id}/upload", s.requireAuth(s.handleUpload))
+	mux.HandleFunc("POST /documents/{id}/delete", s.requireAuth(s.handleDelete))
+	mux.HandleFunc("GET /documents/{id}/view-original", s.requireAuth(s.handleViewOriginal))
+	mux.HandleFunc("GET /documents/{id}/view-processed", s.requireAuth(s.handleViewProcessed))
+	mux.HandleFunc("GET /documents/{id}/download", s.requireAuth(s.handleDownload))
+	mux.HandleFunc("POST /documents/{id}/deindex", s.requireAuth(s.handleDeindex))
 
 	// Старые API (обратная совместимость)
-	mux.HandleFunc("POST /api/scrape", s.handleAPIScrape)
-	mux.HandleFunc("POST /api/index", s.handleAPIIndex)
-	mux.HandleFunc("POST /api/sync", s.handleAPISync)
-	mux.HandleFunc("POST /api/seed-local", s.handleAPISeedLocal)
+	mux.HandleFunc("POST /api/scrape", s.requireAuthJSON(s.handleAPIScrape))
+	mux.HandleFunc("POST /api/index", s.requireAuthJSON(s.handleAPIIndex))
+	mux.HandleFunc("POST /api/sync", s.requireAuthJSON(s.handleAPISync))
+	mux.HandleFunc("POST /api/seed-local", s.requireAuthJSON(s.handleAPISeedLocal))
 
 	// API для коллектора (полный цикл)
-	mux.HandleFunc("POST /api/collect", s.handleAPICollect)
-	mux.HandleFunc("POST /api/validate", s.handleAPIValidate)
+	mux.HandleFunc("POST /api/collect", s.requireAuthJSON(s.handleAPICollect))
+	mux.HandleFunc("POST /api/validate", s.requireAuthJSON(s.handleAPIValidate))
 
 	// API для планировщика
-	mux.HandleFunc("GET /api/settings", s.handleAPISettings)
-	mux.HandleFunc("POST /api/settings", s.handleAPISettingsUpdate)
-	mux.HandleFunc("GET /api/reports", s.handleAPIReports)
+	mux.HandleFunc("GET /api/settings", s.requireAuthJSON(s.handleAPISettings))
+	mux.HandleFunc("POST /api/settings", s.requireAuthJSON(s.handleAPISettingsUpdate))
+	mux.HandleFunc("GET /api/reports", s.requireAuthJSON(s.handleAPIReports))
 
 	// Diff — сравнение версий документов
-	mux.HandleFunc("GET /diff", s.handleDiffPage)
-	mux.HandleFunc("POST /diff", s.handleDiffCompare)
-	mux.HandleFunc("GET /api/diff/{id1}/{id2}", s.handleAPIDiff)
+	mux.HandleFunc("GET /diff", s.requireAuth(s.handleDiffPage))
+	mux.HandleFunc("POST /diff", s.requireAuth(s.handleDiffCompare))
+	mux.HandleFunc("GET /api/diff/{id1}/{id2}", s.requireAuthJSON(s.handleAPIDiff))
 
 	// Аналитика
-	mux.HandleFunc("GET /analytics", s.handleAnalyticsPage)
-	mux.HandleFunc("GET /api/analytics", s.handleAPIAnalytics)
-	mux.HandleFunc("GET /api/analytics/export", s.handleAnalyticsExport)
+	mux.HandleFunc("GET /analytics", s.requireAuth(s.handleAnalyticsPage))
+	mux.HandleFunc("GET /api/analytics", s.requireAuthJSON(s.handleAPIAnalytics))
+	mux.HandleFunc("GET /api/analytics/export", s.requireAuth(s.handleAnalyticsExport))
 
 	// Граф связей документов
-	mux.HandleFunc("GET /graph", s.handleGraphPage)
-	mux.HandleFunc("GET /api/graph/{document_id}", s.handleAPIGraphDoc)
-	mux.HandleFunc("POST /api/graph", s.handleAPIGraphCreateLink)
-	mux.HandleFunc("DELETE /api/graph/{link_id}", s.handleAPIGraphDeleteLink)
+	mux.HandleFunc("GET /graph", s.requireAuth(s.handleGraphPage))
+	mux.HandleFunc("GET /api/graph/{document_id}", s.requireAuthJSON(s.handleAPIGraphDoc))
+	mux.HandleFunc("POST /api/graph", s.requireAuthJSON(s.handleAPIGraphCreateLink))
+	mux.HandleFunc("DELETE /api/graph/{link_id}", s.requireAuthJSON(s.handleAPIGraphDeleteLink))
 
 	// ИИ Конфигурация — модели и агенты
-	mux.HandleFunc("GET /ai/models", s.handleAIModelsPage)
-	mux.HandleFunc("GET /ai/models/new", s.handleAIModelNew)
-	mux.HandleFunc("POST /ai/models/create", s.handleAIModelCreate)
-	mux.HandleFunc("GET /ai/models/{id}/edit", s.handleAIModelEdit)
-	mux.HandleFunc("POST /ai/models/{id}/update", s.handleAIModelUpdate)
-	mux.HandleFunc("POST /api/ai/models/{id}/delete", s.handleAIModelDelete)
-	mux.HandleFunc("POST /api/ai/models/{id}/test", s.handleAIModelTest)
-	mux.HandleFunc("POST /api/ai/models/seed-qwen", s.handleAISeedQwen)
+	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))
+	mux.HandleFunc("GET /ai/models/new", s.requireAuth(s.handleAIModelNew))
+	mux.HandleFunc("POST /ai/models/create", s.requireAuth(s.handleAIModelCreate))
+	mux.HandleFunc("GET /ai/models/{id}/edit", s.requireAuth(s.handleAIModelEdit))
+	mux.HandleFunc("POST /ai/models/{id}/update", s.requireAuth(s.handleAIModelUpdate))
+	mux.HandleFunc("POST /api/ai/models/{id}/delete", s.requireAuthJSON(s.handleAIModelDelete))
+	mux.HandleFunc("POST /api/ai/models/{id}/test", s.requireAuthJSON(s.handleAIModelTest))
+	mux.HandleFunc("POST /api/ai/models/seed-qwen", s.requireAuthJSON(s.handleAISeedQwen))
 
-	mux.HandleFunc("GET /ai/agents", s.handleAIAgentsPage)
-	mux.HandleFunc("GET /ai/agents/new", s.handleAIAgentNew)
-	mux.HandleFunc("POST /ai/agents/create", s.handleAIAgentCreate)
-	mux.HandleFunc("GET /ai/agents/{id}/edit", s.handleAIAgentEdit)
-	mux.HandleFunc("POST /ai/agents/{id}/update", s.handleAIAgentUpdate)
-	mux.HandleFunc("POST /api/ai/agents/{id}/delete", s.handleAIAgentDelete)
-	mux.HandleFunc("POST /api/ai/agents/{id}/test", s.handleAIAgentTest)
+	mux.HandleFunc("GET /ai/agents", s.requireAuth(s.handleAIAgentsPage))
+	mux.HandleFunc("GET /ai/agents/new", s.requireAuth(s.handleAIAgentNew))
+	mux.HandleFunc("POST /ai/agents/create", s.requireAuth(s.handleAIAgentCreate))
+	mux.HandleFunc("GET /ai/agents/{id}/edit", s.requireAuth(s.handleAIAgentEdit))
+	mux.HandleFunc("POST /ai/agents/{id}/update", s.requireAuth(s.handleAIAgentUpdate))
+	mux.HandleFunc("POST /api/ai/agents/{id}/delete", s.requireAuthJSON(s.handleAIAgentDelete))
+	mux.HandleFunc("POST /api/ai/agents/{id}/test", s.requireAuthJSON(s.handleAIAgentTest))
 
 	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик, ИИ)", s.addr)
-	return http.ListenAndServe(s.addr, s.auth(mux))
+	return http.ListenAndServe(s.addr, mux)
 }
 
-// BasicAuth возвращает middleware HTTP Basic Auth для любого handler.
-// Если user пуст — пропускает без проверки.
-func BasicAuth(user, pass, realm string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if user == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(user)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(p), []byte(pass)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="`+realm+`"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+// sessionCookieName — имя cookie сессии.
+const sessionCookieName = "admin_session"
+
+// getSessionID извлекает sessionID из cookie.
+func (s *Server) getSessionID(r *http.Request) string {
+	c, err := r.Cookie(sessionCookieName)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
-// auth — middleware HTTP Basic Auth (если заданы логин/пароль).
-func (s *Server) auth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.user == "" {
-			next.ServeHTTP(w, r)
+// requireAuth проверяет сессию и перенаправляет на /login при её отсутствии.
+func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := s.getSessionID(r)
+		if sid == "" {
+			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
 			return
 		}
-		u, p, ok := r.BasicAuth()
-		if !ok || subtle.ConstantTimeCompare([]byte(u), []byte(s.user)) != 1 ||
-			subtle.ConstantTimeCompare([]byte(p), []byte(s.pass)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Basic realm="Baza Skolkovo Admin"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		sess, err := s.authStore.GetSession(sid)
+		if err != nil {
+			http.Redirect(w, r, "/login?next="+url.QueryEscape(r.URL.Path), http.StatusSeeOther)
 			return
 		}
-		next.ServeHTTP(w, r)
+		// Передаём сессию через context
+		ctx := context.WithValue(r.Context(), ctxAdminSessionKey{}, sess)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+type ctxAdminSessionKey struct{}
+
+// sessionFromContext извлекает сессию из context.
+func sessionFromContext(r *http.Request) *AdminSession {
+	s, _ := r.Context().Value(ctxAdminSessionKey{}).(*AdminSession)
+	return s
+}
+
+// requireAuthJSON — аналог requireAuth для JSON API.
+func (s *Server) requireAuthJSON(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sid := s.getSessionID(r)
+		if sid == "" {
+			jsonErrorAdmin(w, http.StatusUnauthorized, "требуется авторизация")
+			return
+		}
+		sess, err := s.authStore.GetSession(sid)
+		if err != nil {
+			jsonErrorAdmin(w, http.StatusUnauthorized, "сессия истекла")
+			return
+		}
+		ctx := context.WithValue(r.Context(), ctxAdminSessionKey{}, sess)
+		next(w, r.WithContext(ctx))
+	}
+}
+
+func jsonErrorAdmin(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// handleLoginPage показывает страницу входа.
+func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
+	// Если уже авторизован — редирект на главную
+	sid := s.getSessionID(r)
+	if sid != "" {
+		if _, err := s.authStore.GetSession(sid); err == nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+	}
+
+	data := loginPageData{
+		Flash:     r.URL.Query().Get("msg"),
+		FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "login", data); err != nil {
+		log.Println("[admin] шаблон login:", err)
+	}
+}
+
+// handleLoginSubmit обрабатывает форму входа.
+func (s *Server) handleLoginSubmit(w http.ResponseWriter, r *http.Request) {
+	username := strings.TrimSpace(r.FormValue("username"))
+	password := r.FormValue("password")
+
+	if username == "" || password == "" {
+		http.Redirect(w, r, "/login?msg=Введите+логин+и+пароль&kind=err", http.StatusSeeOther)
+		return
+	}
+
+	user, ok := s.authStore.Authenticate(username, password)
+	if !ok {
+		http.Redirect(w, r, "/login?msg=Неверный+логин+или+пароль&kind=err", http.StatusSeeOther)
+		return
+	}
+
+	// Создаём сессию
+	sessionID := s.authStore.CreateSession(username, user.Role)
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    sessionID,
+		Path:     "/",
+		HttpOnly: true,
+		Expires:  time.Now().Add(24 * time.Hour),
 	})
+
+	next := r.URL.Query().Get("next")
+	if next == "" {
+		next = "/"
+	}
+	http.Redirect(w, r, next, http.StatusSeeOther)
+}
+
+// handleLogout завершает сессию.
+func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
+	sid := s.getSessionID(r)
+	if sid != "" {
+		s.authStore.DeleteSession(sid)
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:   sessionCookieName,
+		Value:  "",
+		Path:   "/",
+		MaxAge: -1,
+	})
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
 }
 
 func (s *Server) computeStats(ctx context.Context) (stats, error) {
@@ -313,6 +434,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Reports:      reports,
 		Validation:   valRep,
 		NextRunStr:   nextRunStr,
+		CurrentUser:  sessionFromContext(r),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

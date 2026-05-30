@@ -37,10 +37,10 @@ type ClientStats struct {
 
 // DeadlineStats — статистика по дедлайнам.
 type DeadlineStats struct {
-	Total      int `json:"total"`
-	Overdue    int `json:"overdue"`
+	Total       int `json:"total"`
+	Overdue     int `json:"overdue"`
 	Upcoming30d int `json:"upcoming_30d"`
-	Completed  int `json:"completed"`
+	Completed   int `json:"completed"`
 }
 
 // EventStats — статистика по мероприятиям.
@@ -59,9 +59,9 @@ type ContestStats struct {
 
 // ChecklistStats — статистика по чек-листам.
 type ChecklistStats struct {
-	Total       int `json:"total"`
-	InProgress  int `json:"in_progress"`
-	Completed   int `json:"completed"`
+	Total      int `json:"total"`
+	InProgress int `json:"in_progress"`
+	Completed  int `json:"completed"`
 }
 
 // MCPStats — статистика MCP-запросов (заглушка).
@@ -149,6 +149,9 @@ func CollectReport(
 func collectDocStats(ctx context.Context, s store.Store, ds *DocumentStats) {
 	ds.ByStatus = make(map[string]int)
 	ds.ByCategory = make(map[string]int)
+	if s == nil {
+		return
+	}
 
 	// Собираем все документы без фильтра
 	docs, err := s.List(ctx, store.Filter{})
@@ -170,6 +173,9 @@ func collectDocStats(ctx context.Context, s store.Store, ds *DocumentStats) {
 
 func collectClientStats(ctx context.Context, s store.ClientStore, weekAgo, monthAgo time.Time, cs *ClientStats) {
 	cs.ByStage = make(map[string]int)
+	if s == nil {
+		return
+	}
 
 	// Получаем всех клиентов (пустая стадия = без фильтра)
 	// Нужно перебрать всех тенантов — пока берём без tenantID
@@ -193,6 +199,9 @@ func collectClientStats(ctx context.Context, s store.ClientStore, weekAgo, month
 }
 
 func collectDeadlineStats(ctx context.Context, s store.DeadlineStore, thirtyDaysAhead, now time.Time, dls *DeadlineStats) {
+	if s == nil {
+		return
+	}
 	// Просроченные
 	overdue, err := s.ListOverdueDeadlines(ctx)
 	if err == nil {
@@ -223,6 +232,9 @@ func collectDeadlineStats(ctx context.Context, s store.DeadlineStore, thirtyDays
 }
 
 func collectEventStats(ctx context.Context, s store.EventStore, es *EventStats) {
+	if s == nil {
+		return
+	}
 	total, err := s.CountEvents(ctx)
 	if err == nil {
 		es.Total = total
@@ -242,6 +254,9 @@ func collectEventStats(ctx context.Context, s store.EventStore, es *EventStats) 
 }
 
 func collectContestStats(ctx context.Context, s store.ContestStore, cos *ContestStats) {
+	if s == nil {
+		return
+	}
 	// Активные
 	active, err := s.CountActiveContests(ctx)
 	if err == nil {
@@ -261,6 +276,9 @@ func collectContestStats(ctx context.Context, s store.ContestStore, cos *Contest
 }
 
 func collectChecklistStats(ctx context.Context, s store.ChecklistStore, cls *ChecklistStats) {
+	if s == nil {
+		return
+	}
 	// Все шаблоны чек-листов
 	checklists, err := s.ListChecklists(ctx, model.ChecklistType(""))
 	if err == nil {
@@ -286,24 +304,52 @@ func ToHTML(report *AnalyticsReport) string {
 <title>Аналитика — База Сколково</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         margin: 0; padding: 20px; background: #f5f7fa; color: #333; }
-  h1 { text-align: center; margin-bottom: 30px; }
+  :root {
+    --bg: #f5f7fa; --surface: #fff; --text: #1e293b; --text-secondary: #64748b;
+    --border: #e2e8f0; --primary: #1e40af; --stat-color: #1a73e8;
+    --shadow: 0 2px 8px rgba(0,0,0,.08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f172a; --surface: #1e293b; --text: #e2e8f0; --text-secondary: #94a3b8;
+      --border: #334155; --primary: #3b82f6; --stat-color: #60a5fa;
+      --shadow: 0 2px 8px rgba(0,0,0,.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f172a; --surface: #1e293b; --text: #e2e8f0; --text-secondary: #94a3b8;
+    --border: #334155; --primary: #3b82f6; --stat-color: #60a5fa;
+    --shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  * { box-sizing: border-box; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+         margin: 0; padding: 20px; background: var(--bg); color: var(--text); }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 22px; }
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
           gap: 20px; max-width: 1400px; margin: 0 auto; }
-  .card { background: #fff; border-radius: 12px; padding: 20px;
-          box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
-  .card h2 { margin-top: 0; font-size: 1.1rem; color: #555; }
-  .stat-row { display: flex; justify-content: space-between; padding: 6px 0;
-              border-bottom: 1px solid #eee; }
+  .card { background: var(--surface); border-radius: 12px; padding: 20px;
+          box-shadow: var(--shadow); }
+  .card h2 { margin-top: 0; font-size: 1rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
+  .stat-row { display: flex; justify-content: space-between; padding: 8px 0;
+              border-bottom: 1px solid var(--border); align-items: center; }
   .stat-row:last-child { border-bottom: none; }
-  .stat-value { font-weight: 600; color: #1a73e8; }
+  .stat-value { font-weight: 700; color: var(--stat-color); font-size: 15px; }
   canvas { max-height: 280px; }
-  .period { text-align: center; color: #888; margin-bottom: 20px; font-size: 0.9rem; }
+  .period { text-align: center; color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem; }
+  .header-bar { max-width: 1400px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .nav-back { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500; }
+  .theme-toggle { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 16px; color: var(--text); }
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<h1>📊 Аналитика «База Сколково»</h1>
+<div class="header-bar">
+  <h1 style="margin:0;font-size:20px">📊 Аналитика — База Сколково</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <a href="/" class="nav-back" title="Вернуться к документам">← Документы</a>
+    <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">🌙</button>
+  </div>
+</div>
 <div class="period">Период: %s — %s</div>
 <div class="grid">
 
@@ -376,6 +422,21 @@ new Chart(document.getElementById('chartClientStage'), {
     backgroundColor: '#1a73e8' }] },
   options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
              plugins: { legend: { display: false } } }
+});
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  var btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var btn = document.getElementById('themeBtn');
+  if (!btn) return;
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
 });
 </script>
 </body>

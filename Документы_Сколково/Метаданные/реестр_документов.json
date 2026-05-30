@@ -1,3 +1,194 @@
 {
-  "documents": []
+  "documents": [
+    {
+      "id": "112dfb36b5f76fbac232b3d0013c9cc031f8510e",
+      "title": "Приказ от 20.08.2025 № 232-Пр о  требованиях к образовательным программам",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24895.aspx",
+      "published_at": "2025-08-26T14:37:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0881639+02:00",
+      "status": "на_проверке",
+      "file_hash": "f52898292de87c9d8fb377362c64b72d866fd9f3b3b42b09a060957293bafbe4",
+      "indexed": false
+    },
+    {
+      "id": "2279c28efbfbb25264f124bc367d37dbc7f2a5ae",
+      "title": "Правила использования земель, градостроительной деятельности от 12.09.2012 (в ред. 04.10.2024) УТРАТИЛИ СИЛУ",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24903.aspx",
+      "published_at": "2026-02-10T13:31:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0763624+02:00",
+      "status": "устарел",
+      "file_hash": "2515a43b3746ce68b6762d204b252cac37203ebc79be41d6b33f35fe65b3a8f1",
+      "indexed": false
+    },
+    {
+      "id": "2fbaaa7a43394799d36399b92266d2b2f319a68c",
+      "title": "Правила исследовательской деятельности участников проекта Сколково в ред. от 17.12.2025",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24900.aspx",
+      "published_at": "2025-12-23T18:27:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0805773+02:00",
+      "status": "на_проверке",
+      "file_hash": "74cc10b518eeb0cbf57daae444eee33c6df478485ff564a9b334b69eeafe5e5e",
+      "indexed": false
+    },
+    {
+      "id": "3663c19ce5732592b024640d240cf1f186481ad6",
+      "title": "Приказ от 24.04.2025 № 84-Пр О внесении изменений в Положение о закупке",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24892.aspx",
+      "published_at": "2025-05-13T17:05:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0923777+02:00",
+      "status": "на_проверке",
+      "file_hash": "a8dc95246b155a63d47260e33b8bd158ff4fb29ab45a956dc1e2c4bd9b93ee5f",
+      "indexed": false
+    },
+    {
+      "id": "5249e6257e6331bdbda6e6f9119d805795831975",
+      "title": "Правила осуществления образовательной деятельности частными организациями высшего образования от 17.12.2025",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24898.aspx",
+      "published_at": "2025-12-23T18:23:00Z",
+      "fetched_at": "2026-05-30T18:35:43.083942+02:00",
+      "status": "на_проверке",
+      "file_hash": "576877b9bafd41a5084da14817955e7587442f3a8a600612c4535f5de848edef",
+      "indexed": false
+    },
+    {
+      "id": "704a8f0176dd24f409678997b86a0066d2aba29b",
+      "title": "Правила проекта в сфере использования земель, создания объектов от 17.12.2025",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24896.aspx",
+      "published_at": "2025-12-23T18:20:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0865607+02:00",
+      "status": "на_проверке",
+      "file_hash": "0dfdcf657ffe190f0870e2a679f26ad4940411d10eaff0a8fa25248eb1dae159",
+      "indexed": false
+    },
+    {
+      "id": "70de69e92740b0ce754bc46be587e20d8595faa7",
+      "title": "Регламент взаимодействия по исполнению требований Положения о присвоении и утрате статуса партнера Фонда",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24894.aspx",
+      "published_at": "2025-08-19T15:39:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0892206+02:00",
+      "status": "на_проверке",
+      "file_hash": "59971c49dfab23780f18c9d8ab33b161a5468a5d7a8501a28e43e1bc18cc3330",
+      "indexed": false
+    },
+    {
+      "id": "78f0651d91774667c20cbb65fec5ec1528465ad2",
+      "title": "Приказ от 28.05.2025 № 120-Пр О  требованиях к образовательным программам",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24893.aspx",
+      "published_at": "2025-07-15T15:51:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0907981+02:00",
+      "status": "на_проверке",
+      "file_hash": "50652b953c85f8b912de51fd9f957841e521806cbe90133c4d23710eef7fc06a",
+      "indexed": false
+    },
+    {
+      "id": "85f631ba0e13a554895f80a0aa6af10703f70869",
+      "title": "Правила осуществления образовательной деятельности по основным общеобразовательным программам, СПО и ДОП от 17.12.2025",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24897.aspx",
+      "published_at": "2025-12-23T18:22:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0855203+02:00",
+      "status": "на_проверке",
+      "file_hash": "5f8f8aa2a16f0396a9e34176dd9b323ce72f5d971693ba0277a09b74868865ca",
+      "indexed": false
+    },
+    {
+      "id": "92882ab28b8cd2c4ad178a4056b590ab6ce3bd2e",
+      "title": "Приказ от 28.02.2025 № 37-Пр о внесении изменений в Правила землепользования и застройки",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24889.aspx",
+      "published_at": "2025-03-03T11:25:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0960611+02:00",
+      "status": "на_проверке",
+      "file_hash": "1ac15007f3aa63012095c902386478453f26e20327e0441b0355c7d6cd2df548",
+      "indexed": false
+    },
+    {
+      "id": "a476c28fde1d28829cb665e865579da7352dcdcf",
+      "title": "Приказ от 28.02.2025 № 38-Пр о внесении изменений в Положение о закупке",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24890.aspx",
+      "published_at": "2025-03-19T12:56:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0950333+02:00",
+      "status": "на_проверке",
+      "file_hash": "edc1786b8183a477075d563540e36575e4085885046a96587fc670cb6cf00f68",
+      "indexed": false
+    },
+    {
+      "id": "a84b207a431aeb1f6449efacf67d1a87b7ce915c",
+      "title": "Положение о статусе участника проекта Сколково в ред. от 17.12.2025",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24899.aspx",
+      "published_at": "2025-12-23T18:25:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0821398+02:00",
+      "status": "на_проверке",
+      "file_hash": "beba63fb32ef81196dcab5a53bacd2066f83ee62f592d537ccb855effee63a99",
+      "indexed": false
+    },
+    {
+      "id": "c87690a93a296c5ed9662627aa5e82c2c54e46a6",
+      "title": "Приказ от 25.04.2025 № 90-Пр О внесении изменений в Правила проекта в сфере использования земельных участков",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24891.aspx",
+      "published_at": "2025-04-28T10:42:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0939561+02:00",
+      "status": "на_проверке",
+      "file_hash": "45fe20dcf7ae64803700c7c613eff5d47844b2f88c741ee3caaf146ac851ad13",
+      "indexed": false
+    },
+    {
+      "id": "ca119e1d24f51ef0960f57449bc8fdae95c4cb79",
+      "title": "Положение о статусе участника ред. от 01.11.2024 УТРАТИЛО СИЛУ",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24902.aspx",
+      "published_at": "2026-02-04T11:41:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0779812+02:00",
+      "status": "устарел",
+      "file_hash": "1a6e82e633ebcd80122fe65deb0dca54888a3ac55bd2662a9e9f7d8edcfd2bd2",
+      "indexed": false
+    },
+    {
+      "id": "caf9e90645aa2356e0dac68fac9a3fb94222b45d",
+      "title": "Внесение изменений в методику оценки 307-Пр",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24886.aspx",
+      "published_at": "2025-02-20T19:21:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0992817+02:00",
+      "status": "на_проверке",
+      "file_hash": "dac1f752ccd6d406527f8bc065ae6d12e27af3d99ad7d066ce41254f4aecb9e7",
+      "indexed": false
+    },
+    {
+      "id": "cd584999b8f3a563c5be5dfaed6be481636fc009",
+      "title": "Информационное сообщение о работе Фонда по проведению камерального контроля участников проекта Сколково",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24905.aspx",
+      "published_at": "2026-03-18T15:46:00Z",
+      "fetched_at": "2026-05-30T18:35:43.072712+02:00",
+      "status": "на_проверке",
+      "file_hash": "5312212b5d5c648dc89be032b5bf5f9eee1f19508e131b64858ed324b0d92180",
+      "indexed": false
+    },
+    {
+      "id": "d9f3e6b44da7499b7709ad1c6739cfa403f55391",
+      "title": "Правила благоустройства от 03.06.2020 (в ред. от 13.05.2022)",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24904.aspx",
+      "published_at": "2026-03-13T10:52:00Z",
+      "fetched_at": "2026-05-30T18:35:43.074808+02:00",
+      "status": "на_проверке",
+      "file_hash": "5c2aaca60c9f5b56c99e6d851f1d554222778ef6d018eff95f5e24356e2f062d",
+      "indexed": false
+    },
+    {
+      "id": "ec75465b5c7ae691c783f2f96444a63d22109f1e",
+      "title": "Методика рассмотрения оценки и сопоставления заявок на участие в запросе предложений",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24888.aspx",
+      "published_at": "2025-02-21T11:16:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0975721+02:00",
+      "status": "на_проверке",
+      "file_hash": "59f888e9aca7177b4131e1b02821259d9b9deebda0b8284e6096f37a7e8dbad6",
+      "indexed": false
+    },
+    {
+      "id": "fbaae8780eff2ad4b417e9e13705bd76d05d75f3",
+      "title": "Правила исследовательской деятельности участников проекта Сколково ред. от 18.09.2024 УТРАТИЛИ СИЛУ",
+      "source_url": "https://dochub.sk.ru/foundation/documents/m/docs/24901.aspx",
+      "published_at": "2026-01-29T17:46:00Z",
+      "fetched_at": "2026-05-30T18:35:43.0795338+02:00",
+      "status": "устарел",
+      "file_hash": "ece713a313b2d20de8c6d22bc48492442cdbc2ceaef99ce9f9730d0da5419203",
+      "indexed": false
+    }
+  ]
 }

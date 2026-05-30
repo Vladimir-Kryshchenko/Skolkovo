@@ -931,7 +931,7 @@ func cmdServe(cfg config.Config) error {
 	}
 
 	// Подключаем менеджер прокси к админке.
-	pm := admin.NewProxyManager(ctx)
+	pm := admin.NewProxyManager(filepath.Join(cfg.DocsDir, ".admin", "proxies.json"))
 	adminSrv.WithProxyManager(pm)
 
 	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
@@ -994,7 +994,6 @@ func cmdServe(cfg config.Config) error {
 				DeadlineStore:  stores.DeadlineStore,
 				TemplateStore:  stores.TemplateStore,
 				DocumentStore:  st,
-				ChangeStore:    portalChangeStore,
 				Generator:      gen,
 				Mailer:         mlr,
 			}
@@ -1371,11 +1370,12 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			if cfg.PreferencesEnabled {
 				log.Printf("[serve:preferences] синхронизация льгот")
 				prefCfg := preferences.PreferencesConfig{
-					SourceURL: cfg.PreferencesURL,
-					Category:  "Льготы",
+					SourceURLs: []string{cfg.PreferencesURL},
+					Category:   "Льготы",
 				}
-				mon := preferences.New(prefCfg, st)
-				if res, err := mon.Run(ctx, changeStore); err != nil {
+				mon := preferences.NewMonitor(prefCfg, st, nil)
+				mon.Changes = changeStore
+				if res, err := mon.Run(ctx); err != nil {
 					log.Printf("[serve:preferences] ошибка: %v", err)
 					recordHealth("preferences", 0, err)
 				} else {
@@ -1388,11 +1388,12 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			if cfg.RegulationsEnabled {
 				log.Printf("[serve:regulations] синхронизация НПА")
 				regCfg := regulations.RegulationsConfig{
-					SourceURL: cfg.RegulationsSearchURL,
+					SearchURL: cfg.RegulationsSearchURL,
 					Category:  "НПА",
 				}
-				mon := regulations.New(regCfg, st)
-				if res, err := mon.Run(ctx, changeStore); err != nil {
+				mon := regulations.NewMonitor(regCfg, st, nil)
+				mon.Changes = changeStore
+				if res, err := mon.Run(ctx); err != nil {
 					log.Printf("[serve:regulations] ошибка: %v", err)
 					recordHealth("regulations", 0, err)
 				} else {
@@ -1420,9 +1421,6 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 
 	// Регистрируем инструменты источников (включая реестр резидентов).
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
-
-	// Регистрируем инструменты льгот и НПА.
-	mcpserver.RegisterRegulationTools(mcpSrv, pss, pss)
 
 	// Лента изменений: get_recent_changes.
 	ctx := context.Background()

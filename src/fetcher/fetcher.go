@@ -38,8 +38,11 @@ const stealthJS = `
   // 1. webdriver флаг
   Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
 
-  // 2. Chrome runtime
-  window.chrome = { runtime: {} };
+  // 2. Chrome runtime (как у реального Chrome)
+  window.chrome = { runtime: {
+    connect: function() { return { onMessage: { addListener: function(){} }, onDisconnect: { addListener: function(){} }, postMessage: function(){} }; },
+    sendMessage: function() {}
+  }};
 
   // 3. Языки
   Object.defineProperty(navigator, 'languages', { get: () => ['ru-RU','ru','en-US','en'] });
@@ -90,6 +93,20 @@ const stealthJS = `
   for (var k of ['_selenium', 'callSelenium', '_Selenium_IDE_Recorder']) {
     if (window[k]) delete window[k];
   }
+
+  // 13. Fake chrome.app
+  window.chrome.app = {
+    isInstalled: false,
+    InstallState: { DISABLED: 'disabled', INSTALLED: 'installed', NOT_INSTALLED: 'not_installed' },
+    RunningState: { CANNOT_RUN: 'cannot_run', READY_TO_RUN: 'ready_to_run', RUNNING: 'running' }
+  };
+
+  // 14. Fake Intl API locale
+  Object.defineProperty(Intl, 'DateTimeFormat', {
+    value: new Proxy(Intl.DateTimeFormat, {
+      construct: (target, args) => new target('ru-RU', args[1])
+    })
+  });
 })();
 `
 
@@ -123,6 +140,43 @@ const jsFindFile = `(function(){
   for(var i=0;i<a.length;i++){if(re.test(a[i]))return a[i];}
   return "";
 })()`
+
+// wafDetector — проверяет, не заблокировал ли WAF доступ (Variti challenge page).
+const wafDetector = `(function(){
+  var body = document.body ? (document.body.innerText || '') : '';
+  var title = document.title || '';
+  // Variti challenge page markers
+  if (body.toLowerCase().indexOf('variti') !== -1 ||
+      body.toLowerCase().indexOf('ddos') !== -1 ||
+      body.toLowerCase().indexOf('проверка') !== -1 ||
+      title.toLowerCase().indexOf('checking') !== -1 ||
+      body.toLowerCase().indexOf('cloudflare') !== -1 ||
+      body.toLowerCase().indexOf('подтвердите') !== -1) {
+    return 'challenge';
+  }
+  // 403/503 pages
+  if (body.indexOf('403') !== -1 && body.indexOf('Forbidden') !== -1) {
+    return 'forbidden';
+  }
+  // Success
+  return 'ok';
+})()`
+
+// downloadFileViaBrowser — скачивает файл через браузер (сохраняет WAF-куки).
+const downloadFileViaBrowser = `
+(function(url){
+  return new Promise(function(resolve, reject){
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = '';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ resolve('download_started'); }, 1000);
+  });
+})
+`
 
 // Fetcher скачивает файлы через headless-Chrome с симуляцией человека.
 type Fetcher struct {
@@ -194,8 +248,16 @@ func (f *Fetcher) execOpts() []chromedp.ExecAllocatorOption {
 		// Убираем автоматизацию на уровне протокола DevTools
 		chromedp.Flag("disable-infobars", true),
 		chromedp.Flag("disable-extensions", true),
-		// Эмуляция реального браузера — отключаем flags, которые выдают автоматизацию
 		chromedp.Flag("enable-automation", false),
+		// Реалистичные параметры Chrome
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-background-timer-throttling", true),
+		chromedp.Flag("disable-renderer-backgrounding", true),
+		// Отключаем WebRTC (может раскрыть реальный IP)
+		chromedp.Flag("disable-webrtc", true),
+		// Убираем признаки автоматизации в TLS-рукопожатии
+		chromedp.Flag("disable-component-update", true),
+		chromedp.Flag("disable-sync", true),
 	}
 	if f.ProxyURL != "" {
 		opts = append(opts, chromedp.ProxyServer(f.ProxyURL))
@@ -265,9 +327,54 @@ func (f *Fetcher) simulateHuman() chromedp.Tasks {
 	}
 }
 
+// checkWAF — проверяет, не заблокировал ли WAF доступ.
+func checkWAF(ctx context.Context) (string, error) {
+	var status string
+	err := chromedp.Evaluate(wafDetector, &status).Do(ctx)
+	if err != nil {
+		return "error", err
+	}
+	return status, nil
+}
+
+// waitForWAF — ждёт пока WAF разрешит доступ (max 30 секунд).
+func (f *Fetcher) waitForWAF(ctx context.Context) error {
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		status, err := checkWAF(ctx)
+		if err != nil {
+			return err
+		}
+		if status == "ok" {
+			return nil
+		}
+		if status == "forbidden" {
+			return fmt.Errorf("WAF заблокировал доступ (403 Forbidden)")
+		}
+		// challenge — ждём
+		time.Sleep(f.humanDelay(2000, 4000))
+	}
+	return fmt.Errorf("WAF challenge не пройден за 30 секунд")
+}
+
 // FetchToDir открывает страницу-просмотрщик в браузере, находит ссылку на файл
 // и скачивает его (с куками, выставленными WAF) в outDir. Возвращает путь и хэш.
 func (f *Fetcher) FetchToDir(ctx context.Context, viewerURL, outDir string) (string, string, error) {
+	// Retry logic: до 3 попыток с экспоненциальным backoff
+	for attempt := 1; attempt <= 3; attempt++ {
+		localPath, hash, err := f.tryFetch(ctx, viewerURL, outDir)
+		if err == nil {
+			return localPath, hash, nil
+		}
+		if attempt < 3 {
+			backoff := time.Duration(attempt*attempt) * time.Second
+			time.Sleep(backoff)
+		}
+	}
+	return "", "", fmt.Errorf("все 3 попытки скачивания失敗")
+}
+
+func (f *Fetcher) tryFetch(ctx context.Context, viewerURL, outDir string) (string, string, error) {
 	allocCtx, cancelA := chromedp.NewExecAllocator(ctx, f.execOpts()...)
 	defer cancelA()
 	bctx, cancelB := chromedp.NewContext(allocCtx)
@@ -284,6 +391,10 @@ func (f *Fetcher) FetchToDir(ctx context.Context, viewerURL, outDir string) (str
 		}),
 		// Навигация
 		chromedp.Navigate(viewerURL),
+		// Ждём пока WAF разрешит доступ
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			return f.waitForWAF(ctx)
+		}),
 		// Симуляция человека
 		f.simulateHuman(),
 		// Поиск ссылки на файл
@@ -304,6 +415,7 @@ func (f *Fetcher) FetchToDir(ctx context.Context, viewerURL, outDir string) (str
 		return "", "", fmt.Errorf("ссылка на файл не найдена (возможно, страница заблокирована WAF)")
 	}
 
+	// Скачиваем файл через HTTP с WAF-куками
 	data, err := f.download(ctx, fileURL, viewerURL, cookies)
 	if err != nil {
 		return "", "", err
@@ -408,6 +520,10 @@ func (f *Fetcher) EnumerateCategories(ctx context.Context, baseURL string, cats 
 
 		tasks := chromedp.Tasks{
 			chromedp.Navigate(pageURL),
+			// Ждём WAF
+			chromedp.ActionFunc(func(ctx context.Context) error {
+				return f.waitForWAF(ctx)
+			}),
 			// Симуляция человека на странице категории
 			f.simulateHuman(),
 			// Ждём пока superlist подгрузит все элементы

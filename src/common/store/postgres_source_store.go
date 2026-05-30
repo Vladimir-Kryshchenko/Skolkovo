@@ -647,6 +647,217 @@ FROM document_links ORDER BY created_at DESC`)
 }
 
 // ============================================================================
+// PreferenceStore
+// ============================================================================
+
+func (s *PostgresSourceStore) CreatePreference(ctx context.Context, pref *model.Preference) error {
+	if err := validatePreference(pref); err != nil {
+		return err
+	}
+
+	_, err := s.db.Exec(ctx, `
+INSERT INTO preferences (ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		pref.ExtID, pref.Title, string(pref.PrefType),
+		nullStrPtr(pref.BenefitDesc), nullStrPtr(pref.LegalRef),
+		pref.SourceURL, nullStrPtr(pref.Content), string(pref.Status))
+	return err
+}
+
+func (s *PostgresSourceStore) GetPreference(ctx context.Context, id string) (*model.Preference, error) {
+	row := s.db.QueryRow(ctx, `
+SELECT id, ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status, fetched_at, updated_at
+FROM preferences WHERE id = $1`, id)
+	return scanPreference(row)
+}
+
+func (s *PostgresSourceStore) ListPreferences(ctx context.Context, prefType string, status string) ([]*model.Preference, error) {
+	var rows pgx.Rows
+	var err error
+
+	switch {
+	case prefType != "" && status != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status, fetched_at, updated_at
+FROM preferences WHERE pref_type = $1 AND status = $2
+ORDER BY updated_at DESC`, prefType, status)
+	case prefType != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status, fetched_at, updated_at
+FROM preferences WHERE pref_type = $1
+ORDER BY updated_at DESC`, prefType)
+	case status != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status, fetched_at, updated_at
+FROM preferences WHERE status = $1
+ORDER BY updated_at DESC`, status)
+	default:
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, pref_type, benefit_desc, legal_ref, source_url, content, status, fetched_at, updated_at
+FROM preferences ORDER BY updated_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*model.Preference
+	for rows.Next() {
+		p, err := scanPreference(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresSourceStore) UpdatePreference(ctx context.Context, pref *model.Preference) error {
+	if err := validatePreference(pref); err != nil {
+		return err
+	}
+
+	tag, err := s.db.Exec(ctx, `
+UPDATE preferences SET ext_id=$2, title=$3, pref_type=$4, benefit_desc=$5,
+       legal_ref=$6, source_url=$7, content=$8, status=$9, updated_at=now()
+WHERE id = $1`,
+		pref.ID, pref.ExtID, pref.Title, string(pref.PrefType),
+		nullStrPtr(pref.BenefitDesc), nullStrPtr(pref.LegalRef),
+		pref.SourceURL, nullStrPtr(pref.Content), string(pref.Status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresSourceStore) DeletePreference(ctx context.Context, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM preferences WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresSourceStore) CountPreferences(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM preferences`).Scan(&count)
+	return count, err
+}
+
+// ============================================================================
+// NPAStore
+// ============================================================================
+
+func (s *PostgresSourceStore) CreateNPA(ctx context.Context, npa *model.NPADocument) error {
+	if err := validateNPA(npa); err != nil {
+		return err
+	}
+
+	_, err := s.db.Exec(ctx, `
+INSERT INTO npa_documents (ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		npa.ExtID, npa.Title, nullStrPtr(npa.NPANumber), string(npa.NPAType),
+		nullStrPtr(npa.IssuedBy), nullableDate(npa.IssuedAt),
+		nullableDate(npa.EffectiveAt), npa.SourceURL,
+		nullStrPtr(npa.Summary), string(npa.Status))
+	return err
+}
+
+func (s *PostgresSourceStore) GetNPA(ctx context.Context, id string) (*model.NPADocument, error) {
+	row := s.db.QueryRow(ctx, `
+SELECT id, ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status, fetched_at, updated_at
+FROM npa_documents WHERE id = $1`, id)
+	return scanNPA(row)
+}
+
+func (s *PostgresSourceStore) ListNPA(ctx context.Context, npaType string, status string) ([]*model.NPADocument, error) {
+	var rows pgx.Rows
+	var err error
+
+	switch {
+	case npaType != "" && status != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status, fetched_at, updated_at
+FROM npa_documents WHERE npa_type = $1 AND status = $2
+ORDER BY updated_at DESC`, npaType, status)
+	case npaType != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status, fetched_at, updated_at
+FROM npa_documents WHERE npa_type = $1
+ORDER BY updated_at DESC`, npaType)
+	case status != "":
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status, fetched_at, updated_at
+FROM npa_documents WHERE status = $1
+ORDER BY updated_at DESC`, status)
+	default:
+		rows, err = s.db.Query(ctx, `
+SELECT id, ext_id, title, npa_number, npa_type, issued_by, issued_at, effective_at, source_url, summary, status, fetched_at, updated_at
+FROM npa_documents ORDER BY updated_at DESC`)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []*model.NPADocument
+	for rows.Next() {
+		n, err := scanNPA(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+func (s *PostgresSourceStore) UpdateNPA(ctx context.Context, npa *model.NPADocument) error {
+	if err := validateNPA(npa); err != nil {
+		return err
+	}
+
+	tag, err := s.db.Exec(ctx, `
+UPDATE npa_documents SET ext_id=$2, title=$3, npa_number=$4, npa_type=$5,
+       issued_by=$6, issued_at=$7, effective_at=$8, source_url=$9, summary=$10,
+       status=$11, updated_at=now()
+WHERE id = $1`,
+		npa.ID, npa.ExtID, npa.Title, nullStrPtr(npa.NPANumber), string(npa.NPAType),
+		nullStrPtr(npa.IssuedBy), nullableDate(npa.IssuedAt),
+		nullableDate(npa.EffectiveAt), npa.SourceURL,
+		nullStrPtr(npa.Summary), string(npa.Status))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresSourceStore) DeleteNPA(ctx context.Context, id string) error {
+	tag, err := s.db.Exec(ctx, `DELETE FROM npa_documents WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *PostgresSourceStore) CountNPA(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRow(ctx, `SELECT count(*) FROM npa_documents`).Scan(&count)
+	return count, err
+}
+
+// ============================================================================
 // Scan-функции
 // ============================================================================
 
@@ -762,6 +973,52 @@ func scanDocumentLink(r row) (*model.DocumentLink, error) {
 	}
 	l.LinkType = model.DocumentLinkType(linkTypeStr)
 	return &l, nil
+}
+
+func scanPreference(r row) (*model.Preference, error) {
+	var p model.Preference
+	var prefTypeStr, benefitDesc, legalRef, content, statusStr string
+	err := r.Scan(&p.ID, &p.ExtID, &p.Title, &prefTypeStr, &benefitDesc,
+		&legalRef, &p.SourceURL, &content, &statusStr, &p.FetchedAt, &p.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	p.PrefType = model.PreferenceType(prefTypeStr)
+	p.BenefitDesc = benefitDesc
+	p.LegalRef = legalRef
+	p.Content = content
+	p.Status = model.PreferenceStatus(statusStr)
+	return &p, nil
+}
+
+func scanNPA(r row) (*model.NPADocument, error) {
+	var n model.NPADocument
+	var npaNumber, npaTypeStr, issuedBy, summary, statusStr string
+	var issuedAt, effectiveAt sql.NullTime
+	err := r.Scan(&n.ID, &n.ExtID, &n.Title, &npaNumber, &npaTypeStr,
+		&issuedBy, &issuedAt, &effectiveAt, &n.SourceURL, &summary,
+		&statusStr, &n.FetchedAt, &n.UpdatedAt)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	n.NPANumber = npaNumber
+	n.NPAType = model.NPAType(npaTypeStr)
+	n.IssuedBy = issuedBy
+	if issuedAt.Valid {
+		n.IssuedAt = issuedAt.Time
+	}
+	if effectiveAt.Valid {
+		n.EffectiveAt = effectiveAt.Time
+	}
+	n.Summary = summary
+	n.Status = model.NPAStatus(statusStr)
+	return &n, nil
 }
 
 // ============================================================================

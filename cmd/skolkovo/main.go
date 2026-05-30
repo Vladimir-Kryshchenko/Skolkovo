@@ -109,6 +109,10 @@ func main() {
 		mustRun(cmdResidents(cfg))
 	case "telegram":
 		mustRun(cmdTelegram(cfg))
+	case "preferences":
+		mustRun(cmdPreferences(cfg))
+	case "regulations":
+		mustRun(cmdRegulations(cfg))
 	case "sync":
 		mustRun(cmdSync(cfg))
 	case "migrate":
@@ -829,6 +833,10 @@ func cmdAdmin(cfg config.Config) error {
 		} else {
 			log.Printf("[admin] хранилище изменений: %v", err)
 		}
+		// Подключаем хранилища льгот и НПА.
+		pss := store.NewPostgresSourceStore(ps.Pool())
+		srv.WithPreferenceStore(pss)
+		srv.WithNPAStore(pss)
 	}
 
 	// Подключаем AI-хранилище (только для Postgres-бэкенда).
@@ -918,6 +926,13 @@ func cmdServe(cfg config.Config) error {
 
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
+
+	// Подключаем хранилища льгот и НПА к админке.
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pss := store.NewPostgresSourceStore(ps.Pool())
+		adminSrv.WithPreferenceStore(pss)
+		adminSrv.WithNPAStore(pss)
+	}
 
 	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -1356,12 +1371,11 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			if cfg.PreferencesEnabled {
 				log.Printf("[serve:preferences] синхронизация льгот")
 				prefCfg := preferences.PreferencesConfig{
-					SourceURLs: []string{cfg.PreferencesURL},
-					Category:   "Льготы",
+					SourceURL: cfg.PreferencesURL,
+					Category:  "Льготы",
 				}
-				mon := preferences.NewMonitor(prefCfg, st, nil)
-				mon.Changes = changeStore
-				if res, err := mon.Run(ctx); err != nil {
+				mon := preferences.New(prefCfg, st)
+				if res, err := mon.Run(ctx, changeStore); err != nil {
 					log.Printf("[serve:preferences] ошибка: %v", err)
 					recordHealth("preferences", 0, err)
 				} else {
@@ -1373,23 +1387,12 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			// НПА
 			if cfg.RegulationsEnabled {
 				log.Printf("[serve:regulations] синхронизация НПА")
-				var extraURLs []string
-				if cfg.RegulationsExtraURLs != "" {
-					for _, u := range strings.Split(cfg.RegulationsExtraURLs, ",") {
-						if u = strings.TrimSpace(u); u != "" {
-							extraURLs = append(extraURLs, u)
-						}
-					}
-				}
 				regCfg := regulations.RegulationsConfig{
-					SearchURL:   cfg.RegulationsSearchURL,
-					ExtraURLs:   extraURLs,
-					SearchQuery: "Сколково",
-					Category:    "НПА",
+					SourceURL: cfg.RegulationsSearchURL,
+					Category:  "НПА",
 				}
-				mon := regulations.NewMonitor(regCfg, st, nil)
-				mon.Changes = changeStore
-				if res, err := mon.Run(ctx); err != nil {
+				mon := regulations.New(regCfg, st)
+				if res, err := mon.Run(ctx, changeStore); err != nil {
 					log.Printf("[serve:regulations] ошибка: %v", err)
 					recordHealth("regulations", 0, err)
 				} else {
@@ -1417,6 +1420,9 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 
 	// Регистрируем инструменты источников (включая реестр резидентов).
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
+
+	// Регистрируем инструменты льгот и НПА.
+	mcpserver.RegisterRegulationTools(mcpSrv, pss, pss)
 
 	// Лента изменений: get_recent_changes.
 	ctx := context.Background()
@@ -1734,10 +1740,10 @@ func cmdPreferences(cfg config.Config) error {
 	}
 
 	prefCfg := preferences.PreferencesConfig{
-		SourceURLs: []string{cfg.PreferencesURL},
-		Category:   "Льготы",
+		SourceURL: cfg.PreferencesURL,
+		Category:  "Льготы",
 	}
-	mon := preferences.NewMonitor(prefCfg, st, svc)
+	mon := preferences.New(prefCfg, st)
 	res, err := mon.Run(ctx)
 	if err != nil {
 		return err
@@ -1756,23 +1762,11 @@ func cmdRegulations(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	var extraURLs []string
-	if cfg.RegulationsExtraURLs != "" {
-		for _, u := range strings.Split(cfg.RegulationsExtraURLs, ",") {
-			u = strings.TrimSpace(u)
-			if u != "" {
-				extraURLs = append(extraURLs, u)
-			}
-		}
-	}
-
 	regCfg := regulations.RegulationsConfig{
-		SearchURL:   cfg.RegulationsSearchURL,
-		ExtraURLs:   extraURLs,
-		SearchQuery: "Сколково",
-		Category:    "НПА",
+		SourceURL: cfg.RegulationsSearchURL,
+		Category:  "НПА",
 	}
-	mon := regulations.NewMonitor(regCfg, st, nil)
+	mon := regulations.New(regCfg, st)
 	res, err := mon.Run(ctx)
 	if err != nil {
 		return err

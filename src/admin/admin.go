@@ -37,6 +37,8 @@ type Server struct {
 	store       store.Store
 	linkStore   store.DocumentLinkStore
 	changeStore changes.Store
+	prefStore   store.PreferenceStore
+	npaStore    store.NPAStore
 	rag         *rag.Service
 	schedStore  *scheduler.Store
 	reportStore *scheduler.ReportStore
@@ -80,6 +82,18 @@ func (s *Server) WithLinkStore(ls store.DocumentLinkStore) *Server {
 // WithChangeStore устанавливает хранилище ленты изменений.
 func (s *Server) WithChangeStore(cs changes.Store) *Server {
 	s.changeStore = cs
+	return s
+}
+
+// WithPreferenceStore устанавливает хранилище льгот.
+func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
+	s.prefStore = ps
+	return s
+}
+
+// WithNPAStore устанавливает хранилище НПА.
+func (s *Server) WithNPAStore(ns store.NPAStore) *Server {
+	s.npaStore = ns
 	return s
 }
 
@@ -194,6 +208,13 @@ func (s *Server) ListenAndServe() error {
 	// Лента изменений (история обновлений)
 	mux.HandleFunc("GET /changes", s.requireAuth(s.handleChangesPage))
 	mux.HandleFunc("GET /api/changes", s.requireAuthJSON(s.handleAPIChanges))
+
+	// Льготы и НПА
+	mux.HandleFunc("GET /regulations", s.requireAuth(s.handleRegulationsPage))
+	mux.HandleFunc("POST /regulations/preferences", s.requireAuth(s.handleCreatePreference))
+	mux.HandleFunc("POST /regulations/preferences/{id}/delete", s.requireAuth(s.handleDeletePreference))
+	mux.HandleFunc("POST /regulations/npa", s.requireAuth(s.handleCreateNPA))
+	mux.HandleFunc("POST /regulations/npa/{id}/delete", s.requireAuth(s.handleDeleteNPA))
 
 	// ИИ Конфигурация — модели и агенты
 	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))
@@ -826,28 +847,70 @@ func (s *Server) handleViewOriginal(w http.ResponseWriter, r *http.Request) {
 	if ext == ".pdf" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PDF — %s</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 24px; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
-.header h1 { font-size: 18px; margin: 0; }
-.btn { padding: 8px 16px; background: #1e40af; color: #fff; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 13px; }
-.btn:hover { background: #1e3a8a; }
-iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid #e2e8f0; border-radius: 8px; }
-.meta { font-size: 12px; color: #64748b; margin-top: 12px; }
+:root {
+  --bg: #181b2b;
+  --surface: #23273a;
+  --surface-hover: #2a2f45;
+  --border: #2e3348;
+  --text: #e8eaed;
+  --text-muted: #9aa0b0;
+  --primary: #0073ea;
+  --primary-hover: #005bb5;
+  --danger: #e5484d;
+  --danger-hover: #cd3a40;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-hover: #f0f2f5;
+    --border: #d8dde6;
+    --text: #1a1d23;
+    --text-muted: #6b7280;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  }
+}
+* { box-sizing: border-box; }
+body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
+.btn:hover { background: var(--primary-hover); }
+.btn-danger { background: var(--danger); }
+.btn-danger:hover { background: var(--danger-hover); }
+[data-tooltip] { position: relative; }
+[data-tooltip]::after { content: attr(data-tooltip); position: absolute; bottom: calc(100%% + 6px); left: 50%%; transform: translateX(-50%%); background: #111327; color: #e8eaed; padding: 4px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+[data-tooltip]:hover::after { opacity: 1; }
+iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.meta { font-size: 12px; color: var(--text-muted); margin-top: 12px; word-break: break-word; overflow-wrap: break-word; }
+@media (max-width: 768px) {
+  body { padding: 16px; }
+  .header { flex-direction: column; align-items: flex-start; }
+  .header > div { display: flex; gap: 8px; flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  body { padding: 12px; }
+  .header h1 { font-size: 15px; }
+  .btn { padding: 6px 12px; font-size: 12px; }
+  iframe { height: calc(100vh - 140px); }
+}
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>📄 PDF: %s</h1>
+  <h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> PDF: %s</h1>
   <div>
-    <a href="/documents/%s/download" class="btn">⬇️ Скачать</a>
-    <a href="javascript:window.close()" class="btn">✕ Закрыть</a>
+    <a href="/documents/%s/download" class="btn" data-tooltip="Скачать файл"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать</a>
+    <a href="javascript:window.close()" class="btn btn-danger" data-tooltip="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Закрыть</a>
   </div>
 </div>
 <iframe src="/documents/%s/download"></iframe>
@@ -883,35 +946,81 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid #e2e8f0; b
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Исходный документ — %s</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 24px; line-height: 1.6; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
-.header h1 { font-size: 18px; margin: 0; }
-.btn { padding: 8px 16px; background: #1e40af; color: #fff; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 13px; }
-.btn:hover { background: #1e3a8a; }
-.content { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); white-space: pre-wrap; word-wrap: break-word; font-size: 14px; max-height: 80vh; overflow-y: auto; }
-.meta { font-size: 12px; color: #64748b; margin-top: 12px; }
-.truncated { background: #fef3c7; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; color: #92400e; }
+:root {
+  --bg: #181b2b;
+  --surface: #23273a;
+  --surface-hover: #2a2f45;
+  --border: #2e3348;
+  --text: #e8eaed;
+  --text-muted: #9aa0b0;
+  --primary: #0073ea;
+  --primary-hover: #005bb5;
+  --danger: #e5484d;
+  --danger-hover: #cd3a40;
+  --warning-bg: #3d2e00;
+  --warning-text: #fbbf24;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-hover: #f0f2f5;
+    --border: #d8dde6;
+    --text: #1a1d23;
+    --text-muted: #6b7280;
+    --warning-bg: #fef3c7;
+    --warning-text: #92400e;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  }
+}
+* { box-sizing: border-box; }
+body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
+.btn:hover { background: var(--primary-hover); }
+.btn-danger { background: var(--danger); }
+.btn-danger:hover { background: var(--danger-hover); }
+[data-tooltip] { position: relative; }
+[data-tooltip]::after { content: attr(data-tooltip); position: absolute; bottom: calc(100%% + 6px); left: 50%%; transform: translateX(-50%%); background: #111327; color: #e8eaed; padding: 4px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+[data-tooltip]:hover::after { opacity: 1; }
+.content { background: var(--surface); padding: 20px; border-radius: var(--radius); box-shadow: var(--shadow); white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; font-size: 14px; max-height: 80vh; overflow-y: auto; color: var(--text); }
+.meta { font-size: 12px; color: var(--text-muted); margin-top: 12px; word-break: break-word; overflow-wrap: break-word; }
+.truncated { background: var(--warning-bg); padding: 8px 12px; border-radius: var(--radius); margin-bottom: 12px; font-size: 13px; color: var(--warning-text); display: flex; align-items: center; gap: 8px; }
+.truncated svg { flex-shrink: 0; }
+@media (max-width: 768px) {
+  body { padding: 16px; }
+  .header { flex-direction: column; align-items: flex-start; }
+  .header > div { display: flex; gap: 8px; flex-wrap: wrap; }
+}
+@media (max-width: 480px) {
+  body { padding: 12px; }
+  .header h1 { font-size: 15px; }
+  .btn { padding: 6px 12px; font-size: 12px; }
+}
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>📄 Исходный документ: %s</h1>
+  <h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Исходный документ: %s</h1>
   <div>
-    <a href="/documents/%s/download" class="btn">⬇️ Скачать</a>
-    <a href="javascript:window.close()" class="btn">✕ Закрыть</a>
+    <a href="/documents/%s/download" class="btn" data-tooltip="Скачать файл"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать</a>
+    <a href="javascript:window.close()" class="btn btn-danger" data-tooltip="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Закрыть</a>
   </div>
 </div>
 `, doc.Title, doc.Title, doc.ID)
 
 	if truncated {
-		fmt.Fprintf(w, `<div class="truncated">⚠️ Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
+		fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
 	}
 
 	fmt.Fprintf(w, `<div class="content">%s</div>`, html.EscapeString(text))
@@ -989,34 +1098,76 @@ func (s *Server) handleViewProcessed(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Обработанный документ — %s</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 24px; line-height: 1.6; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 2px solid #e2e8f0; }
-.header h1 { font-size: 18px; margin: 0; }
-.btn { padding: 8px 16px; background: #1e40af; color: #fff; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; font-size: 13px; }
-.btn:hover { background: #1e3a8a; }
-.chunk { background: #fff; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); margin-bottom: 12px; }
-.chunk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #e2e8f0; }
-.chunk-num { font-weight: 600; color: #1e40af; font-size: 13px; }
-.chunk-len { font-size: 11px; color: #64748b; }
-.chunk-text { white-space: pre-wrap; word-wrap: break-word; font-size: 14px; }
-.meta { font-size: 12px; color: #64748b; margin-top: 16px; padding-top: 12px; border-top: 1px solid #e2e8f0; }
-.stats { display: flex; gap: 16px; margin-bottom: 16px; }
-.stat { background: #eff6ff; padding: 12px 16px; border-radius: 8px; text-align: center; }
-.stat .n { font-size: 24px; font-weight: 700; color: #1e40af; }
-.stat .l { font-size: 11px; color: #64748b; text-transform: uppercase; margin-top: 4px; }
+:root {
+  --bg: #181b2b;
+  --surface: #23273a;
+  --surface-hover: #2a2f45;
+  --border: #2e3348;
+  --text: #e8eaed;
+  --text-muted: #9aa0b0;
+  --primary: #0073ea;
+  --primary-hover: #005bb5;
+  --danger: #e5484d;
+  --danger-hover: #cd3a40;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f8fa;
+    --surface: #ffffff;
+    --surface-hover: #f0f2f5;
+    --border: #d8dde6;
+    --text: #1a1d23;
+    --text-muted: #6b7280;
+    --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  }
+}
+* { box-sizing: border-box; }
+body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
+.btn:hover { background: var(--primary-hover); }
+.btn-danger { background: var(--danger); }
+.btn-danger:hover { background: var(--danger-hover); }
+[data-tooltip] { position: relative; }
+[data-tooltip]::after { content: attr(data-tooltip); position: absolute; bottom: calc(100%% + 6px); left: 50%%; transform: translateX(-50%%); background: #111327; color: #e8eaed; padding: 4px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+[data-tooltip]:hover::after { opacity: 1; }
+.chunk { background: var(--surface); padding: 16px; border-radius: var(--radius); box-shadow: var(--shadow); margin-bottom: 12px; }
+.chunk-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 4px; }
+.chunk-num { font-weight: 600; color: var(--primary); font-size: 13px; }
+.chunk-len { font-size: 11px; color: var(--text-muted); }
+.chunk-text { white-space: pre-wrap; word-break: break-word; overflow-wrap: break-word; font-size: 14px; color: var(--text); }
+.meta { font-size: 12px; color: var(--text-muted); margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); word-break: break-word; overflow-wrap: break-word; }
+.stats { display: flex; gap: 16px; margin-bottom: 16px; flex-wrap: wrap; }
+.stat { background: var(--surface); padding: 12px 20px; border-radius: var(--radius); text-align: center; box-shadow: var(--shadow); min-width: 100px; }
+.stat .n { font-size: 24px; font-weight: 700; color: var(--primary); }
+.stat .l { font-size: 11px; color: var(--text-muted); text-transform: uppercase; margin-top: 4px; letter-spacing: .5px; }
+@media (max-width: 768px) {
+  body { padding: 16px; }
+  .header { flex-direction: column; align-items: flex-start; }
+  .stats { flex-direction: column; }
+}
+@media (max-width: 480px) {
+  body { padding: 12px; }
+  .header h1 { font-size: 15px; }
+  .btn { padding: 6px 12px; font-size: 12px; }
+  .stat { padding: 10px 16px; }
+}
 </style>
 </head>
 <body>
 <div class="header">
-  <h1>🧠 Обработанный документ: %s</h1>
-  <a href="javascript:window.close()" class="btn">✕ Закрыть</a>
+  <h1><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a7 7 0 0 1 7 7c0 3-3 5.4-5 7.2L12 18l-2-1.8C8 14.4 5 12 5 9a7 7 0 0 1 7-7z"/><circle cx="12" cy="9" r="2.5"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg> Обработанный документ: %s</h1>
+  <a href="javascript:window.close()" class="btn btn-danger" data-tooltip="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Закрыть</a>
 </div>
 
 <div class="stats">
@@ -1028,7 +1179,7 @@ body { font-family: 'Inter', sans-serif; background: #f8fafc; color: #1e293b; ma
 	for i, chunk := range chunks {
 		fmt.Fprintf(w, `<div class="chunk">
 <div class="chunk-header">
-  <span class="chunk-num">Чанк #%d</span>
+  <span class="chunk-num"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-1px;margin-right:4px"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg> Чанк #%d</span>
   <span class="chunk-len">%d символов</span>
 </div>
 <div class="chunk-text">%s</div>

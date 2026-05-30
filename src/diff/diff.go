@@ -39,10 +39,10 @@ type DiffSummary struct {
 
 // DocumentDiff — полный результат сравнения двух документов.
 type DocumentDiff struct {
-	AddedLines     []Change
-	RemovedLines   []Change
+	AddedLines       []Change
+	RemovedLines     []Change
 	ModifiedSections []DiffSection
-	Summary        DiffSummary
+	Summary          DiffSummary
 }
 
 // CompareDocuments сравнивает два текста и возвращает структурированную разницу.
@@ -197,59 +197,261 @@ func deriveSectionTitle(changes []Change) string {
 	return fmt.Sprintf("Удалено (%d строк)", removed)
 }
 
+const diffHTML = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сравнение документов</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --primary: #0073ea;
+  --primary-light: #e6f2fc;
+  --bg: #ffffff;
+  --surface: #f6f8fa;
+  --surface-border: #d1d5da;
+  --text: #24292e;
+  --text-secondary: #586069;
+  --added-bg: #e6ffed;
+  --added-text: #22863a;
+  --added-border: #34d058;
+  --removed-bg: #ffeef0;
+  --removed-text: #b31d28;
+  --removed-border: #f97583;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --radius: 8px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #181b2b;
+    --surface: #23273a;
+    --surface-border: #3a3f52;
+    --text: #e6e6e6;
+    --text-secondary: #a0a6b8;
+    --primary-light: #1a2d42;
+    --added-bg: #1a2e23;
+    --added-text: #6ecb7e;
+    --added-border: #2d8a3e;
+    --removed-bg: #2e1a1e;
+    --removed-text: #f08a94;
+    --removed-border: #c04a54;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+}
+
+[data-theme="dark"] {
+  --bg: #181b2b;
+  --surface: #23273a;
+  --surface-border: #3a3f52;
+  --text: #e6e6e6;
+  --text-secondary: #a0a6b8;
+  --primary-light: #1a2d42;
+  --added-bg: #1a2e23;
+  --added-text: #6ecb7e;
+  --added-border: #2d8a3e;
+  --removed-bg: #2e1a1e;
+  --removed-text: #f08a94;
+  --removed-border: #c04a54;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  padding: 24px;
+}
+
+.container { max-width: 960px; margin: 0 auto; }
+
+/* Theme toggle */
+.theme-toggle {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  cursor: pointer;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  box-shadow: var(--shadow);
+  z-index: 10;
+}
+.theme-toggle:hover { border-color: var(--primary); }
+
+/* Summary card */
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-bottom: 20px;
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.summary-title {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--primary);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.badge-added { background: var(--added-bg); color: var(--added-text); }
+.badge-removed { background: var(--removed-bg); color: var(--removed-text); }
+.badge-modified { background: var(--primary-light); color: var(--primary); }
+
+/* Section */
+.section {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.section-title {
+  font-weight: 600;
+  font-size: 14px;
+  padding: 12px 16px;
+  background: var(--primary-light);
+  color: var(--primary);
+  border-bottom: 1px solid var(--surface-border);
+}
+
+/* Diff lines */
+.diff-line {
+  display: block;
+  padding: 6px 16px;
+  font-family: 'Figtree', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  border-left: 3px solid transparent;
+  word-break: break-word;
+}
+.diff-line-added {
+  background: var(--added-bg);
+  color: var(--added-text);
+  border-left-color: var(--added-border);
+}
+.diff-line-removed {
+  background: var(--removed-bg);
+  color: var(--removed-text);
+  border-left-color: var(--removed-border);
+}
+.diff-prefix {
+  font-weight: 700;
+  margin-right: 8px;
+  user-select: none;
+}
+
+/* Empty state */
+.empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  body { padding: 16px; }
+  .summary { padding: 12px 16px; gap: 10px; }
+  .section-title { padding: 10px 14px; }
+  .diff-line { padding: 5px 14px; }
+}
+
+@media (max-width: 480px) {
+  body { padding: 12px; }
+  .summary { flex-direction: column; align-items: flex-start; }
+  .theme-toggle { top: 12px; right: 12px; padding: 6px 10px; font-size: 12px; }
+}
+</style>
+</head>
+<body>
+<div class="container">
+<button class="theme-toggle" onclick="toggleTheme()">Сменить тему</button>
+<script>
+(function(){var t=localStorage.getItem('diff-theme');if(t){document.documentElement.setAttribute('data-theme',t)}else if(window.matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.setAttribute('data-theme','dark')}})();
+function toggleTheme(){var c=document.documentElement.getAttribute('data-theme');var n=c==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);localStorage.setItem('diff-theme',n)}
+</script>
+`
+
+const diffHTMLTail = `
+</div>
+</body>
+</html>`
+
 // ToHTML генерирует HTML-представление diff с подсветкой строк.
 // Удалённые строки — красный фон, добавленные — зелёный.
 func ToHTML(diff DocumentDiff) string {
 	var sb strings.Builder
 
-	sb.WriteString("<!DOCTYPE html>\n<html>\n<head>\n")
-	sb.WriteString("<meta charset=\"utf-8\">\n")
-	sb.WriteString("<style>\n")
-	sb.WriteString("body { font-family: monospace; margin: 20px; }\n")
-	sb.WriteString(".removed { background-color: #ffeef0; color: #b31d28; padding: 2px 8px; display: block; }\n")
-	sb.WriteString(".added { background-color: #e6ffed; color: #22863a; padding: 2px 8px; display: block; }\n")
-	sb.WriteString(".section-title { font-weight: bold; margin-top: 16px; padding: 4px 8px; background: #f6f8fa; border: 1px solid #d1d5da; }\n")
-	sb.WriteString(".summary { margin-bottom: 16px; padding: 8px; background: #f6f8fa; border: 1px solid #d1d5da; }\n")
-	sb.WriteString("</style>\n</head>\n<body>\n")
+	sb.WriteString(diffHTML)
 
 	// Summary.
 	sb.WriteString("<div class=\"summary\">")
-	sb.WriteString(fmt.Sprintf("<strong>Сравнение документов:</strong> "))
-	sb.WriteString(fmt.Sprintf("+%d ", diff.Summary.TotalAdded))
-	sb.WriteString(fmt.Sprintf("-%d ", diff.Summary.TotalRemoved))
-	sb.WriteString(fmt.Sprintf("~%d", diff.Summary.TotalModified))
+	sb.WriteString(fmt.Sprintf("<span class=\"summary-title\">Сравнение документов</span>"))
+	sb.WriteString(fmt.Sprintf("<span class=\"badge badge-added\">+%d</span>", diff.Summary.TotalAdded))
+	sb.WriteString(fmt.Sprintf("<span class=\"badge badge-removed\">-%d</span>", diff.Summary.TotalRemoved))
+	sb.WriteString(fmt.Sprintf("<span class=\"badge badge-modified\">~%d</span>", diff.Summary.TotalModified))
 	sb.WriteString("</div>\n")
 
 	// Секции.
 	for _, sec := range diff.ModifiedSections {
-		sb.WriteString(fmt.Sprintf("<div class=\"section-title\">%s</div>\n", escapeHTML(sec.Title)))
+		sb.WriteString(fmt.Sprintf("<div class=\"section\"><div class=\"section-title\">%s</div>\n", escapeHTML(sec.Title)))
 		for _, ch := range sec.Changes {
 			switch ch.Type {
 			case ChangeAdded:
-				sb.WriteString(fmt.Sprintf("<span class=\"added\">+ %s</span>\n", escapeHTML(ch.NewText)))
+				sb.WriteString(fmt.Sprintf("<span class=\"diff-line diff-line-added\"><span class=\"diff-prefix\">+</span>%s</span>\n", escapeHTML(ch.NewText)))
 			case ChangeRemoved:
-				sb.WriteString(fmt.Sprintf("<span class=\"removed\">- %s</span>\n", escapeHTML(ch.OldText)))
+				sb.WriteString(fmt.Sprintf("<span class=\"diff-line diff-line-removed\"><span class=\"diff-prefix\">-</span>%s</span>\n", escapeHTML(ch.OldText)))
 			}
 		}
+		sb.WriteString("</div>\n")
 	}
 
 	// Отдельные добавленные строки (не вошедшие в секции).
 	if len(diff.AddedLines) > 0 && len(diff.ModifiedSections) == 0 {
-		sb.WriteString("<div class=\"section-title\">Добавленные строки</div>\n")
+		sb.WriteString("<div class=\"section\"><div class=\"section-title\">Добавленные строки</div>\n")
 		for _, ch := range diff.AddedLines {
-			sb.WriteString(fmt.Sprintf("<span class=\"added\">+ %s</span>\n", escapeHTML(ch.NewText)))
+			sb.WriteString(fmt.Sprintf("<span class=\"diff-line diff-line-added\"><span class=\"diff-prefix\">+</span>%s</span>\n", escapeHTML(ch.NewText)))
 		}
+		sb.WriteString("</div>\n")
 	}
 
 	// Отдельные удалённые строки (не вошедшие в секции).
 	if len(diff.RemovedLines) > 0 && len(diff.ModifiedSections) == 0 {
-		sb.WriteString("<div class=\"section-title\">Удалённые строки</div>\n")
+		sb.WriteString("<div class=\"section\"><div class=\"section-title\">Удалённые строки</div>\n")
 		for _, ch := range diff.RemovedLines {
-			sb.WriteString(fmt.Sprintf("<span class=\"removed\">- %s</span>\n", escapeHTML(ch.OldText)))
+			sb.WriteString(fmt.Sprintf("<span class=\"diff-line diff-line-removed\"><span class=\"diff-prefix\">-</span>%s</span>\n", escapeHTML(ch.OldText)))
 		}
+		sb.WriteString("</div>\n")
 	}
 
-	sb.WriteString("</body>\n</html>")
+	// Empty state.
+	if len(diff.ModifiedSections) == 0 && len(diff.AddedLines) == 0 && len(diff.RemovedLines) == 0 {
+		sb.WriteString("<div class=\"empty\">Нет изменений между документами</div>\n")
+	}
+
+	sb.WriteString(diffHTMLTail)
 	return sb.String()
 }
 

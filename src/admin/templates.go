@@ -1220,11 +1220,16 @@ tbody tr { transition: background .1s; }
 tbody tr:hover { background: var(--surface-alt); }
 
 /* Kind badge */
-.kind-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.kind-badge { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
 .kind-new { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .kind-updated { background: var(--blue-bg, #e5f0fc); color: var(--blue); border: 1px solid var(--blue-border, #b3d4fc); }
 .kind-outdated { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 .kind-removed { background: var(--gray-bg); color: var(--gray); border: 1px solid var(--border); }
+.kind-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.kind-dot.kind-new { background: var(--green); }
+.kind-dot.kind-updated { background: var(--blue); }
+.kind-dot.kind-outdated { background: var(--red); }
+.kind-dot.kind-removed { background: var(--gray); }
 
 /* Entity type tag */
 .entity-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); font-family: 'SF Mono', 'Fira Code', monospace; }
@@ -1344,14 +1349,14 @@ document.addEventListener('DOMContentLoaded', function() {
         <label for="entity_type">Тип сущности</label>
         <select id="entity_type" name="entity_type">
           <option value="">Все</option>
-          <option value="document"{{if eq .EntityType "document"}} selected{{end}}>📄 Документ</option>
-          <option value="news"{{if eq .EntityType "news"}} selected{{end}}>📰 Новость</option>
-          <option value="event"{{if eq .EntityType "event"}} selected{{end}}>📅 Мероприятие</option>
-          <option value="contest"{{if eq .EntityType "contest"}} selected{{end}}>🏆 Конкурс/грант</option>
-          <option value="npa"{{if eq .EntityType "npa"}} selected{{end}}>📜 НПА</option>
-          <option value="preference"{{if eq .EntityType "preference"}} selected{{end}}>💼 Льгота</option>
-          <option value="faq"{{if eq .EntityType "faq"}} selected{{end}}>❓ FAQ</option>
-          <option value="telegram"{{if eq .EntityType "telegram"}} selected{{end}}>📱 Telegram</option>
+          <option value="document"{{if eq .EntityType "document"}} selected{{end}}>Документ</option>
+          <option value="news"{{if eq .EntityType "news"}} selected{{end}}>Новость</option>
+          <option value="event"{{if eq .EntityType "event"}} selected{{end}}>Мероприятие</option>
+          <option value="contest"{{if eq .EntityType "contest"}} selected{{end}}>Конкурс/грант</option>
+          <option value="npa"{{if eq .EntityType "npa"}} selected{{end}}>НПА (нормативный акт)</option>
+          <option value="preference"{{if eq .EntityType "preference"}} selected{{end}}>Льгота</option>
+          <option value="faq"{{if eq .EntityType "faq"}} selected{{end}}>FAQ (частые вопросы)</option>
+          <option value="telegram"{{if eq .EntityType "telegram"}} selected{{end}}>Telegram</option>
         </select>
       </div>
       <div class="filter-group">
@@ -1363,7 +1368,7 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="date" id="date_to" name="date_to" value="{{.DateTo}}">
       </div>
       <div class="filter-actions">
-        <button type="submit" class="btn btn-primary" data-tooltip="Применить фильтры">🔍 Применить</button>
+        <button type="submit" class="btn btn-primary" data-tooltip="Применить фильтры">Применить</button>
         <a href="/changes" class="btn btn-ghost" data-tooltip="Сбросить все фильтры">Сбросить</a>
       </div>
     </div>
@@ -1398,7 +1403,7 @@ document.addEventListener('DOMContentLoaded', function() {
         {{else if eq .Kind "outdated"}}Сущность переведена в статус «устарела»
         {{else if eq .Kind "removed"}}Сущность удалена из источника{{end}}
       ">
-        {{if eq .Kind "new"}}🆕 Новая{{else if eq .Kind "updated"}}🔄 Обновлена{{else if eq .Kind "outdated"}}⛔ Устарела{{else if eq .Kind "removed"}}🗑 Удалена{{end}}
+        {{if eq .Kind "new"}}<span class="kind-dot kind-new"></span> Новая{{else if eq .Kind "updated"}}<span class="kind-dot kind-updated"></span> Обновлена{{else if eq .Kind "outdated"}}<span class="kind-dot kind-outdated"></span> Устарела{{else if eq .Kind "removed"}}<span class="kind-dot kind-removed"></span> Удалена{{end}}
       </span>
     </td>
     <td><span class="entity-tag">{{.EntityType}}</span></td>

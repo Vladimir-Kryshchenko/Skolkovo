@@ -1087,9 +1087,9 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 </head>
 <body>
 <header>
-  <h1>🏢 Клиенты — Резидентство</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Клиенты — Резидентство</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" title="Документы базы знаний">📋 Документы</a>
+    <a href="/" title="Документы базы знаний"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Документы</a>
     <a href="/clients" title="Список всех клиентов">Клиенты</a>
     <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
     <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
@@ -1097,8 +1097,8 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
     <a href="/tenants" title="Организации и API-ключи">Тенанты</a>
     <a href="/events-admin" title="Список мероприятий">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
-    <a href="/ai/models" title="ИИ-модели и агенты">🤖 ИИ</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <a href="/ai/models" title="ИИ-модели и агенты"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/><circle cx="18" cy="8" r="3"/><circle cx="6" cy="8" r="3"/></svg>ИИ</a>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1155,7 +1155,7 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
     <td><span class="badge stage-{{.ResidencyStage}}">{{FormatStage .ResidencyStage}}</span></td>
     <td>{{.TenantID}}</td>
     <td class="meta">{{.UpdatedAt.Format "02.01.2006 15:04"}}</td>
-    <td><a href="/clients/{{.ID}}" class="btn btn-ghost btn-sm">📋 Карточка</a></td>
+    <td><a href="/clients/{{.ID}}" class="btn btn-ghost btn-sm"><svg style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Карточка</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -1163,7 +1163,7 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">📭</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg></div>
   <p><strong>Нет клиентов</strong></p>
   <p>Клиенты появятся после подачи заявки на резидентство</p>
 </div>
@@ -1176,14 +1176,16 @@ function toggleTheme() {
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  var moon = document.getElementById('themeIconMoon');
+  var sun = document.getElementById('themeIconSun');
+  if (moon && sun) { if (next === 'dark') { moon.style.display='none'; sun.style.display='block'; } else { moon.style.display='block'; sun.style.display='none'; } }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
+  var moon = document.getElementById('themeIconMoon');
+  var sun = document.getElementById('themeIconSun');
+  if (!moon || !sun) return;
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  if (cur === 'dark') { moon.style.display='none'; sun.style.display='block'; } else { moon.style.display='block'; sun.style.display='none'; }
 });
 </script>
 </body>
@@ -1202,12 +1204,12 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 </head>
 <body>
 <header>
-  <h1>👤 {{.Client.Name}}</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{{.Client.Name}}</h1>
   <div style="display:flex;gap:8px;align-items:center">
     <a href="/clients" title="Вернуться к списку клиентов">← Клиенты</a>
     <a href="/deadlines" title="Дедлайны">Дедлайны</a>
     <a href="/checklists" title="Чек-листы">Чек-листы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1248,7 +1250,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 </div>
 
 <div class="card">
-  <h3>📜 История переходов</h3>
+  <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>История переходов</h3>
   {{if .Transitions}}
   <div class="timeline">
     {{range .Transitions}}
@@ -1266,7 +1268,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 
 <div class="grid-2">
   <div class="card">
-    <h3>⏰ Дедлайны</h3>
+    <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Дедлайны</h3>
     {{if .Deadlines}}
     {{range .Deadlines}}
     <div class="card deadline-{{.Status}}" style="margin-bottom:8px;padding:12px">
@@ -1280,7 +1282,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
   </div>
 
   <div class="card">
-    <h3>✅ Чек-листы</h3>
+    <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Чек-листы</h3>
     {{if .Checklists}}
     {{range .Checklists}}
     <div class="card" style="margin-bottom:8px;padding:12px">
@@ -1301,14 +1303,16 @@ function toggleTheme() {
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  var moon = document.getElementById('themeIconMoon');
+  var sun = document.getElementById('themeIconSun');
+  if (moon && sun) { if (next === 'dark') { moon.style.display='none'; sun.style.display='block'; } else { moon.style.display='block'; sun.style.display='none'; } }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
+  var moon = document.getElementById('themeIconMoon');
+  var sun = document.getElementById('themeIconSun');
+  if (!moon || !sun) return;
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  if (cur === 'dark') { moon.style.display='none'; sun.style.display='block'; } else { moon.style.display='block'; sun.style.display='none'; }
 });
 </script>
 </body>
@@ -1327,7 +1331,7 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 </head>
 <body>
 <header>
-  <h1>✅ Чек-листы</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Чек-листы</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Список клиентов">Клиенты</a>
     <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
@@ -1336,7 +1340,7 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
     <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1386,15 +1390,16 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">📋</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg></div>
   <p><strong>Нет чек-листов</strong></p>
   <p>Шаблоны чек-листов создаются через API или CLI</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))
@@ -1412,7 +1417,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 </head>
 <body>
 <header>
-  <h1>⏰ Дедлайны</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Дедлайны</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Список клиентов">Клиенты</a>
     <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
@@ -1421,7 +1426,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
     <a href="/tenants" title="Тенанты">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1434,7 +1439,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 
 {{if .Overdue}}
 <div class="card">
-  <h3 style="color:var(--red)">🔴 Просроченные дедлайны</h3>
+  <h3 style="color:var(--red)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-right:8px;vertical-align:middle"></span>Просроченные дедлайны</h3>
   {{range .Overdue}}
   <div class="card deadline-overdue" style="margin-bottom:8px;padding:12px">
     <div><strong>{{.Title}}</strong></div>
@@ -1446,7 +1451,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 
 {{if .Upcoming}}
 <div class="card">
-  <h3>🟡 Ближайшие дедлайны</h3>
+  <h3><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--yellow);margin-right:8px;vertical-align:middle"></span>Ближайшие дедлайны</h3>
   {{range .Upcoming}}
   <div class="card deadline-upcoming" style="margin-bottom:8px;padding:12px">
     <div><strong>{{.Title}}</strong></div>
@@ -1458,15 +1463,16 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 
 {{if and (not .Overdue) (not .Upcoming)}}
 <div class="empty">
-  <div class="icon">✅</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4;color:var(--green)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg></div>
   <p><strong>Нет активных дедлайнов</strong></p>
   <p>Все дедлайны выполнены или ещё не назначены</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))
@@ -1484,7 +1490,7 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 </head>
 <body>
 <header>
-  <h1>📄 Шаблоны документов</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Шаблоны документов</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Список клиентов">Клиенты</a>
     <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
@@ -1493,7 +1499,7 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
     <a href="/tenants" title="Тенанты">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1528,15 +1534,16 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">📄</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
   <p><strong>Нет шаблонов</strong></p>
   <p>Шаблоны документов создаются через API или CLI</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))
@@ -1554,7 +1561,7 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 </head>
 <body>
 <header>
-  <h1>🏢 Тенанты</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Тенанты</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Список клиентов">Клиенты</a>
     <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
@@ -1563,7 +1570,7 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
     <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1611,15 +1618,16 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">🏢</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg></div>
   <p><strong>Нет тенантов</strong></p>
   <p>Создайте первый тенант через форму выше</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))
@@ -1637,7 +1645,7 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 </head>
 <body>
 <header>
-  <h1>📅 Мероприятия</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Мероприятия</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Клиенты">Клиенты</a>
     <a href="/checklists" title="Чек-листы">Чек-листы</a>
@@ -1646,7 +1654,7 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
     <a href="/tenants" title="Тенанты">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1699,15 +1707,16 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">📅</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></div>
   <p><strong>Нет мероприятий</strong></p>
   <p>Мероприятия добавляются через парсинг или API</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))
@@ -1725,7 +1734,7 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 </head>
 <body>
 <header>
-  <h1>🏆 Конкурсы и гранты</h1>
+  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>Конкурсы и гранты</h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     <a href="/clients" title="Клиенты">Клиенты</a>
     <a href="/checklists" title="Чек-листы">Чек-листы</a>
@@ -1734,7 +1743,7 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
     <a href="/tenants" title="Тенанты">Тенанты</a>
     <a href="/events-admin" title="Мероприятия">Мероприятия</a>
     <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="font-size:16px;min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px">🌙</button>
+    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
   </div>
 </header>
 <main>
@@ -1786,15 +1795,16 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 </div>
 {{else}}
 <div class="empty">
-  <div class="icon">🏆</div>
+  <div class="icon"><svg style="width:48px;height:48px;opacity:.4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg></div>
   <p><strong>Нет конкурсов</strong></p>
   <p>Конкурсы добавляются через парсинг или API</p>
 </div>
 {{end}}
 </main>
 <script>
-function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);var btn=document.getElementById('themeBtn');if(btn)btn.textContent=next==='dark'?'☀️':'🌙';}
-document.addEventListener('DOMContentLoaded',function(){var btn=document.getElementById('themeBtn');if(!btn)return;var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');btn.textContent=cur==='dark'?'☀️':'🌙';});
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var s=document.getElementById('themeIconSun');if(m&&s){m.style.display=t==='dark'?'none':'';s.style.display=t==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>`))

@@ -1,15 +1,13 @@
-// Package regulations парсит нормативно-правовые акты (НПА), регулирующие
-// деятельность Сколково: 244-ФЗ и поправки, приказы Минэкономразвития,
-// постановления Правительства. Источники: regulation.gov.ru и consultant.plus RSS.
+// Package regulations парсит нормативно-правовые акты (НПА) через HTML-скрапинг
+// и заводит их в хранилище как категорию «НПА».
 package regulations
 
 import (
 	"context"
+	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/xml"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,141 +18,76 @@ import (
 	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
-	rag "baza-skolkovo/src/rag_service"
 )
+
+// userAgent — браузерный UA для страниц, отдающих контент только браузерам.
+const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
 // RegulationsConfig — конфигурация источника НПА.
 type RegulationsConfig struct {
-	SearchURL   string   // URL поиска на regulation.gov.ru
-	ExtraURLs   []string // дополнительные прямые ссылки на страницы НПА
-	SearchQuery string   // ключевые слова для поиска (по умолчанию «Сколково»)
-	Category    string   // категория документов (по умолчанию «НПА»)
-	MaxResults  int      // максимальное число документов за запрос (0 = 50)
+	SourceURL string // URL страницы НПА
+	Category  string // категория (по умолчанию «НПА»)
 }
 
-// Monitor синхронизирует НПА в хранилище.
+// Monitor загружает НПА и синхронизирует их в хранилище.
 type Monitor struct {
-	Cfg     RegulationsConfig
-	St      store.Store
-	Rag     *rag.Service
-	Changes changes.Recorder // лента изменений; может быть nil
-	HTTP    *http.Client
+	Cfg   RegulationsConfig
+	Store store.Store
+	HTTP  *http.Client
 }
 
-// Result — итог синхронизации НПА.
-type Result struct {
-	Fetched int
-	New     int
-	Updated int
-	Errors  []string
-}
-
-// NPADocument — нормативно-правовой акт.
-type NPADocument struct {
-	ExternalID  string    // идентификатор в системе regulation.gov.ru
-	Title       string    // название НПА
-	Number      string    // номер (например «244-ФЗ»)
-	Type        string    // вид НПА: закон, постановление, приказ
-	IssuedBy    string    // орган-издатель
-	IssuedAt    time.Time // дата принятия
-	EffectiveAt time.Time // дата вступления в силу
-	SourceURL   string    // ссылка на страницу НПА
-	Summary     string    // краткое содержание
-	Status      string    // "active" | "amended" | "revoked"
-}
-
-// NewMonitor создаёт монитор НПА.
-func NewMonitor(cfg RegulationsConfig, st store.Store, ragSvc *rag.Service) *Monitor {
-	if cfg.Category == "" {
-		cfg.Category = "НПА"
-	}
-	if cfg.SearchQuery == "" {
-		cfg.SearchQuery = "Сколково"
-	}
-	if cfg.MaxResults == 0 {
-		cfg.MaxResults = 50
-	}
-	return &Monitor{
-		Cfg:  cfg,
-		St:   st,
-		Rag:  ragSvc,
-		HTTP: &http.Client{Timeout: 30 * time.Second},
-	}
-}
-
-// Run запускает синхронизацию НПА.
-func (m *Monitor) Run(ctx context.Context) (*Result, error) {
-	docs, err := ParseRegulations(ctx, m.Cfg, m.HTTP)
-	if err != nil {
-		return nil, fmt.Errorf("парсинг НПА: %w", err)
-	}
-	return IngestRegulations(ctx, docs, m.St, m.Rag, m.Changes)
-}
-
-// ParseRegulations загружает НПА из всех источников.
-func ParseRegulations(ctx context.Context, cfg RegulationsConfig, hc *http.Client) ([]*model.Document, error) {
-	if hc == nil {
-		hc = &http.Client{Timeout: 30 * time.Second}
-	}
+// New создаёт монитор НПА.
+func New(cfg RegulationsConfig, st store.Store) *Monitor {
 	category := cfg.Category
 	if category == "" {
 		category = "НПА"
 	}
-
-	var allDocs []*model.Document
-
-	// 1. Поиск на regulation.gov.ru
-	if docs, err := searchRegulationGov(ctx, cfg, hc, category); err == nil {
-		allDocs = append(allDocs, docs...)
+	return &Monitor{
+		Cfg:   RegulationsConfig{SourceURL: cfg.SourceURL, Category: category},
+		Store: st,
+		HTTP:  &http.Client{Timeout: 30 * time.Second},
 	}
-
-	// 2. RSS-лента Консультант+ по Сколково
-	if docs, err := fetchConsultantPlusRSS(ctx, cfg.SearchQuery, hc, category); err == nil {
-		allDocs = append(allDocs, docs...)
-	}
-
-	// 3. Прямые ссылки на конкретные НПА
-	for _, u := range cfg.ExtraURLs {
-		if doc, err := fetchNPAPage(ctx, u, category, hc); err == nil && doc != nil {
-			allDocs = append(allDocs, doc)
-		}
-	}
-
-	// 4. Базовые НПА всегда в базе (244-ФЗ и ключевые постановления)
-	allDocs = append(allDocs, coreNPA(category)...)
-
-	// Дедупликация по ID.
-	seen := make(map[string]bool)
-	var deduped []*model.Document
-	for _, d := range allDocs {
-		if !seen[d.ID] {
-			seen[d.ID] = true
-			deduped = append(deduped, d)
-		}
-	}
-
-	return deduped, nil
 }
 
-// searchRegulationGov ищет НПА на regulation.gov.ru.
-func searchRegulationGov(ctx context.Context, cfg RegulationsConfig, hc *http.Client, category string) ([]*model.Document, error) {
-	searchURL := cfg.SearchURL
-	if searchURL == "" {
-		searchURL = "https://regulation.gov.ru/Regulation/Npa/Search"
+// Result — итог синхронизации НПА.
+type Result struct {
+	Fetched   int
+	New       int
+	Updated   int
+	Unchanged int
+	Errors    []string
+}
+
+// Run запускает синхронизацию НПА.
+func (m *Monitor) Run(ctx context.Context, recs ...changes.Recorder) (*Result, error) {
+	docs, err := ParseRegulations(ctx, m.Cfg, m.HTTP)
+	if err != nil {
+		return nil, fmt.Errorf("парсинг НПА: %w", err)
+	}
+	return IngestRegulations(ctx, docs, m.Store, recs...)
+}
+
+// ParseRegulations — основная функция: парсит страницу НПА через HTML-скрапинг.
+// Возвращает []*model.NPADocument.
+func ParseRegulations(ctx context.Context, cfg RegulationsConfig, hc *http.Client) ([]*model.NPADocument, error) {
+	if hc == nil {
+		hc = &http.Client{Timeout: 30 * time.Second}
 	}
 
-	q := url.Values{}
-	q.Set("npaName", cfg.SearchQuery)
-	q.Set("type", "")
-	q.Set("StatusID", "5") // 5 = действующие
-	reqURL := searchURL + "?" + q.Encode()
+	if cfg.SourceURL == "" {
+		return nil, fmt.Errorf("не указан SourceURL в конфигурации НПА")
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	return parseRegulationsFromHTML(ctx, cfg.SourceURL, hc)
+}
+
+// parseRegulationsFromHTML загружает страницу НПА и извлекает карточки документов.
+func parseRegulationsFromHTML(ctx context.Context, sourceURL string, hc *http.Client) ([]*model.NPADocument, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", regulationsUserAgent)
-	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -162,48 +95,77 @@ func searchRegulationGov(ctx context.Context, cfg RegulationsConfig, hc *http.Cl
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("regulation.gov.ru: статус %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTML НПА: статус %d", resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	doc, err := html.Parse(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
-	return parseRegulationSearchResults(body, reqURL, category)
+	var regulations []*model.NPADocument
+
+	// Ищем карточки НПА по распространённым паттернам.
+	cards := findRegulationCards(doc)
+	if len(cards) == 0 {
+		// Fallback: ищем любые ссылки, похожие на НПА.
+		cards = findRegulationLinks(doc, sourceURL)
+	}
+
+	for _, card := range cards {
+		if card.Title == "" || card.URL == "" {
+			continue
+		}
+
+		regulations = append(regulations, &model.NPADocument{
+			ID:          regulationID(card.URL),
+			Title:       strings.TrimSpace(card.Title),
+			NPANumber:   strings.TrimSpace(card.Number),
+			NPAType:     card.NPAType,
+			IssuedBy:    strings.TrimSpace(card.IssuedBy),
+			IssuedAt:    card.IssuedAt,
+			EffectiveAt: card.EffectiveAt,
+			SourceURL:   card.URL,
+			Summary:     strings.TrimSpace(card.Summary),
+			Status:      card.Status,
+			FetchedAt:   time.Now(),
+			UpdatedAt:   time.Now(),
+		})
+	}
+
+	return regulations, nil
 }
 
-// parseRegulationSearchResults извлекает НПА из страницы поиска regulation.gov.ru.
-func parseRegulationSearchResults(body []byte, pageURL, category string) ([]*model.Document, error) {
-	doc, err := html.Parse(strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
+// regulationCard — промежуточная структура для распарсенной карточки НПА.
+type regulationCard struct {
+	Title       string
+	Number      string
+	NPAType     model.NPAType
+	IssuedBy    string
+	IssuedAt    time.Time
+	EffectiveAt time.Time
+	Summary     string
+	Status      model.NPAStatus
+	URL         string
+}
 
-	var docs []*model.Document
-	now := time.Now()
+// findRegulationCards ищет карточки НПА по характерным CSS-классам/структурам.
+func findRegulationCards(doc *html.Node) []regulationCard {
+	var cards []regulationCard
 
-	// Ищем карточки НПА в таблице результатов.
+	// Стратегия 1: ищем элементы с классами, содержащими "regulation", "npa", "law", "normative", "акт", "закон".
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode {
-			// Строки таблицы результатов или карточки.
-			if n.Data == "tr" || (n.Data == "div" && hasClass(n, "npa-item")) {
-				title, link, npaType := extractNPAFromRow(n)
-				if title != "" && isSkolkovoRelated(title) {
-					id := npaID(link)
-					if link == "" {
-						id = npaID(title)
-					}
-					docs = append(docs, &model.Document{
-						ID:        id,
-						Title:     title,
-						SourceURL: resolveURL(pageURL, link),
-						FileHash:  contentHashReg(title + npaType),
-						FetchedAt: now,
-						Status:    model.StatusActive,
-						Category:  category,
-					})
+		if n.Type == html.ElementNode && n.Data == "div" {
+			class := attrVal(n, "class")
+			lower := strings.ToLower(class)
+			if strings.Contains(lower, "regulation") ||
+				strings.Contains(lower, "npa") ||
+				strings.Contains(lower, "law") ||
+				strings.Contains(lower, "normative") ||
+				strings.Contains(lower, "card") {
+				if card := extractRegulationCard(n); card.Title != "" && card.URL != "" {
+					cards = append(cards, card)
 				}
 			}
 		}
@@ -213,227 +175,531 @@ func parseRegulationSearchResults(body []byte, pageURL, category string) ([]*mod
 	}
 	walk(doc)
 
-	return docs, nil
-}
-
-// rssItem — элемент RSS-ленты.
-type rssItem struct {
-	Title   string `xml:"title"`
-	Link    string `xml:"link"`
-	PubDate string `xml:"pubDate"`
-	Desc    string `xml:"description"`
-}
-
-// rssFeed — RSS-лента.
-type rssFeed struct {
-	Items []rssItem `xml:"channel>item"`
-}
-
-// fetchConsultantPlusRSS получает НПА из RSS Консультант+.
-func fetchConsultantPlusRSS(ctx context.Context, query string, hc *http.Client, category string) ([]*model.Document, error) {
-	// Консультант+ не имеет открытого RSS для поиска, поэтому используем
-	// Гарант-парсер или публичные RSS по теме.
-	rssURL := "https://www.garant.ru/rss/hotnews.xml"
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rssURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", regulationsUserAgent)
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("RSS НПА: статус %d", resp.StatusCode)
-	}
-
-	var feed rssFeed
-	if err := xml.NewDecoder(resp.Body).Decode(&feed); err != nil {
-		return nil, err
-	}
-
-	var docs []*model.Document
-	now := time.Now()
-
-	for _, item := range feed.Items {
-		if !isSkolkovoRelated(item.Title) && !isSkolkovoRelated(item.Desc) {
-			continue
+	// Стратегия 2: если ничего не нашли, ищем <article> элементы.
+	if len(cards) == 0 {
+		walk = func(n *html.Node) {
+			if n.Type == html.ElementNode && n.Data == "article" {
+				if card := extractRegulationCard(n); card.Title != "" && card.URL != "" {
+					cards = append(cards, card)
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
 		}
-		docs = append(docs, &model.Document{
-			ID:        npaID(item.Link),
-			Title:     item.Title,
-			SourceURL: item.Link,
-			FileHash:  contentHashReg(item.Title + item.Desc),
-			FetchedAt: now,
-			Status:    model.StatusActive,
-			Category:  category,
-		})
+		walk(doc)
 	}
 
-	return docs, nil
+	// Стратегия 3: ищем <tr> элементы внутри таблиц НПА.
+	if len(cards) == 0 {
+		walk = func(n *html.Node) {
+			if n.Type == html.ElementNode && n.Data == "table" {
+				class := attrVal(n, "class")
+				lower := strings.ToLower(class)
+				if strings.Contains(lower, "regulation") ||
+					strings.Contains(lower, "npa") ||
+					strings.Contains(lower, "law") ||
+					strings.Contains(lower, "table") {
+					for c := n.FirstChild; c != nil; c = c.NextSibling {
+						if c.Type == html.ElementNode && c.Data == "tbody" {
+							for r := c.FirstChild; r != nil; r = r.NextSibling {
+								if r.Type == html.ElementNode && r.Data == "tr" {
+									if card := extractRegulationRow(r); card.Title != "" && card.URL != "" {
+										cards = append(cards, card)
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(doc)
+	}
+
+	return cards
 }
 
-// fetchNPAPage загружает страницу конкретного НПА.
-func fetchNPAPage(ctx context.Context, rawURL, category string, hc *http.Client) (*model.Document, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+// findRegulationLinks — fallback: ищет ссылки, похожие на НПА.
+func findRegulationLinks(doc *html.Node, baseURL string) []regulationCard {
+	var cards []regulationCard
+	base, err := url.Parse(baseURL)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", regulationsUserAgent)
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("НПА страница %s: статус %d", rawURL, resp.StatusCode)
+		return nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "a" {
+			href := attrVal(n, "href")
+			if href == "" || strings.HasPrefix(href, "#") || strings.HasPrefix(href, "mailto:") {
+				goto recurse
+			}
 
-	doc, err := html.Parse(strings.NewReader(string(body)))
-	if err != nil {
-		return nil, err
-	}
+			abs := resolveURL(base, baseURL, href)
+			// Проверяем, что ссылка ведёт на страницу НПА.
+			if !isRegulationURL(abs) {
+				goto recurse
+			}
 
-	title := extractHTMLTitle(doc)
-	if title == "" {
-		title = rawURL
-	}
-	mainText := extractMainContentText(doc)
+			title := nodeText(n)
+			if title == "" {
+				goto recurse
+			}
 
-	return &model.Document{
-		ID:        npaID(rawURL),
-		Title:     title,
-		SourceURL: rawURL,
-		FileHash:  contentHashReg(mainText),
-		FetchedAt: time.Now(),
-		Status:    model.StatusActive,
-		Category:  category,
-	}, nil
+			card := regulationCard{
+				Title: title,
+				URL:   abs,
+			}
+			card.NPAType = detectNPAType(title)
+			card.Number = extractNPANumber(title)
+
+			cards = append(cards, card)
+		}
+	recurse:
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	return cards
 }
 
-// coreNPA возвращает ключевые НПА по Сколково как статичные документы.
-// Используется как постоянная база — эти акты не исчезнут из базы при недоступности сайтов.
-func coreNPA(category string) []*model.Document {
-	now := time.Now()
-	type npaEntry struct {
-		id      string
-		title   string
-		url     string
-		summary string
+// isRegulationURL проверяет, что URL похож на страницу НПА.
+func isRegulationURL(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
 	}
-
-	entries := []npaEntry{
-		{
-			id:    "244-fz-2010",
-			title: "Федеральный закон № 244-ФЗ «Об инновационном центре «Сколково»",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_105168/",
-			summary: "Основополагающий закон об инновационном центре Сколково. Устанавливает " +
-				"правовое положение ИЦ «Сколково», порядок получения и утраты статуса резидента, " +
-				"льготы и преференции для резидентов: 0% налог на прибыль, пониженные страховые взносы, " +
-				"освобождение от уплаты НДС на НИОКР. Принят 28.09.2010.",
-		},
-		{
-			id:    "rusp-1574-2010",
-			title: "Постановление Правительства РФ № 1574 о порядке ведения реестра резидентов Сколково",
-			url:   "https://base.garant.ru/12183030/",
-			summary: "Устанавливает порядок включения в реестр участников проекта «Сколково», " +
-				"форму реестра и порядок исключения из него. Принято Правительством РФ.",
-		},
-		{
-			id:    "fz-244-art246-1-nkrf",
-			title: "Статья 246.1 НК РФ — Освобождение от обязанностей плательщика налога на прибыль",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_28165/",
-			summary: "Участники проекта «Сколково» освобождаются от обязанностей налогоплательщика " +
-				"налога на прибыль организаций в течение 10 лет с момента получения статуса участника. " +
-				"Условие: совокупный объём прибыли не превышает 300 млн рублей.",
-		},
-		{
-			id:    "nkrf-art427-insurance-skolkovo",
-			title: "Статья 427 НК РФ — Пониженные тарифы страховых взносов для участников Сколково",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_28165/",
-			summary: "Участники проекта «Сколково» применяют пониженный тариф страховых взносов: " +
-				"ОПС — 14%, ОСС — 0%, ОМС — 0%. Применяется в течение 10 лет с момента получения статуса.",
-		},
-		{
-			id:    "nkrf-art149-p3-16-vat",
-			title: "Статья 149 НК РФ п.3 пп.16 — Освобождение от НДС НИОКР по Сколково",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_28165/",
-			summary: "Выполнение НИОКР организациями-участниками проекта «Сколково» не подлежит " +
-				"налогообложению НДС. Льгота распространяется на услуги в сфере НИОКР.",
-		},
-		{
-			id:    "nkrf-art381-property-tax",
-			title: "Статья 381 НК РФ — Льготы по налогу на имущество для участников Сколково",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_28165/",
-			summary: "Организации — участники проекта «Сколково» освобождены от налога на имущество " +
-				"организаций в отношении имущества, используемого для осуществления деятельности, " +
-				"предусмотренной 244-ФЗ.",
-		},
-		{
-			id:    "nkrf-art395-land-tax",
-			title: "Статья 395 НК РФ — Освобождение от земельного налога для Сколково",
-			url:   "http://www.consultant.ru/document/cons_doc_LAW_28165/",
-			summary: "Управляющие компании «Сколково», фонды и резиденты освобождены от уплаты " +
-				"земельного налога в отношении земельных участков ИЦ «Сколково».",
-		},
-		{
-			id:    "eec-decision-130-customs",
-			title: "Решение ЕЭК № 130 — Таможенные льготы для Сколково",
-			url:   "https://www.alta.ru/tamdoc/12bn0130/",
-			summary: "Устанавливает льготы по таможенным пошлинам при ввозе товаров, " +
-				"необходимых для осуществления деятельности в ИЦ «Сколково».",
-		},
-		{
-			id:    "244-fz-amendment-2022",
-			title: "Изменения в 244-ФЗ 2022 года — расширение льгот для резидентов Сколково",
-			url:   "https://sk.ru/foundation/documents/",
-			summary: "Поправки к 244-ФЗ, расширяющие программу льгот и уточняющие порядок " +
-				"применения налоговых преференций для резидентов Сколково.",
-		},
-	}
-
-	docs := make([]*model.Document, 0, len(entries))
-	for _, e := range entries {
-		docs = append(docs, &model.Document{
-			ID:        npaID(e.id),
-			Title:     e.title,
-			SourceURL: e.url,
-			FileHash:  contentHashReg(e.summary),
-			FetchedAt: now,
-			Status:    model.StatusActive,
-			Category:  category,
-		})
-	}
-	return docs
+	lower := strings.ToLower(u.Path)
+	return strings.Contains(lower, "regulation") ||
+		strings.Contains(lower, "law") ||
+		strings.Contains(lower, "npa") ||
+		strings.Contains(lower, "normative") ||
+		strings.Contains(lower, "document") ||
+		strings.Contains(lower, "act") ||
+		strings.Contains(lower, "zakon") ||
+		strings.Contains(lower, "postanovlenie") ||
+		strings.Contains(lower, "prikaz")
 }
 
-// IngestRegulations записывает НПА в Store и индексирует в RAG.
-func IngestRegulations(ctx context.Context, docs []*model.Document, st store.Store, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
-	res := &Result{Fetched: len(docs)}
-	for _, doc := range docs {
-		if doc.Title == "" || doc.SourceURL == "" {
+// extractRegulationCard извлекает данные НПА из DOM-узла.
+func extractRegulationCard(n *html.Node) regulationCard {
+	var card regulationCard
+
+	// Ищем заголовок (h1-h4, или .title, или первую ссылку).
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if card.Title != "" {
+			return
+		}
+		if node.Type == html.ElementNode {
+			switch node.Data {
+			case "h1", "h2", "h3", "h4":
+				card.Title = nodeText(node)
+			case "a":
+				class := attrVal(node, "class")
+				lower := strings.ToLower(class)
+				if strings.Contains(lower, "title") ||
+					strings.Contains(lower, "name") ||
+					strings.Contains(lower, "law") ||
+					strings.Contains(lower, "regulation") {
+					card.Title = nodeText(node)
+					card.URL = attrVal(node, "href")
+				}
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+
+	// Если заголовок не найден через walk, берём весь текст узла.
+	if card.Title == "" {
+		card.Title = nodeText(n)
+	}
+
+	// Ищем ссылку, если ещё не нашли.
+	if card.URL == "" {
+		card.URL = findLink(n)
+	}
+
+	// Определяем тип НПА.
+	card.NPAType = detectNPAType(card.Title)
+
+	// Извлекаем номер НПА.
+	card.Number = extractNPANumber(nodeText(n))
+
+	// Ищем издающий орган.
+	card.IssuedBy = extractField(n, "issuer")
+
+	// Ищем даты.
+	if card.IssuedAt.IsZero() {
+		card.IssuedAt = findIssuedDate(n)
+	}
+	if card.EffectiveAt.IsZero() {
+		card.EffectiveAt = findEffectiveDate(n)
+	}
+
+	// Определяем статус.
+	card.Status = detectNPAStatus(nodeText(n))
+
+	// Ищем краткое содержание.
+	card.Summary = extractRegulationSummary(n, card.Title)
+
+	return card
+}
+
+// extractRegulationRow извлекает данные НПА из строки таблицы.
+func extractRegulationRow(n *html.Node) regulationCard {
+	var card regulationCard
+
+	// Ищем ссылку в ячейке.
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "a" {
+			if card.Title == "" {
+				card.Title = nodeText(node)
+			}
+			if card.URL == "" {
+				href := attrVal(node, "href")
+				if href != "" && !strings.HasPrefix(href, "#") {
+					card.URL = href
+				}
+			}
+		}
+		if node.Type == html.ElementNode && node.Data == "td" {
+			text := nodeText(node)
+			if card.NPAType == "" {
+				card.NPAType = detectNPAType(text)
+			}
+			if card.Number == "" {
+				if num := extractNPANumber(text); num != "" {
+					card.Number = num
+				}
+			}
+			if card.IssuedBy == "" && (strings.Contains(text, "мин") ||
+				strings.Contains(text, "правительств") ||
+				strings.Contains(text, "президент") ||
+				strings.Contains(text, "государствен")) {
+				card.IssuedBy = text
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+
+	return card
+}
+
+// detectNPAType определяет тип НПА по ключевым словам.
+func detectNPAType(s string) model.NPAType {
+	lower := strings.ToLower(s)
+
+	if strings.Contains(lower, "федеральный закон") || strings.Contains(lower, "фз") {
+		return model.NPATypeLaw
+	}
+	if strings.Contains(lower, "постановление") || strings.Contains(lower, "decree") {
+		return model.NPATypeDecree
+	}
+	if strings.Contains(lower, "приказ") || strings.Contains(lower, "order") {
+		return model.NPATypeOrder
+	}
+	if strings.Contains(lower, "решение") || strings.Contains(lower, "decision") {
+		return model.NPATypeDecision
+	}
+
+	return model.NPATypeLaw // по умолчанию
+}
+
+// extractNPANumber извлекает номер НПА из текста (например "244-ФЗ", "123-П").
+func extractNPANumber(s string) string {
+	// Ищем паттерн: цифры-буквы (например "244-ФЗ", "1574").
+	runes := []rune(s)
+	n := len(runes)
+	for i := 0; i < n; i++ {
+		r := runes[i]
+		if r >= '0' && r <= '9' {
+			// Нашли начало числа — собираем номер.
+			start := i
+			for i < n {
+				cr := runes[i]
+				if (cr >= '0' && cr <= '9') || cr == '-' || cr == ' ' || cr == '\u2116' {
+					i++
+					continue
+				}
+				// Буквы (кириллица или латиница).
+				if (cr >= 'A' && cr <= 'Z') || (cr >= 'a' && cr <= 'z') ||
+					(cr >= '\u0410' && cr <= '\u044F') {
+					i++
+					continue
+				}
+				break
+			}
+			num := strings.TrimSpace(string(runes[start:i]))
+			if num != "" && len(num) >= 2 {
+				return num
+			}
+		}
+	}
+	return ""
+}
+
+// detectNPAStatus определяет статус НПА по ключевым словам.
+func detectNPAStatus(s string) model.NPAStatus {
+	lower := strings.ToLower(s)
+
+	if strings.Contains(lower, "утратил силу") || strings.Contains(lower, "отмен") ||
+		strings.Contains(lower, "revoked") {
+		return model.NPAStatusRevoked
+	}
+	if strings.Contains(lower, "измен") || strings.Contains(lower, "ред") ||
+		strings.Contains(lower, "amend") {
+		return model.NPAStatusAmended
+	}
+
+	return model.NPAStatusActive
+}
+
+// extractField ищет текст в элементе с классом, содержащим keyword.
+func extractField(n *html.Node, keyword string) string {
+	var result string
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if result != "" {
+			return
+		}
+		if node.Type == html.ElementNode {
+			class := strings.ToLower(attrVal(node, "class"))
+			if strings.Contains(class, keyword) {
+				result = nodeText(node)
+				return
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return result
+}
+
+// findIssuedDate ищет дату принятия НПА.
+func findIssuedDate(n *html.Node) time.Time {
+	var walk func(*html.Node)
+	var dateStr string
+	walk = func(node *html.Node) {
+		if dateStr != "" {
+			return
+		}
+		if node.Type == html.ElementNode {
+			class := strings.ToLower(attrVal(node, "class"))
+			if strings.Contains(class, "issued") || strings.Contains(class, "date") ||
+				strings.Contains(class, "принят") || strings.Contains(class, "от ") {
+				dateStr = nodeText(node)
+				return
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+
+	if dateStr == "" {
+		dateStr = findDateInText(nodeText(n))
+	}
+
+	return parseDate(dateStr)
+}
+
+// findEffectiveDate ищет дату вступления в силу.
+func findEffectiveDate(n *html.Node) time.Time {
+	var walk func(*html.Node)
+	var dateStr string
+	walk = func(node *html.Node) {
+		if dateStr != "" {
+			return
+		}
+		if node.Type == html.ElementNode {
+			class := strings.ToLower(attrVal(node, "class"))
+			if strings.Contains(class, "effective") || strings.Contains(class, "вступ") ||
+				strings.Contains(class, "действ") {
+				dateStr = nodeText(node)
+				return
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+
+	if dateStr == "" {
+		// Ищем вторую дату в тексте.
+		dateStr = findSecondDateInText(nodeText(n))
+	}
+
+	return parseDate(dateStr)
+}
+
+// extractRegulationSummary извлекает краткое содержание, исключая заголовок.
+func extractRegulationSummary(n *html.Node, title string) string {
+	text := nodeText(n)
+	text = strings.TrimSpace(text)
+	// Убираем заголовок из текста.
+	if title != "" && strings.HasPrefix(text, title) {
+		text = strings.TrimPrefix(text, title)
+		text = strings.TrimSpace(text)
+	}
+	// Ограничиваем длину.
+	if len(text) > 2000 {
+		text = text[:2000] + "..."
+	}
+	return text
+}
+
+// findLink ищет первую ссылку в узле.
+func findLink(n *html.Node) string {
+	var link string
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if link != "" {
+			return
+		}
+		if node.Type == html.ElementNode && node.Data == "a" {
+			href := attrVal(node, "href")
+			if href != "" && !strings.HasPrefix(href, "#") && !strings.HasPrefix(href, "mailto:") {
+				link = href
+				return
+			}
+		}
+		for c := node.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(n)
+	return link
+}
+
+// resolveURL разрешает относительный URL относительно базового.
+func resolveURL(base *url.URL, pageURL, href string) string {
+	href = strings.TrimSpace(href)
+	if href == "" {
+		return ""
+	}
+	pu, err := url.Parse(pageURL)
+	if err != nil {
+		pu = base
+	}
+	ref, err := url.Parse(href)
+	if err != nil {
+		return ""
+	}
+	return pu.ResolveReference(ref).String()
+}
+
+// isDigit проверяет, что байт — цифра.
+func isDigit(b byte) bool {
+	return b >= '0' && b <= '9'
+}
+
+// findDateInText ищет первую строку, похожую на дату.
+func findDateInText(s string) string {
+	for i := 0; i <= len(s)-10; i++ {
+		if isDigit(s[i]) && isDigit(s[i+1]) &&
+			(s[i+2] == '.' || s[i+2] == '/') &&
+			isDigit(s[i+3]) && isDigit(s[i+4]) &&
+			(s[i+5] == '.' || s[i+5] == '/') &&
+			isDigit(s[i+6]) && isDigit(s[i+7]) &&
+			isDigit(s[i+8]) && isDigit(s[i+9]) {
+			return s[i : i+10]
+		}
+	}
+	return ""
+}
+
+// findSecondDateInText ищет вторую строку, похожую на дату.
+func findSecondDateInText(s string) string {
+	found := 0
+	for i := 0; i <= len(s)-10; i++ {
+		if isDigit(s[i]) && isDigit(s[i+1]) &&
+			(s[i+2] == '.' || s[i+2] == '/') &&
+			isDigit(s[i+3]) && isDigit(s[i+4]) &&
+			(s[i+5] == '.' || s[i+5] == '/') &&
+			isDigit(s[i+6]) && isDigit(s[i+7]) &&
+			isDigit(s[i+8]) && isDigit(s[i+9]) {
+			found++
+			if found == 2 {
+				return s[i : i+10]
+			}
+		}
+	}
+	return ""
+}
+
+// parseDate разбирает строку в дату в различных форматах.
+func parseDate(s string) time.Time {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}
+	}
+
+	formats := []string{
+		"02.01.2006",
+		"02/01/2006",
+		"2006-01-02",
+		"02 января 2006",
+		"2 января 2006",
+		"02.01.2006 15:04",
+		"02/01/2006 15:04",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z07:00",
+		time.RFC1123,
+		time.RFC1123Z,
+		time.RFC3339,
+	}
+
+	for _, layout := range formats {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+
+	return time.Time{}
+}
+
+// IngestRegulations записывает НПА в хранилище.
+func IngestRegulations(ctx context.Context, npaList []*model.NPADocument, st store.Store, recs ...changes.Recorder) (*Result, error) {
+	res := &Result{Fetched: len(npaList)}
+
+	for _, n := range npaList {
+		if n.Title == "" || n.SourceURL == "" {
 			res.Errors = append(res.Errors, "пропущено: пустой заголовок или URL")
 			continue
 		}
+
+		// Преобразуем NPADocument → Document для хранения в generic Store.
+		doc := npaToDocument(n)
+
 		isNew := false
 		if _, err := st.Get(ctx, doc.ID); err == nil {
-			if err := st.Upsert(ctx, *doc); err != nil {
+			// Обновляем существующий НПА.
+			if err := st.Upsert(ctx, doc); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("обновление %s: %v", doc.ID, err))
 				continue
 			}
 			res.Updated++
 		} else {
-			doc.FetchedAt = time.Now()
-			if err := st.Upsert(ctx, *doc); err != nil {
+			// Создаём новый.
+			if err := st.Upsert(ctx, doc); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("создание %s: %v", doc.ID, err))
 				continue
 			}
@@ -455,87 +721,54 @@ func IngestRegulations(ctx context.Context, docs []*model.Document, st store.Sto
 			DetectedAt: time.Now(),
 		})
 	}
+
 	return res, nil
+}
+
+// npaToDocument преобразуем NPADocument → Document для хранения.
+func npaToDocument(n *model.NPADocument) model.Document {
+	status := model.StatusActive
+	if n.Status == model.NPAStatusRevoked {
+		status = model.StatusOutdated
+	} else if n.Status == model.NPAStatusAmended {
+		status = model.StatusActive // amended всё ещё действует
+	}
+	return model.Document{
+		ID:        n.ID,
+		Title:     n.Title,
+		SourceURL: n.SourceURL,
+		FetchedAt: n.FetchedAt,
+		Status:    status,
+		Category:  "НПА",
+		FileHash:  contentHashReg(n.Summary),
+	}
+}
+
+// contentHashReg вычисляет хэш содержимого.
+func contentHashReg(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
 }
 
 // ---------------------------------------------------------------------------
 // Вспомогательные функции
 // ---------------------------------------------------------------------------
 
-const regulationsUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
-
-func npaID(s string) string {
-	sum := sha256.Sum256([]byte(s))
+func regulationID(regulationURL string) string {
+	sum := sha1.Sum([]byte(regulationURL))
 	return "npa-" + hex.EncodeToString(sum[:])[:16]
 }
 
-func contentHashReg(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
-}
-
-func isSkolkovoRelated(s string) bool {
-	lower := strings.ToLower(s)
-	return strings.Contains(lower, "сколково") ||
-		strings.Contains(lower, "skolkovo") ||
-		strings.Contains(lower, "244-фз") ||
-		strings.Contains(lower, "244-fz") ||
-		strings.Contains(lower, "инновационн") && strings.Contains(lower, "центр")
-}
-
-func hasClass(n *html.Node, class string) bool {
+func attrVal(n *html.Node, key string) string {
 	for _, a := range n.Attr {
-		if a.Key == "class" && strings.Contains(a.Val, class) {
-			return true
+		if a.Key == key {
+			return a.Val
 		}
 	}
-	return false
+	return ""
 }
 
-func extractNPAFromRow(n *html.Node) (title, link, npaType string) {
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		if node.Type == html.ElementNode && node.Data == "a" {
-			for _, a := range node.Attr {
-				if a.Key == "href" {
-					link = a.Val
-				}
-			}
-			t := nodeTextReg(node)
-			if title == "" && t != "" {
-				title = t
-			}
-		}
-		if node.Type == html.ElementNode && (node.Data == "td" || node.Data == "span") {
-			t := nodeTextReg(node)
-			if isNPAType(t) && npaType == "" {
-				npaType = t
-			}
-		}
-		for c := node.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(n)
-	return
-}
-
-func isNPAType(s string) bool {
-	lower := strings.ToLower(s)
-	return containsAnyReg(lower, "федеральный закон", "постановление", "приказ",
-		"распоряжение", "указ", "решение")
-}
-
-func containsAnyReg(s string, substrs ...string) bool {
-	for _, sub := range substrs {
-		if strings.Contains(s, sub) {
-			return true
-		}
-	}
-	return false
-}
-
-func nodeTextReg(n *html.Node) string {
+func nodeText(n *html.Node) string {
 	var b strings.Builder
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
@@ -548,75 +781,4 @@ func nodeTextReg(n *html.Node) string {
 	}
 	walk(n)
 	return strings.Join(strings.Fields(b.String()), " ")
-}
-
-func extractHTMLTitle(doc *html.Node) string {
-	var title string
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if title != "" {
-			return
-		}
-		if n.Type == html.ElementNode && n.Data == "title" {
-			title = strings.TrimSpace(nodeTextReg(n))
-			return
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(doc)
-	return title
-}
-
-func extractMainContentText(doc *html.Node) string {
-	for _, tag := range []string{"main", "article", "body"} {
-		if node := findNodeByTag(doc, tag); node != nil {
-			t := strings.TrimSpace(nodeTextReg(node))
-			if t != "" {
-				if len(t) > 5000 {
-					t = t[:5000]
-				}
-				return t
-			}
-		}
-	}
-	return ""
-}
-
-func findNodeByTag(doc *html.Node, tag string) *html.Node {
-	var found *html.Node
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if found != nil {
-			return
-		}
-		if n.Type == html.ElementNode && n.Data == tag {
-			found = n
-			return
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(doc)
-	return found
-}
-
-func resolveURL(base, href string) string {
-	if href == "" {
-		return base
-	}
-	if strings.HasPrefix(href, "http") {
-		return href
-	}
-	b, err := url.Parse(base)
-	if err != nil {
-		return href
-	}
-	r, err := url.Parse(href)
-	if err != nil {
-		return href
-	}
-	return b.ResolveReference(r).String()
 }

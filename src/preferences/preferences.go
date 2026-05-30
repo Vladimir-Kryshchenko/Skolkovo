@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -28,10 +29,11 @@ type PreferencesConfig struct {
 
 // Monitor загружает льготы резидентов и синхронизирует их в хранилище и RAG.
 type Monitor struct {
-	Cfg   PreferencesConfig
-	Store store.Store
-	Rag   *rag.Service
-	HTTP  *http.Client
+	Cfg     PreferencesConfig
+	Store   store.Store
+	Rag     *rag.Service
+	Changes changes.Recorder // лента изменений; может быть nil
+	HTTP    *http.Client
 }
 
 // Result — итог синхронизации льгот.
@@ -82,7 +84,7 @@ func (m *Monitor) Run(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("парсинг льгот: %w", err)
 	}
-	return IngestPreferences(ctx, docs, m.Store, m.Rag)
+	return IngestPreferences(ctx, docs, m.Store, m.Rag, m.Changes)
 }
 
 // ParsePreferences загружает страницы льгот и возвращает список документов.
@@ -292,8 +294,8 @@ func knownPreferences(category string) []*model.Document {
 	base := "https://sk.ru/residents/preferences/"
 	return []*model.Document{
 		{
-			ID:    prefID("tax_profit_244fz"),
-			Title: "Нулевой налог на прибыль для резидентов Сколково",
+			ID:        prefID("tax_profit_244fz"),
+			Title:     "Нулевой налог на прибыль для резидентов Сколково",
 			SourceURL: base,
 			FileHash: contentHash("Налог на прибыль 0%. Резиденты Сколково освобождены от уплаты налога на прибыль организаций. " +
 				"Основание: ст. 246.1 НК РФ, Федеральный закон № 244-ФЗ от 28.09.2010."),
@@ -302,8 +304,8 @@ func knownPreferences(category string) []*model.Document {
 			Category:  category,
 		},
 		{
-			ID:    prefID("insurance_14pct_244fz"),
-			Title: "Пониженные страховые взносы 14% для резидентов Сколково",
+			ID:        prefID("insurance_14pct_244fz"),
+			Title:     "Пониженные страховые взносы 14% для резидентов Сколково",
 			SourceURL: base,
 			FileHash: contentHash("Страховые взносы снижены до 14% (вместо стандартных 30%). " +
 				"ПФР — 14%, ФСС — 0%, ФОМС — 0%. " +
@@ -313,8 +315,8 @@ func knownPreferences(category string) []*model.Document {
 			Category:  category,
 		},
 		{
-			ID:    prefID("vat_exempt_rd_244fz"),
-			Title: "Освобождение от НДС на НИОКР для резидентов Сколково",
+			ID:        prefID("vat_exempt_rd_244fz"),
+			Title:     "Освобождение от НДС на НИОКР для резидентов Сколково",
 			SourceURL: base,
 			FileHash: contentHash("Освобождение от НДС на выполнение НИОКР. " +
 				"Основание: пп. 16 п. 3 ст. 149 НК РФ, Федеральный закон № 244-ФЗ."),
@@ -323,8 +325,8 @@ func knownPreferences(category string) []*model.Document {
 			Category:  category,
 		},
 		{
-			ID:    prefID("customs_import_244fz"),
-			Title: "Таможенные льготы для резидентов Сколково (ввоз оборудования)",
+			ID:        prefID("customs_import_244fz"),
+			Title:     "Таможенные льготы для резидентов Сколково (ввоз оборудования)",
 			SourceURL: base,
 			FileHash: contentHash("Освобождение от ввозных таможенных пошлин и НДС при ввозе товаров для нужд Сколково. " +
 				"Основание: Решение Совета ЕЭК № 130, Федеральный закон № 244-ФЗ."),
@@ -333,8 +335,8 @@ func knownPreferences(category string) []*model.Document {
 			Category:  category,
 		},
 		{
-			ID:    prefID("property_tax_exempt_244fz"),
-			Title: "Освобождение от налога на имущество для резидентов Сколково",
+			ID:        prefID("property_tax_exempt_244fz"),
+			Title:     "Освобождение от налога на имущество для резидентов Сколково",
 			SourceURL: base,
 			FileHash: contentHash("Резиденты освобождены от налога на имущество организаций в части имущества, " +
 				"используемого в инновационной деятельности. Основание: ст. 381 НК РФ."),
@@ -343,8 +345,8 @@ func knownPreferences(category string) []*model.Document {
 			Category:  category,
 		},
 		{
-			ID:    prefID("land_tax_exempt_244fz"),
-			Title: "Освобождение от земельного налога для резидентов Сколково",
+			ID:        prefID("land_tax_exempt_244fz"),
+			Title:     "Освобождение от земельного налога для резидентов Сколково",
 			SourceURL: base,
 			FileHash: contentHash("Резиденты Сколково освобождены от уплаты земельного налога. " +
 				"Основание: ст. 395 НК РФ."),
@@ -356,13 +358,14 @@ func knownPreferences(category string) []*model.Document {
 }
 
 // IngestPreferences записывает льготы в Store и индексирует в RAG.
-func IngestPreferences(ctx context.Context, docs []*model.Document, st store.Store, ragSvc *rag.Service) (*Result, error) {
+func IngestPreferences(ctx context.Context, docs []*model.Document, st store.Store, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
 	res := &Result{Fetched: len(docs)}
 	for _, doc := range docs {
 		if doc.Title == "" || doc.SourceURL == "" {
 			res.Errors = append(res.Errors, "пропущено: пустой заголовок или URL")
 			continue
 		}
+		isNew := false
 		if _, err := st.Get(ctx, doc.ID); err == nil {
 			if err := st.Upsert(ctx, *doc); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("обновление %s: %v", doc.ID, err))
@@ -376,7 +379,23 @@ func IngestPreferences(ctx context.Context, docs []*model.Document, st store.Sto
 				continue
 			}
 			res.New++
+			isNew = true
 		}
+
+		kind := changes.KindUpdated
+		if isNew {
+			kind = changes.KindNew
+		}
+		changes.Notify(ctx, recs, changes.Event{
+			EntityType: changes.EntityPreference,
+			EntityID:   doc.ID,
+			Title:      doc.Title,
+			Category:   doc.Category,
+			Kind:       kind,
+			SourceURL:  doc.SourceURL,
+			DetectedAt: time.Now(),
+		})
+
 		if ragSvc != nil && doc.LocalPath != "" {
 			if _, err := ragSvc.IndexDocument(ctx, doc.ID); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("RAG %s: %v", doc.ID, err))

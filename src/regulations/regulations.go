@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -33,10 +34,11 @@ type RegulationsConfig struct {
 
 // Monitor синхронизирует НПА в хранилище.
 type Monitor struct {
-	Cfg  RegulationsConfig
-	St   store.Store
-	Rag  *rag.Service
-	HTTP *http.Client
+	Cfg     RegulationsConfig
+	St      store.Store
+	Rag     *rag.Service
+	Changes changes.Recorder // лента изменений; может быть nil
+	HTTP    *http.Client
 }
 
 // Result — итог синхронизации НПА.
@@ -86,7 +88,7 @@ func (m *Monitor) Run(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("парсинг НПА: %w", err)
 	}
-	return IngestRegulations(ctx, docs, m.St, m.Rag)
+	return IngestRegulations(ctx, docs, m.St, m.Rag, m.Changes)
 }
 
 // ParseRegulations загружает НПА из всех источников.
@@ -415,13 +417,14 @@ func coreNPA(category string) []*model.Document {
 }
 
 // IngestRegulations записывает НПА в Store и индексирует в RAG.
-func IngestRegulations(ctx context.Context, docs []*model.Document, st store.Store, ragSvc *rag.Service) (*Result, error) {
+func IngestRegulations(ctx context.Context, docs []*model.Document, st store.Store, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
 	res := &Result{Fetched: len(docs)}
 	for _, doc := range docs {
 		if doc.Title == "" || doc.SourceURL == "" {
 			res.Errors = append(res.Errors, "пропущено: пустой заголовок или URL")
 			continue
 		}
+		isNew := false
 		if _, err := st.Get(ctx, doc.ID); err == nil {
 			if err := st.Upsert(ctx, *doc); err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("обновление %s: %v", doc.ID, err))
@@ -435,7 +438,22 @@ func IngestRegulations(ctx context.Context, docs []*model.Document, st store.Sto
 				continue
 			}
 			res.New++
+			isNew = true
 		}
+
+		kind := changes.KindUpdated
+		if isNew {
+			kind = changes.KindNew
+		}
+		changes.Notify(ctx, recs, changes.Event{
+			EntityType: changes.EntityNPA,
+			EntityID:   doc.ID,
+			Title:      doc.Title,
+			Category:   doc.Category,
+			Kind:       kind,
+			SourceURL:  doc.SourceURL,
+			DetectedAt: time.Now(),
+		})
 	}
 	return res, nil
 }

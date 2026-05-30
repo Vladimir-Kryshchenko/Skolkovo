@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/changes"
+	"baza-skolkovo/src/health"
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	rag "baza-skolkovo/src/rag_service"
@@ -21,9 +23,12 @@ import (
 // Pipeline объединяет подсистемы одного цикла актуализации.
 type Pipeline struct {
 	Scraper   *scraper.Scraper
-	Rag       *rag.Service     // может быть nil — тогда без индексации
-	News      *news.Monitor    // может быть nil — тогда без новостей
-	Notifier  *notify.Notifier // может быть nil — тогда без уведомлений
+	Rag       *rag.Service             // может быть nil — тогда без индексации
+	News      *news.Monitor            // может быть nil — тогда без новостей
+	Notifier  *notify.Notifier         // webhook; может быть nil
+	Changes   changes.Store            // лента изменений; может быть nil
+	TG        *notify.TelegramNotifier // Telegram-алерты консультанту; может быть nil
+	Health    health.Store             // мониторинг свежести источников; может быть nil
 	ReportDir string
 }
 
@@ -31,6 +36,7 @@ type Pipeline struct {
 func (p *Pipeline) RunOnce(ctx context.Context) error {
 	log.Println("[pipeline] старт цикла: парсинг dochub.sk.ru")
 	rep, err := p.Scraper.Run(ctx)
+	p.recordHealth(ctx, "documents", docItems(rep), err)
 	if err != nil {
 		return fmt.Errorf("парсинг: %w", err)
 	}
@@ -50,7 +56,9 @@ func (p *Pipeline) RunOnce(ctx context.Context) error {
 
 	var newsRes *news.Result
 	if p.News != nil {
-		if newsRes, err = p.News.Sync(ctx); err != nil {
+		newsRes, err = p.News.Sync(ctx)
+		p.recordHealth(ctx, "news", newsItems(newsRes), err)
+		if err != nil {
 			log.Printf("[pipeline] новости: %v", err)
 		} else {
 			log.Printf("[pipeline] новости: получено %d, новых %d, обновлено %d", newsRes.Fetched, newsRes.New, newsRes.Updated)
@@ -62,7 +70,68 @@ func (p *Pipeline) RunOnce(ctx context.Context) error {
 	}
 
 	p.maybeNotify(ctx, rep, newsRes)
+	p.notifyChanges(ctx)
 	return nil
+}
+
+// notifyChanges рассылает Telegram-алерты по неотправленным изменениям ленты
+// и помечает их отправленными. Если Telegram-нотификатор не настроен — изменения
+// остаются в ленте (доступны через get_recent_changes), но алерты не шлются.
+func (p *Pipeline) notifyChanges(ctx context.Context) {
+	if p.Changes == nil || p.TG == nil || !p.TG.Enabled() {
+		return
+	}
+	evs, err := p.Changes.Unnotified(ctx, 50)
+	if err != nil {
+		log.Printf("[pipeline] лента изменений: %v", err)
+		return
+	}
+	if len(evs) == 0 {
+		return
+	}
+	ids := make([]string, 0, len(evs))
+	for _, ev := range evs {
+		switch ev.EntityType {
+		case changes.EntityNPA:
+			_ = p.TG.SendNewNPA(ctx, ev.Title, ev.SourceURL)
+		case changes.EntityContest:
+			_ = p.TG.SendNewContest(ctx, ev.Title, ev.SourceURL)
+		default:
+			_ = p.TG.SendDocumentChanged(ctx, ev.Title, ev.Category, string(ev.Kind))
+		}
+		ids = append(ids, ev.ID)
+	}
+	if err := p.Changes.MarkNotified(ctx, ids); err != nil {
+		log.Printf("[pipeline] не удалось пометить изменения отправленными: %v", err)
+		return
+	}
+	log.Printf("[pipeline] отправлено алертов по изменениям: %d", len(ids))
+}
+
+// recordHealth фиксирует результат прогона источника в мониторинге свежести.
+func (p *Pipeline) recordHealth(ctx context.Context, source string, items int, runErr error) {
+	if p.Health == nil {
+		return
+	}
+	if err := p.Health.Record(ctx, source, items, runErr); err != nil {
+		log.Printf("[pipeline] health[%s]: %v", source, err)
+	}
+}
+
+// docItems возвращает число новых/обновлённых документов за прогон.
+func docItems(rep *scraper.Report) int {
+	if rep == nil {
+		return 0
+	}
+	return rep.Catalogued + rep.Downloaded + rep.Updated
+}
+
+// newsItems возвращает число новых/обновлённых новостей за прогон.
+func newsItems(res *news.Result) int {
+	if res == nil {
+		return 0
+	}
+	return res.New + res.Updated
 }
 
 // Schedule запускает RunOnce немедленно и далее каждые interval до отмены контекста.

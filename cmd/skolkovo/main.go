@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -42,6 +43,8 @@ import (
 
 	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/agents"
+	"baza-skolkovo/src/audit"
+	"baza-skolkovo/src/changes"
 	chat_widget "baza-skolkovo/src/chat_widget"
 	"baza-skolkovo/src/classifier"
 	"baza-skolkovo/src/common/config"
@@ -54,6 +57,8 @@ import (
 	"baza-skolkovo/src/events"
 	"baza-skolkovo/src/faq"
 	"baza-skolkovo/src/fetcher"
+	"baza-skolkovo/src/generator"
+	"baza-skolkovo/src/health"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
 	"baza-skolkovo/src/news"
@@ -114,6 +119,10 @@ func main() {
 		mustRun(cmdRegulations(cfg))
 	case "eligibility":
 		mustRun(cmdEligibility(cfg, args))
+	case "generate":
+		mustRun(cmdGenerate(cfg, args))
+	case "audit":
+		mustRun(cmdAudit(cfg))
 	case "serve":
 		mustRun(cmdServe(cfg))
 	case "embed":
@@ -148,13 +157,36 @@ func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
 }
 
 func newPipeline(cfg config.Config, st store.Store, svc *rag.Service) *pipeline.Pipeline {
-	return &pipeline.Pipeline{
-		Scraper:   newScraper(cfg, st),
+	sc := newScraper(cfg, st)
+	newsMon := news.New(cfg.NewsRSSURL, cfg.DocsDir, st, svc)
+	p := &pipeline.Pipeline{
+		Scraper:   sc,
 		Rag:       svc,
-		News:      news.New(cfg.NewsRSSURL, cfg.DocsDir, st, svc),
+		News:      newsMon,
 		Notifier:  notify.New(cfg.NotifyWebhook),
 		ReportDir: cfg.ReportDir,
 	}
+
+	// Лента изменений и мониторинг свежести доступны только на Postgres-бэкенде.
+	if ps, ok := st.(*store.PostgresStore); ok {
+		ctx := context.Background()
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err != nil {
+			log.Printf("[pipeline] лента изменений недоступна: %v", err)
+		} else {
+			sc.Changes = cs
+			newsMon.Changes = cs
+			p.Changes = cs
+		}
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err != nil {
+			log.Printf("[pipeline] мониторинг свежести недоступен: %v", err)
+		} else {
+			p.Health = hs
+		}
+	}
+
+	// Telegram-алерты консультанту об изменениях (no-op, если токен/чат не заданы).
+	p.TG = notify.NewTelegramNotifier(os.Getenv("TELEGRAM_BOT_TOKEN"), cfg.ConsultantTelegramChatID)
+	return p
 }
 
 // --- подкоманды ---
@@ -304,6 +336,39 @@ func cmdFetch(cfg config.Config) error {
 		fmt.Println("  ! ", e)
 	}
 	return nil
+}
+
+// runScheduledFetch выполняет один прогон скачивания недостающих тел файлов через
+// headless-браузер (обход WAF) и фиксирует результат в мониторинге свежести.
+// Вызывается планировщиком регулярно, чтобы файлы были выкачаны до того, как их
+// запросят через MCP/бота. No-op при недоступном Chrome.
+func runScheduledFetch(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, recordHealth func(string, int, error)) {
+	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait)
+	if err != nil {
+		log.Printf("[serve:fetch] headless-браузер недоступен: %v", err)
+		recordHealth("fetch", 0, err)
+		return
+	}
+	log.Printf("[serve:fetch] скачивание недостающих тел файлов (обход WAF)")
+
+	indexFn := func(ctx context.Context, id string) error {
+		if svc == nil {
+			return nil
+		}
+		if err := svc.Init(ctx); err != nil {
+			return err
+		}
+		_, err := svc.IndexDocument(ctx, id)
+		return err
+	}
+
+	done, errs := f.EnrichMissing(ctx, st, cfg.DocsDir, cfg.FetchLimit, indexFn)
+	log.Printf("[serve:fetch] скачано %d, ошибок %d", done, len(errs))
+	if len(errs) > 0 {
+		recordHealth("fetch", done, fmt.Errorf("ошибок загрузки: %d", len(errs)))
+	} else {
+		recordHealth("fetch", done, nil)
+	}
 }
 
 func cmdNews(cfg config.Config) error {
@@ -765,12 +830,15 @@ func cmdServe(cfg config.Config) error {
 				MCPAPIKey: cfg.MCPAPIKey,
 			}
 			stores := buildResidencyStores(st)
+			gen := newGenerator(cfg, st)
+			ensureDefaultTemplates(gen, cfg.GeneratorTemplateDir)
 			portalStores := portal.PortalStores{
 				ClientStore:    stores.ClientStore,
 				ChecklistStore: stores.ChecklistStore,
 				DeadlineStore:  stores.DeadlineStore,
 				TemplateStore:  stores.TemplateStore,
 				DocumentStore:  st,
+				Generator:      gen,
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -837,7 +905,7 @@ func cmdServe(cfg config.Config) error {
 	}
 
 	// --- Планировщик для новых модулей ---
-	go scheduleNewModules(ctx, cfg, st)
+	go scheduleNewModules(ctx, cfg, st, svc)
 
 	// --- Ежедневная сводка консультанту ---
 	if tgNotifier.Enabled() {
@@ -941,7 +1009,7 @@ func sendDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg
 
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
 // FAQ, Telegram-каналов, льгот и НПА.
-func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) {
+func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service) {
 	ticker := time.NewTicker(cfg.ScrapeInterval)
 	defer ticker.Stop()
 
@@ -949,6 +1017,8 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 	var contestStore store.ContestStore
 	var faqStore store.FAQStore
 	var tgStore store.TelegramStore
+	var healthStore health.Store
+	var changeStore changes.Recorder
 
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
@@ -956,6 +1026,20 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 		contestStore = pss
 		faqStore = pss
 		tgStore = pss
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			healthStore = hs
+		}
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			changeStore = cs
+		}
+	}
+
+	// recordHealth фиксирует результат прогона источника (no-op без Postgres).
+	recordHealth := func(source string, items int, runErr error) {
+		if healthStore == nil {
+			return
+		}
+		_ = healthStore.Record(ctx, source, items, runErr)
 	}
 
 	httpCl := &http.Client{Timeout: 60 * time.Second}
@@ -965,6 +1049,9 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// Скачивание тел файлов через headless-браузер (обход WAF).
+			runScheduledFetch(ctx, cfg, st, svc, recordHealth)
+
 			// Мероприятия
 			if cfg.EventsSourceURL != "" && eventStore != nil {
 				log.Printf("[serve:events] запуск парсинга мероприятий")
@@ -972,8 +1059,10 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 				parsed, err := events.ParseEvents(ctx, evCfg, httpCl)
 				if err != nil {
 					log.Printf("[serve:events] ошибка: %v", err)
+					recordHealth("events", 0, err)
 				} else {
-					_, _ = events.IngestEvents(ctx, parsed, eventStore, nil)
+					res, ingErr := events.IngestEvents(ctx, parsed, eventStore, nil, changeStore)
+					recordHealth("events", res.New+res.Updated, ingErr)
 				}
 			}
 
@@ -984,8 +1073,10 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 				parsed, err := contests.ParseContests(ctx, cCfg, httpCl)
 				if err != nil {
 					log.Printf("[serve:contests] ошибка: %v", err)
+					recordHealth("contests", 0, err)
 				} else {
-					_, _ = contests.IngestContests(ctx, parsed, contestStore, nil)
+					res, ingErr := contests.IngestContests(ctx, parsed, contestStore, nil, changeStore)
+					recordHealth("contests", res.New+res.Updated, ingErr)
 				}
 			}
 
@@ -996,8 +1087,10 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 				parsed, err := faq.ParseFAQ(ctx, fCfg, httpCl)
 				if err != nil {
 					log.Printf("[serve:faq] ошибка: %v", err)
+					recordHealth("faq", 0, err)
 				} else {
-					_, _ = faq.IngestFAQ(ctx, parsed, faqStore, nil)
+					res, ingErr := faq.IngestFAQ(ctx, parsed, faqStore, nil, changeStore)
+					recordHealth("faq", res.New+res.Updated, ingErr)
 				}
 			}
 
@@ -1017,8 +1110,10 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 					parsed, err := telegram.FetchAllChannels(ctx, tCfg, httpCl)
 					if err != nil {
 						log.Printf("[serve:telegram] ошибка: %v", err)
+						recordHealth("telegram", 0, err)
 					} else {
-						_, _ = telegram.IngestPosts(ctx, parsed, tgStore)
+						res, ingErr := telegram.IngestPosts(ctx, parsed, tgStore)
+						recordHealth("telegram", res.New, ingErr)
 					}
 				}
 			}
@@ -1031,10 +1126,13 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 					Category:   "Льготы",
 				}
 				mon := preferences.NewMonitor(prefCfg, st, nil)
+				mon.Changes = changeStore
 				if res, err := mon.Run(ctx); err != nil {
 					log.Printf("[serve:preferences] ошибка: %v", err)
+					recordHealth("preferences", 0, err)
 				} else {
 					log.Printf("[serve:preferences] готово: новых %d, обновлено %d", res.New, res.Updated)
+					recordHealth("preferences", res.New+res.Updated, nil)
 				}
 			}
 
@@ -1056,10 +1154,13 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store) 
 					Category:    "НПА",
 				}
 				mon := regulations.NewMonitor(regCfg, st, nil)
+				mon.Changes = changeStore
 				if res, err := mon.Run(ctx); err != nil {
 					log.Printf("[serve:regulations] ошибка: %v", err)
+					recordHealth("regulations", 0, err)
 				} else {
 					log.Printf("[serve:regulations] готово: новых %d, обновлено %d", res.New, res.Updated)
+					recordHealth("regulations", res.New+res.Updated, nil)
 				}
 			}
 		}
@@ -1082,6 +1183,21 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 
 	// Регистрируем инструменты источников.
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, nil, nil)
+
+	// Лента изменений: get_recent_changes.
+	ctx := context.Background()
+	if cs, err := changes.NewPostgresStore(ctx, pool); err != nil {
+		log.Printf("[mcp] get_recent_changes недоступен: %v", err)
+	} else {
+		mcpserver.RegisterChangeTools(mcpSrv, cs)
+	}
+
+	// Мониторинг свежести источников: get_source_health.
+	if hs, err := health.NewPostgresStore(ctx, pool); err != nil {
+		log.Printf("[mcp] get_source_health недоступен: %v", err)
+	} else {
+		mcpserver.RegisterHealthTools(mcpSrv, hs)
+	}
 }
 
 // registerAgentMCPTools создаёт ИИ-агентов и регистрирует их MCP-инструменты.
@@ -1238,7 +1354,64 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 		)
 	}
 
-	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes, draft_document, check_eligibility")
+	// generate_document — сгенерировать готовый файл документа (PDF/DOCX) для клиента.
+	if gen := newGenerator(cfg, st); gen != nil {
+		mcpSrv.AddTool(
+			mcp.NewTool("generate_document",
+				mcp.WithDescription("Сгенерировать готовый файл документа (PDF/DOCX) для клиента из шаблона. Возвращает путь к файлу. Список шаблонов: list_document_templates."),
+				mcp.WithString("template_id", mcp.Required(), mcp.Description("Идентификатор шаблона (имя файла, напр. Заявление_на_резидентство.go.tpl)")),
+				mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
+				mcp.WithString("variables", mcp.Description("Доп. переменные в формате key=value через запятую (опционально)")),
+			),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				templateID := req.GetString("template_id", "")
+				clientID := req.GetString("client_id", "")
+				vars := map[string]string{}
+				if raw := req.GetString("variables", ""); raw != "" {
+					for _, kv := range strings.Split(raw, ",") {
+						if i := strings.IndexByte(kv, '='); i > 0 {
+							vars[strings.TrimSpace(kv[:i])] = strings.TrimSpace(kv[i+1:])
+						}
+					}
+				}
+				out, err := gen.RenderTemplate(ctx, templateID, clientID, vars)
+				if err != nil {
+					return mcp.NewToolResultError("ошибка генерации: " + err.Error()), nil
+				}
+				return mcp.NewToolResultText(toJSON(map[string]string{"path": out})), nil
+			},
+		)
+
+		// list_document_templates — список доступных шаблонов.
+		mcpSrv.AddTool(
+			mcp.NewTool("list_document_templates",
+				mcp.WithDescription("Список доступных шаблонов документов для генерации (generate_document)."),
+				mcp.WithReadOnlyHintAnnotation(true),
+			),
+			func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				names, err := gen.ListAvailableTemplates(ctx)
+				if err != nil {
+					return mcp.NewToolResultError("ошибка списка шаблонов: " + err.Error()), nil
+				}
+				return mcp.NewToolResultText(toJSON(names)), nil
+			},
+		)
+	}
+
+	// get_coverage_audit — полнота охвата источников Сколково.
+	mcpSrv.AddTool(
+		mcp.NewTool("get_coverage_audit",
+			mcp.WithDescription("Отчёт о полноте охвата источников Сколково: какие источники (документы, новости, мероприятия, конкурсы, FAQ, льготы, НПА, Telegram, резиденты) покрыты, а какие не настроены/устарели/без данных."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+		),
+		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			rep := buildCoverageReport(ctx, cfg, st)
+			return mcp.NewToolResultText(toJSON(rep)), nil
+		},
+	)
+
+	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes, draft_document, check_eligibility, generate_document, list_document_templates, get_coverage_audit")
 }
 
 // buildResidencyStores собирает Stores для админки резидентства.
@@ -1347,10 +1520,10 @@ func cmdRegulations(cfg config.Config) error {
 	}
 
 	regCfg := regulations.RegulationsConfig{
-		SearchURL:  cfg.RegulationsSearchURL,
-		ExtraURLs:  extraURLs,
+		SearchURL:   cfg.RegulationsSearchURL,
+		ExtraURLs:   extraURLs,
 		SearchQuery: "Сколково",
-		Category:   "НПА",
+		Category:    "НПА",
 	}
 	mon := regulations.NewMonitor(regCfg, st, nil)
 	res, err := mon.Run(ctx)
@@ -1410,6 +1583,227 @@ func cmdEligibility(cfg config.Config, args []string) error {
 	return nil
 }
 
+// buildCoverageReport собирает отчёт о полноте охвата источников из конфигурации,
+// мониторинга свежести и фактических счётчиков в хранилищах.
+func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store) audit.Report {
+	// Состояние свежести по имени источника.
+	healthByName := map[string]string{}
+	itemsLastRun := map[string]int{}
+	if ps, ok := st.(*store.PostgresStore); ok {
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			if sources, err := hs.List(ctx); err == nil {
+				now := time.Now()
+				for _, s := range sources {
+					healthByName[s.Name] = string(s.State(24*time.Hour, now))
+					itemsLastRun[s.Name] = s.ItemsLastRun
+				}
+			}
+		}
+	}
+
+	// Счётчики документов по категориям.
+	var docsTotal, newsN, prefN, npaN, fetchedN = -1, -1, -1, -1, -1
+	if docs, err := st.List(ctx, store.Filter{}); err == nil {
+		docsTotal, newsN, prefN, npaN, fetchedN = 0, 0, 0, 0, 0
+		for _, d := range docs {
+			switch d.Category {
+			case "Новости":
+				newsN++
+			case "Льготы":
+				prefN++
+			case "НПА":
+				npaN++
+			default:
+				docsTotal++
+			}
+			if strings.TrimSpace(d.LocalPath) != "" {
+				fetchedN++
+			}
+		}
+	}
+
+	// Счётчики расширенных источников.
+	eventsN, contestsN, faqN, tgN := -1, -1, -1, -1
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pss := store.NewPostgresSourceStore(ps.Pool())
+		if n, err := pss.CountEvents(ctx); err == nil {
+			eventsN = n
+		}
+		if n, err := pss.CountActiveContests(ctx); err == nil {
+			contestsN = n
+		}
+		if n, err := pss.CountFAQItems(ctx); err == nil {
+			faqN = n
+		}
+		if n, err := pss.CountPosts(ctx, ""); err == nil {
+			tgN = n
+		}
+	}
+
+	cov := []audit.Coverage{
+		{Key: "documents", Name: "Документы dochub.sk.ru", URL: cfg.SourceURL, Enabled: cfg.SourceURL != "", HealthState: healthByName["documents"], ItemsLastRun: itemsLastRun["documents"], Items: docsTotal},
+		{Key: "fetch", Name: "Тела файлов документов (обход WAF)", URL: cfg.SourceURL, Enabled: true, HealthState: healthByName["fetch"], ItemsLastRun: itemsLastRun["fetch"], Items: fetchedN},
+		{Key: "news", Name: "Новости sk.ru", URL: cfg.NewsRSSURL, Enabled: cfg.NewsRSSURL != "", HealthState: healthByName["news"], ItemsLastRun: itemsLastRun["news"], Items: newsN},
+		{Key: "events", Name: "Мероприятия", URL: cfg.EventsSourceURL, Enabled: cfg.EventsSourceURL != "", HealthState: healthByName["events"], ItemsLastRun: itemsLastRun["events"], Items: eventsN},
+		{Key: "contests", Name: "Конкурсы и гранты", URL: cfg.ContestsURL, Enabled: cfg.ContestsURL != "", HealthState: healthByName["contests"], ItemsLastRun: itemsLastRun["contests"], Items: contestsN},
+		{Key: "faq", Name: "FAQ", URL: cfg.FAQURL, Enabled: cfg.FAQURL != "", HealthState: healthByName["faq"], ItemsLastRun: itemsLastRun["faq"], Items: faqN},
+		{Key: "preferences", Name: "Льготы резидентов", URL: cfg.PreferencesURL, Enabled: cfg.PreferencesEnabled, HealthState: healthByName["preferences"], ItemsLastRun: itemsLastRun["preferences"], Items: prefN},
+		{Key: "regulations", Name: "НПА (244-ФЗ и поправки)", URL: cfg.RegulationsSearchURL, Enabled: cfg.RegulationsEnabled, HealthState: healthByName["regulations"], ItemsLastRun: itemsLastRun["regulations"], Items: npaN},
+		{Key: "telegram", Name: "Telegram-каналы", URL: cfg.TelegramRssHubURL, Enabled: cfg.TelegramChannels != "", HealthState: healthByName["telegram"], ItemsLastRun: itemsLastRun["telegram"], Items: tgN},
+		{Key: "residents", Name: "Реестр резидентов", URL: "", Enabled: false, HealthState: healthByName["residents"], Items: -1, Note: "парсер реестра резидентов не настроен"},
+	}
+
+	rep := audit.Build(cov)
+	rep.GeneratedAt = time.Now()
+	return rep
+}
+
+// cmdAudit строит отчёт о полноте охвата источников и сохраняет его в ReportDir.
+func cmdAudit(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	rep := buildCoverageReport(ctx, cfg, st)
+	md := audit.ToMarkdown(rep)
+
+	if err := os.MkdirAll(cfg.ReportDir, 0o755); err != nil {
+		return err
+	}
+	name := fmt.Sprintf("ОТЧЕТ_Охват_источников_%s.md", time.Now().Format("2006-01-02_150405"))
+	path := filepath.Join(cfg.ReportDir, name)
+	if err := os.WriteFile(path, []byte(md), 0o644); err != nil {
+		return err
+	}
+
+	fmt.Printf("Аудит охвата: покрыто %d из %d источников. Отчёт: %s\n", rep.CoveredN, rep.TotalN, path)
+	for _, c := range rep.Sources {
+		fmt.Printf("  [%s] %s — записей %s\n", c.Status, c.Name, itemsStr(c.Items))
+	}
+	return nil
+}
+
+func itemsStr(n int) string {
+	if n < 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+// genClientStore адаптирует PostgresClientStore к generator.ClientStore
+// (ListClientDocuments возвращает значения вместо указателей).
+type genClientStore struct {
+	pcs *store.PostgresClientStore
+}
+
+func (g genClientStore) GetClient(ctx context.Context, id string) (*model.Client, error) {
+	return g.pcs.GetClient(ctx, id)
+}
+
+func (g genClientStore) ListClientDocuments(ctx context.Context, id string) ([]model.ClientDocument, error) {
+	ptrs, err := g.pcs.ListClientDocuments(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.ClientDocument, 0, len(ptrs))
+	for _, p := range ptrs {
+		if p != nil {
+			out = append(out, *p)
+		}
+	}
+	return out, nil
+}
+
+// newGenerator собирает генератор документов с файловым хранилищем шаблонов.
+// Возвращает nil, если backend не Postgres (нужен доступ к данным клиентов).
+func newGenerator(cfg config.Config, st store.Store) *generator.DocumentGenerator {
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		return nil
+	}
+	pcs := store.NewPostgresClientStore(ps.Pool())
+	gcfg := generator.GeneratorConfig{
+		TemplateDir: cfg.GeneratorTemplateDir,
+		OutputDir:   cfg.GeneratorOutputDir,
+		ChromePath:  cfg.ChromePath,
+	}
+	return generator.NewDocumentGenerator(gcfg, genClientStore{pcs: pcs},
+		generator.NewFileTemplateStore(cfg.GeneratorTemplateDir))
+}
+
+// ensureDefaultTemplates создаёт стандартные шаблоны, если в директории их ещё нет
+// (не перезаписывает существующие/кастомизированные шаблоны).
+func ensureDefaultTemplates(gen *generator.DocumentGenerator, dir string) {
+	if gen == nil {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, e := range entries {
+			if strings.Contains(strings.ToLower(e.Name()), ".tpl") {
+				return // шаблоны уже есть
+			}
+		}
+	}
+	if err := gen.CreateDefaultTemplates(); err != nil {
+		log.Printf("[generator] не удалось создать стандартные шаблоны: %v", err)
+	} else {
+		log.Printf("[generator] созданы стандартные шаблоны в %s", dir)
+	}
+}
+
+// cmdGenerate генерирует документ из шаблона для клиента.
+// Использование: skolkovo generate <template_id> <client_id> [key=value ...]
+// Без аргументов — создаёт стандартные шаблоны и печатает их список.
+func cmdGenerate(cfg config.Config, args []string) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	gen := newGenerator(cfg, st)
+	if gen == nil {
+		return fmt.Errorf("генерация документов требует backend=postgres")
+	}
+
+	// Без аргументов: создаём стандартные шаблоны и показываем доступные.
+	if len(args) < 2 {
+		if err := gen.CreateDefaultTemplates(); err != nil {
+			return fmt.Errorf("создание стандартных шаблонов: %w", err)
+		}
+		names, err := gen.ListAvailableTemplates(ctx)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Стандартные шаблоны созданы в %s. Доступно %d:\n", cfg.GeneratorTemplateDir, len(names))
+		for _, n := range names {
+			fmt.Printf("  - %s\n", n)
+		}
+		fmt.Println("\nИспользование: skolkovo generate <template_id> <client_id> [key=value ...]")
+		return nil
+	}
+
+	templateID, clientID := args[0], args[1]
+	vars := map[string]string{}
+	for _, kv := range args[2:] {
+		if i := strings.IndexByte(kv, '='); i > 0 {
+			vars[kv[:i]] = kv[i+1:]
+		}
+	}
+
+	out, err := gen.RenderTemplate(ctx, templateID, clientID, vars)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Документ сгенерирован: %s\n", out)
+	return nil
+}
+
 func mustRun(err error) {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
@@ -1444,6 +1838,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "Аналитика:")
 	fmt.Fprintln(os.Stderr, "  index         — проиндексировать активные документы в Qdrant (RAG)")
 	fmt.Fprintln(os.Stderr, "  eligibility   — проверить компанию по ИНН: соответствует ли требованиям")
+	fmt.Fprintln(os.Stderr, "  generate      — сгенерировать документ из шаблона (PDF/DOCX) для клиента")
+	fmt.Fprintln(os.Stderr, "  audit         — отчёт о полноте охвата источников Сколково")
 	fmt.Fprintln(os.Stderr, "  embed         — проверить доступность TEI (вычислить тестовый эмбеддинг)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "База данных:")

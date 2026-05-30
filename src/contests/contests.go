@@ -15,6 +15,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -611,15 +612,16 @@ func findSecondDateInText(n *html.Node) string {
 }
 
 // IngestContests записывает конкурсы в хранилище и индексирует в RAG.
-func IngestContests(ctx context.Context, contests []*model.Contest, st store.ContestStore, ragSvc *rag.Service) (*Result, error) {
-	res := &Result{Fetched: len(contests)}
+func IngestContests(ctx context.Context, contestList []*model.Contest, st store.ContestStore, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
+	res := &Result{Fetched: len(contestList)}
 
-	for _, c := range contests {
+	for _, c := range contestList {
 		if c.Title == "" || c.SourceURL == "" {
 			res.Errors = append(res.Errors, "пропущено: пустой заголовок или URL")
 			continue
 		}
 
+		isNew := false
 		if existing, err := st.GetContest(ctx, c.ID); err == nil {
 			// Обновляем существующий конкурс.
 			c.CreatedAt = existing.CreatedAt
@@ -636,7 +638,22 @@ func IngestContests(ctx context.Context, contests []*model.Contest, st store.Con
 				continue
 			}
 			res.New++
+			isNew = true
 		}
+
+		kind := changes.KindUpdated
+		if isNew {
+			kind = changes.KindNew
+		}
+		changes.Notify(ctx, recs, changes.Event{
+			EntityType: changes.EntityContest,
+			EntityID:   c.ID,
+			Title:      c.Title,
+			Category:   c.Category,
+			Kind:       kind,
+			SourceURL:  c.SourceURL,
+			DetectedAt: time.Now(),
+		})
 
 		// Индексация в RAG (если сервис доступен).
 		if ragSvc != nil {

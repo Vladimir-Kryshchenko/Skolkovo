@@ -14,6 +14,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -375,7 +376,7 @@ func findFAQSections(doc *html.Node, sourceURL string) []faqEntry {
 }
 
 // IngestFAQ записывает элементы FAQ в хранилище и индексирует в RAG.
-func IngestFAQ(ctx context.Context, items []*model.FAQItem, st store.FAQStore, ragSvc *rag.Service) (*Result, error) {
+func IngestFAQ(ctx context.Context, items []*model.FAQItem, st store.FAQStore, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
 	res := &Result{Fetched: len(items)}
 
 	for _, it := range items {
@@ -384,6 +385,7 @@ func IngestFAQ(ctx context.Context, items []*model.FAQItem, st store.FAQStore, r
 			continue
 		}
 
+		isNew := false
 		if existing, err := st.GetFAQItem(ctx, it.ID); err == nil {
 			// Обновляем существующий элемент.
 			it.CreatedAt = existing.CreatedAt
@@ -400,7 +402,22 @@ func IngestFAQ(ctx context.Context, items []*model.FAQItem, st store.FAQStore, r
 				continue
 			}
 			res.New++
+			isNew = true
 		}
+
+		kind := changes.KindUpdated
+		if isNew {
+			kind = changes.KindNew
+		}
+		changes.Notify(ctx, recs, changes.Event{
+			EntityType: changes.EntityFAQ,
+			EntityID:   it.ID,
+			Title:      it.Question,
+			Category:   it.Category,
+			Kind:       kind,
+			SourceURL:  it.SourceURL,
+			DetectedAt: time.Now(),
+		})
 
 		// Индексация в RAG (если сервис доступен).
 		if ragSvc != nil {

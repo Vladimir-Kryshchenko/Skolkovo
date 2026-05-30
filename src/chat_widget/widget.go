@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -428,11 +429,13 @@ func (s *WidgetServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	mcpReq_http.Header.Set("Content-Type", "application/json")
+	// Streamable HTTP MCP-сервер требует оба типа в Accept.
+	mcpReq_http.Header.Set("Accept", "application/json, text/event-stream")
 	if s.config.MCPAPIKey != "" {
 		mcpReq_http.Header.Set("Authorization", "Bearer "+s.config.MCPAPIKey)
 	}
 
-	client := &http.Client{Timeout: 120}
+	client := &http.Client{Timeout: 120 * time.Second}
 	resp, err := client.Do(mcpReq_http)
 	if err != nil {
 		http.Error(w, "mcp error: "+err.Error(), http.StatusBadGateway)
@@ -445,6 +448,8 @@ func (s *WidgetServer) handleChat(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mcp read error", http.StatusBadGateway)
 		return
 	}
+	// Streamable HTTP может вернуть SSE — извлекаем JSON из строк data:.
+	respBody = extractMCPJSON(respBody)
 
 	// Парсим MCP-ответ.
 	var mcpResp struct {
@@ -476,6 +481,27 @@ func (s *WidgetServer) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chatResponse{Reply: reply})
+}
+
+// extractMCPJSON возвращает JSON-полезную нагрузку из ответа MCP. Если тело —
+// SSE-поток (text/event-stream), берёт содержимое последней строки «data:».
+// Обычный JSON-ответ возвращается без изменений.
+func extractMCPJSON(body []byte) []byte {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '{' {
+		return trimmed
+	}
+	var last []byte
+	for _, line := range bytes.Split(body, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
+			last = bytes.TrimSpace(data)
+		}
+	}
+	if len(last) > 0 {
+		return last
+	}
+	return trimmed
 }
 
 // sessionResponse — тело ответа POST /api/session.

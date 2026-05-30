@@ -3,20 +3,19 @@ package portal
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"html"
 	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
+	"baza-skolkovo/src/generator"
 )
 
 // PortalConfig — конфигурация портала.
@@ -34,7 +33,8 @@ type PortalStores struct {
 	DeadlineStore  store.DeadlineStore
 	TemplateStore  store.TemplateStore
 	DocStore       store.ClientDocumentStore
-	DocumentStore  store.Store // реестр документов (для скачивания)
+	DocumentStore  store.Store                  // реестр документов (для скачивания)
+	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
 }
 
 // PortalServer — HTTP-сервер личного кабинета.
@@ -85,6 +85,7 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /documents", ps.requireAuth(ps.handleDocuments))
 	mux.HandleFunc("GET /generate", ps.requireAuth(ps.handleGenerate))
 	mux.HandleFunc("POST /generate", ps.requireAuth(ps.handleGenerateSubmit))
+	mux.HandleFunc("GET /download", ps.requireAuth(ps.handleDownload))
 
 	// JSON API
 	mux.HandleFunc("GET /api/me", ps.requireAuthJSON(ps.apiMe))
@@ -279,9 +280,18 @@ func (ps *PortalServer) lookupClientByEmail(ctx context.Context, email string) (
 	if ps.stores.ClientStore == nil {
 		return nil, fmt.Errorf("ClientStore не настроен")
 	}
-	// Для MVP: поиск через список клиентов по тенантам
-	// В полной реализации добавить метод GetClientByEmail в ClientStore
-	return nil, fmt.Errorf("поиск по email ещё не реализован")
+	// Пустой tenantID → все клиенты; сопоставляем по email без учёта регистра.
+	clients, err := ps.stores.ClientStore.ListClients(ctx, "", model.ResidencyStage(""))
+	if err != nil {
+		return nil, err
+	}
+	target := strings.ToLower(strings.TrimSpace(email))
+	for _, c := range clients {
+		if strings.ToLower(strings.TrimSpace(c.ContactEmail)) == target {
+			return c, nil
+		}
+	}
+	return nil, fmt.Errorf("клиент с email %q не найден", email)
 }
 
 // ---------------------------------------------------------------------------
@@ -368,7 +378,19 @@ func (ps *PortalServer) handleDocuments(w http.ResponseWriter, r *http.Request) 
 
 func (ps *PortalServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
-	templates, _ := ps.stores.TemplateStore.ListTemplates(r.Context(), "")
+
+	var templates []*model.DocumentTemplate
+	if ps.stores.Generator != nil {
+		// Источник истины — файловые шаблоны генератора.
+		if list, err := ps.stores.Generator.ListTemplateInfos(r.Context()); err == nil {
+			for i := range list {
+				t := list[i]
+				templates = append(templates, &t)
+			}
+		}
+	} else if ps.stores.TemplateStore != nil {
+		templates, _ = ps.stores.TemplateStore.ListTemplates(r.Context(), "")
+	}
 
 	data := generateData{
 		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
@@ -392,20 +414,41 @@ func (ps *PortalServer) handleGenerateSubmit(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Получаем шаблон
-	tpl, err := ps.stores.TemplateStore.GetTemplate(r.Context(), templateID)
-	if err != nil {
-		http.Redirect(w, r, "/generate?msg=Шаблон+не+найден&kind=err", http.StatusSeeOther)
+	if ps.stores.Generator == nil {
+		http.Redirect(w, r, "/generate?msg=Генерация+документов+не+настроена&kind=err", http.StatusSeeOther)
 		return
 	}
 
-	// Для MVP: генерируем хеш-имя файла и отдаём заглушку
-	// В продакшене — вызов MCP для генерации документа
-	sum := sha256.Sum256([]byte(tpl.ID + sess.ClientID + time.Now().String()))
-	filename := fmt.Sprintf("%s_%s.docx", sanitizeFilename(tpl.Name), hex.EncodeToString(sum[:8]))
+	// Рендерим документ на основе данных профиля клиента.
+	outPath, err := ps.stores.Generator.RenderTemplate(r.Context(), templateID, sess.ClientID, nil)
+	if err != nil {
+		http.Redirect(w, r, "/generate?msg="+url.QueryEscape("Ошибка генерации: "+err.Error())+"&kind=err", http.StatusSeeOther)
+		return
+	}
 
-	msg := fmt.Sprintf("Документ «%s» сгенерирован: %s", html.EscapeString(tpl.Name), filename)
-	http.Redirect(w, r, "/generate?msg="+url.QueryEscape(msg)+"&kind=ok", http.StatusSeeOther)
+	// Перенаправляем на скачивание готового файла.
+	http.Redirect(w, r, "/download?file="+url.QueryEscape(filepath.Base(outPath)), http.StatusSeeOther)
+}
+
+// handleDownload отдаёт сгенерированный документ из выходной директории генератора.
+func (ps *PortalServer) handleDownload(w http.ResponseWriter, r *http.Request) {
+	if ps.stores.Generator == nil {
+		http.Error(w, "генерация документов не настроена", http.StatusNotFound)
+		return
+	}
+	// filepath.Base отсекает любые попытки выхода за пределы директории.
+	name := filepath.Base(r.URL.Query().Get("file"))
+	if name == "." || name == "/" || name == "" {
+		http.Error(w, "некорректное имя файла", http.StatusBadRequest)
+		return
+	}
+	full := filepath.Join(ps.stores.Generator.OutputDir(), name)
+	if _, err := os.Stat(full); err != nil {
+		http.Error(w, "файл не найден", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	http.ServeFile(w, r, full)
 }
 
 // ---------------------------------------------------------------------------

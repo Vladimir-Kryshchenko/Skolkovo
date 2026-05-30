@@ -36,6 +36,9 @@ type GeneratorConfig struct {
 	OutputDir string
 	// DefaultFormat — формат по умолчанию: "pdf" или "docx".
 	DefaultFormat string
+	// ChromePath — путь к Chrome/Edge для генерации настоящего PDF через headless-браузер.
+	// Если пусто — PDF сохраняется как HTML-файл (fallback без бинарной конвертации).
+	ChromePath string
 }
 
 // ApplyDefaults заполняет пустые поля значениями по умолчанию.
@@ -67,6 +70,9 @@ func NewDocumentGenerator(config GeneratorConfig, clientStore ClientStore, templ
 		templateStore: templateStore,
 	}
 }
+
+// OutputDir возвращает директорию, куда сохраняются сгенерированные документы.
+func (g *DocumentGenerator) OutputDir() string { return g.config.OutputDir }
 
 // RenderTemplate рендерит шаблон с данными клиента и кастомными переменными.
 //
@@ -136,7 +142,15 @@ func (g *DocumentGenerator) RenderTemplate(ctx context.Context, templateID, clie
 			return "", fmt.Errorf("generator: сохранение HTML %q: %w", htmlPath, err)
 		}
 		outputPath = filepath.Join(g.config.OutputDir, baseName+".pdf")
-		if err := GeneratePDF(rendered.String(), outputPath); err != nil {
+		// Если задан ChromePath — генерируем настоящий PDF через headless-браузер;
+		// при ошибке откатываемся на HTML-fallback, чтобы документ всё равно был выдан.
+		if g.config.ChromePath != "" {
+			if err := generatePDFChrome(ctx, g.config.ChromePath, rendered.String(), outputPath); err != nil {
+				if ferr := GeneratePDF(rendered.String(), outputPath); ferr != nil {
+					return "", fmt.Errorf("generator: конвертация в PDF (chrome: %v): %w", err, ferr)
+				}
+			}
+		} else if err := GeneratePDF(rendered.String(), outputPath); err != nil {
 			return "", fmt.Errorf("generator: конвертация в PDF: %w", err)
 		}
 
@@ -185,39 +199,19 @@ func (g *DocumentGenerator) buildTemplateData(client *model.Client, variables ma
 	return data
 }
 
-// GeneratePDF сохраняет HTML-контент как PDF.
-//
-// MVP: сохраняет HTML с .html расширением (полноценная PDF-конверсия
-// требует wkhtmltopdf или headless Chrome).
-//
-// TODO: подключить chromedp для PDF-конверсии:
-//
-//	import "github.com/chromedp/chromedp"
-//
-//	func GeneratePDF(htmlContent, outputPath string) error {
-//	    ctx, cancel := chromedp.NewContext(context.Background())
-//	    defer cancel()
-//	    var buf []byte
-//	    err := chromedp.Run(ctx,
-//	        chromedp.Navigate("data:text/html,"+url.QueryEscape(htmlContent)),
-//	        chromedp.ActionFunc(func(ctx context.Context) error {
-//	            var err error
-//	            buf, err = page.PrintToPDF().WithPrintBackground(true).Do(ctx)
-//	            return err
-//	        }),
-//	    )
-//	    if err != nil { return err }
-//	    return os.WriteFile(outputPath, buf, 0o644)
-//	}
+// GeneratePDF сохраняет HTML-контент как PDF (HTML-fallback без headless-браузера).
 func GeneratePDF(htmlContent string, outputPath string) error {
-	// Для MVP сохраняем как HTML-файл с .pdf расширением
-	// Реальный PDF можно получить через chromedp (см. TODO выше)
+	// Fallback без headless-браузера: сохраняем оформленный HTML с .pdf расширением.
+	// Настоящий бинарный PDF генерируется через generatePDFChrome при заданном ChromePath.
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("generatePDF: создание директории: %w", err)
 	}
+	return os.WriteFile(outputPath, []byte(wrapHTML(htmlContent)), 0o644)
+}
 
-	// Оборачиваем в полноценный HTML-документ
-	fullHTML := fmt.Sprintf(`<!DOCTYPE html>
+// wrapHTML оборачивает тело документа в полноценный HTML с печатным оформлением.
+func wrapHTML(body string) string {
+	return fmt.Sprintf(`<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
@@ -231,29 +225,14 @@ p { text-align: justify; }
 <body>
 %s
 </body>
-</html>`, htmlContent)
-
-	return os.WriteFile(outputPath, []byte(fullHTML), 0o644)
+</html>`, body)
 }
 
 // GenerateDOCX создаёт DOCX-файл из HTML-контента.
 //
-// DOCX — это ZIP-архив с XML-файлами внутри.
-// Для MVP создаём простую ZIP-структуру с word/document.xml.
-//
-// TODO: полноценная генерация через github.com/nguyenthenguyen/docx:
-//
-//	import "github.com/nguyenthenguyen/docx"
-//
-//	func GenerateDOCX(content string, variables map[string]string, outputPath string) error {
-//	    r, err := docx.ReadDocxFromMemory("template.docx", 0o755)
-//	    if err != nil { return err }
-//	    doc := r.Editable()
-//	    for k, v := range variables {
-//	        doc.Replace(k, v)
-//	    }
-//	    return doc.WriteToFile(outputPath)
-//	}
+// DOCX — это ZIP-архив с XML-файлами внутри: [Content_Types].xml, _rels/.rels,
+// word/document.xml. HTML-разметка тела конвертируется в отдельные абзацы Word
+// (заголовки, абзацы, пункты списков), а не вставляется одной строкой.
 func GenerateDOCX(templateContent string, variables map[string]string, outputPath string) error {
 	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
 		return fmt.Errorf("generateDOCX: создание директории: %w", err)
@@ -265,17 +244,15 @@ func GenerateDOCX(templateContent string, variables map[string]string, outputPat
 		content = strings.ReplaceAll(content, "{{."+k+"}}", v)
 	}
 
-	// Формируем минимальную DOCX-структуру (ZIP с XML)
-	// DOCX = ZIP containing [Content_Types].xml, word/document.xml, _rels/.rels
-	if err := writeMinimalDOCX(content, outputPath); err != nil {
+	if err := writeMinimalDOCX(htmlToParagraphs(content), outputPath); err != nil {
 		return fmt.Errorf("generateDOCX: запись файла: %w", err)
 	}
 
 	return nil
 }
 
-// writeMinimalDOCX создаёт минимальный валидный DOCX файл.
-func writeMinimalDOCX(bodyContent string, outputPath string) error {
+// writeMinimalDOCX создаёт валидный DOCX-файл из набора абзацев.
+func writeMinimalDOCX(paragraphs []string, outputPath string) error {
 	buf := &bytes.Buffer{}
 	zw := zip.NewWriter(buf)
 
@@ -299,20 +276,21 @@ func writeMinimalDOCX(bodyContent string, outputPath string) error {
 		return err
 	}
 
-	// word/document.xml
-	// Экранируем XML-опасные символы
-	escaped := escapeXML(bodyContent)
+	// word/document.xml — каждый абзац в отдельном <w:p>.
+	var body strings.Builder
+	if len(paragraphs) == 0 {
+		body.WriteString("<w:p/>")
+	}
+	for _, p := range paragraphs {
+		body.WriteString(fmt.Sprintf("<w:p><w:r><w:t xml:space=\"preserve\">%s</w:t></w:r></w:p>", escapeXML(p)))
+	}
 	docXML := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"
             xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
 <w:body>
-<w:p>
-<w:r>
-<w:t xml:space="preserve">%s</w:t>
-</w:r>
-</w:p>
+%s
 </w:body>
-</w:document>`, escaped)
+</w:document>`, body.String())
 	if err := writeFileToZip(zw, "word/document.xml", docXML); err != nil {
 		return err
 	}
@@ -322,6 +300,48 @@ func writeMinimalDOCX(bodyContent string, outputPath string) error {
 	}
 
 	return os.WriteFile(outputPath, buf.Bytes(), 0o644)
+}
+
+// htmlToParagraphs превращает HTML-тело в плоский список текстовых абзацев:
+// блочные теги (p, h1-h6, li, br, div, tr) становятся границами абзацев,
+// остальные теги вырезаются, HTML-сущности декодируются.
+func htmlToParagraphs(s string) []string {
+	// Блочные закрывающие/одиночные теги → разделитель абзацев.
+	repl := strings.NewReplacer(
+		"</p>", "\n", "</P>", "\n",
+		"</h1>", "\n", "</h2>", "\n", "</h3>", "\n", "</h4>", "\n", "</h5>", "\n", "</h6>", "\n",
+		"</li>", "\n", "</div>", "\n", "</tr>", "\n",
+		"<br>", "\n", "<br/>", "\n", "<br />", "\n",
+	)
+	s = repl.Replace(s)
+
+	// Удаляем оставшиеся теги.
+	var b strings.Builder
+	inTag := false
+	for _, r := range s {
+		switch {
+		case r == '<':
+			inTag = true
+		case r == '>':
+			inTag = false
+		case !inTag:
+			b.WriteRune(r)
+		}
+	}
+
+	// Декодируем базовые HTML-сущности.
+	unescaper := strings.NewReplacer(
+		"&amp;", "&", "&lt;", "<", "&gt;", ">", "&quot;", "\"", "&apos;", "'", "&nbsp;", " ",
+	)
+
+	var paragraphs []string
+	for _, line := range strings.Split(b.String(), "\n") {
+		line = strings.TrimSpace(unescaper.Replace(line))
+		if line != "" {
+			paragraphs = append(paragraphs, line)
+		}
+	}
+	return paragraphs
 }
 
 // CreateDefaultTemplates создаёт стандартные шаблоны в TemplateDir.
@@ -346,6 +366,11 @@ func (g *DocumentGenerator) CreateDefaultTemplates() error {
 	}
 
 	return nil
+}
+
+// ListTemplateInfos возвращает полные метаданные доступных шаблонов.
+func (g *DocumentGenerator) ListTemplateInfos(ctx context.Context) ([]model.DocumentTemplate, error) {
+	return g.templateStore.ListTemplates(ctx)
 }
 
 // ListAvailableTemplates возвращает список доступных шаблонов.

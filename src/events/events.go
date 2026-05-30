@@ -16,6 +16,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/feed"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
@@ -27,9 +28,9 @@ const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 
 
 // EventsConfig — конфигурация источника мероприятий.
 type EventsConfig struct {
-	RSSURL     string // URL RSS-ленты мероприятий (если доступен)
-	SourceURL  string // URL HTML-страницы мероприятий (fallback: sk.ru/events)
-	Category   string // категория мероприятий (по умолчанию «Мероприятия»)
+	RSSURL    string // URL RSS-ленты мероприятий (если доступен)
+	SourceURL string // URL HTML-страницы мероприятий (fallback: sk.ru/events)
+	Category  string // категория мероприятий (по умолчанию «Мероприятия»)
 }
 
 // Monitor загружает мероприятия и синхронизирует их в хранилище и RAG.
@@ -126,14 +127,14 @@ func parseEventsFromRSS(ctx context.Context, rssURL string, hc *http.Client) ([]
 		}
 
 		events = append(events, &model.Event{
-			ID:        eventID(it.Link),
-			Title:     strings.TrimSpace(it.Title),
+			ID:          eventID(it.Link),
+			Title:       strings.TrimSpace(it.Title),
 			Description: feed.StripTags(it.Summary),
-			EventDate: eventDate,
-			SourceURL: it.Link,
-			Status:    status,
-			Category:  "Мероприятия",
-			CreatedAt: time.Now(),
+			EventDate:   eventDate,
+			SourceURL:   it.Link,
+			Status:      status,
+			Category:    "Мероприятия",
+			CreatedAt:   time.Now(),
 		})
 	}
 	return events, nil
@@ -183,16 +184,16 @@ func parseEventsFromHTML(ctx context.Context, sourceURL string, hc *http.Client)
 		}
 
 		events = append(events, &model.Event{
-			ID:          eventID(card.URL),
-			Title:       strings.TrimSpace(card.Title),
-			Description: strings.TrimSpace(card.Description),
-			EventDate:   card.Date,
+			ID:           eventID(card.URL),
+			Title:        strings.TrimSpace(card.Title),
+			Description:  strings.TrimSpace(card.Description),
+			EventDate:    card.Date,
 			EventEndDate: card.EndDate,
-			Location:    strings.TrimSpace(card.Location),
-			SourceURL:   card.URL,
-			Status:      status,
-			Category:    "Мероприятия",
-			CreatedAt:   time.Now(),
+			Location:     strings.TrimSpace(card.Location),
+			SourceURL:    card.URL,
+			Status:       status,
+			Category:     "Мероприятия",
+			CreatedAt:    time.Now(),
 		})
 	}
 
@@ -580,15 +581,16 @@ func parseDate(s string) time.Time {
 }
 
 // IngestEvents записывает мероприятия в хранилище и индексирует в RAG.
-func IngestEvents(ctx context.Context, events []*model.Event, st store.EventStore, ragSvc *rag.Service) (*Result, error) {
-	res := &Result{Fetched: len(events)}
+func IngestEvents(ctx context.Context, eventList []*model.Event, st store.EventStore, ragSvc *rag.Service, recs ...changes.Recorder) (*Result, error) {
+	res := &Result{Fetched: len(eventList)}
 
-	for _, ev := range events {
+	for _, ev := range eventList {
 		if ev.Title == "" || ev.SourceURL == "" {
 			res.Errors = append(res.Errors, "пропущено: пустой заголовок или URL")
 			continue
 		}
 
+		isNew := false
 		if existing, err := st.GetEvent(ctx, ev.ID); err == nil {
 			// Обновляем существующее мероприятие.
 			ev.CreatedAt = existing.CreatedAt
@@ -605,7 +607,22 @@ func IngestEvents(ctx context.Context, events []*model.Event, st store.EventStor
 				continue
 			}
 			res.New++
+			isNew = true
 		}
+
+		kind := changes.KindUpdated
+		if isNew {
+			kind = changes.KindNew
+		}
+		changes.Notify(ctx, recs, changes.Event{
+			EntityType: changes.EntityEvent,
+			EntityID:   ev.ID,
+			Title:      ev.Title,
+			Category:   ev.Category,
+			Kind:       kind,
+			SourceURL:  ev.SourceURL,
+			DetectedAt: time.Now(),
+		})
 
 		// Индексация в RAG (если сервис доступен).
 		if ragSvc != nil {

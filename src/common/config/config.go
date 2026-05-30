@@ -66,9 +66,9 @@ type Config struct {
 	PreferencesURL     string // основной URL страницы льгот
 
 	// НПА (regulations)
-	RegulationsEnabled    bool
-	RegulationsSearchURL  string // URL поиска на regulation.gov.ru
-	RegulationsExtraURLs  string // дополнительные URL через запятую
+	RegulationsEnabled   bool
+	RegulationsSearchURL string // URL поиска на regulation.gov.ru
+	RegulationsExtraURLs string // дополнительные URL через запятую
 
 	// Проверка eligibility по ИНН
 	EligibilityEnabled bool
@@ -86,6 +86,10 @@ type Config struct {
 
 	// Ежедневная сводка консультанту
 	DailySummaryHour int // час отправки ежедневной сводки (0-23, по умолчанию 9)
+
+	// Генератор документов
+	GeneratorTemplateDir string // директория шаблонов документов
+	GeneratorOutputDir   string // директория для сгенерированных документов
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -168,6 +172,10 @@ func Load() Config {
 
 		// Ежедневная сводка
 		DailySummaryHour: envInt("DAILY_SUMMARY_HOUR", 9),
+
+		// Генератор документов
+		GeneratorTemplateDir: env("GENERATOR_TEMPLATE_DIR", "./templates"),
+		GeneratorOutputDir:   env("GENERATOR_OUTPUT_DIR", "./Документы_Сколково/Сгенерированные"),
 	}
 }
 

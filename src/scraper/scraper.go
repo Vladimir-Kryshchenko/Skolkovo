@@ -19,6 +19,7 @@ import (
 
 	"golang.org/x/net/html"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/feed"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
@@ -54,6 +55,33 @@ type Scraper struct {
 	HTTP     *http.Client
 	Delay    time.Duration
 	MaxPages int
+	// Changes — необязательная лента изменений. Если задана, скрейпер фиксирует
+	// каждое новое/обновлённое/устаревшее изменение документа.
+	Changes changes.Recorder
+}
+
+// recordChange фиксирует изменение документа в ленте (если она подключена).
+func (s *Scraper) recordChange(ctx context.Context, doc model.Document, isNew bool, summary string) {
+	if s.Changes == nil {
+		return
+	}
+	kind := changes.KindUpdated
+	if isNew {
+		kind = changes.KindNew
+	}
+	if doc.Status == model.StatusOutdated {
+		kind = changes.KindOutdated
+	}
+	_ = s.Changes.Record(ctx, changes.Event{
+		EntityType: changes.EntityDocument,
+		EntityID:   doc.ID,
+		Title:      doc.Title,
+		Category:   doc.Category,
+		Kind:       kind,
+		SourceURL:  doc.SourceURL,
+		Summary:    summary,
+		DetectedAt: time.Now(),
+	})
 }
 
 // New создаёт скрейпер с разумными значениями по умолчанию.
@@ -119,6 +147,7 @@ func (s *Scraper) ingestRSS(ctx context.Context, rep *Report) error {
 		sum := sha256.Sum256([]byte(marker))
 		hash := hex.EncodeToString(sum[:])
 
+		isNew := false
 		if existing, err := s.Store.Get(ctx, id); err == nil {
 			if existing.FileHash == hash {
 				rep.Unchanged++
@@ -127,6 +156,7 @@ func (s *Scraper) ingestRSS(ctx context.Context, rep *Report) error {
 			rep.Updated++
 		} else {
 			rep.Catalogued++
+			isNew = true
 		}
 
 		status := model.StatusPending
@@ -145,7 +175,13 @@ func (s *Scraper) ingestRSS(ctx context.Context, rep *Report) error {
 		}
 		if err := s.Store.Upsert(ctx, doc); err != nil {
 			rep.Errors = append(rep.Errors, fmt.Sprintf("каталог %s: %v", it.Link, err))
+			continue
 		}
+		summary := "Новый документ в каталоге"
+		if !isNew {
+			summary = "Обновлены метаданные в RSS-каталоге"
+		}
+		s.recordChange(ctx, doc, isNew, summary)
 	}
 	return nil
 }
@@ -273,6 +309,7 @@ func (s *Scraper) download(ctx context.Context, fileURL, title, category string,
 	id := docID(fileURL)
 
 	// Проверка на изменения: если хэш совпал — документ не менялся.
+	isNew := false
 	if existing, err := s.Store.Get(ctx, id); err == nil {
 		if existing.FileHash == hash {
 			rep.Unchanged++
@@ -281,6 +318,7 @@ func (s *Scraper) download(ctx context.Context, fileURL, title, category string,
 		rep.Updated++
 	} else {
 		rep.Downloaded++
+		isNew = true
 	}
 
 	status := model.StatusPending
@@ -316,7 +354,15 @@ func (s *Scraper) download(ctx context.Context, fileURL, title, category string,
 		FileHash:  hash,
 		Indexed:   false,
 	}
-	return s.Store.Upsert(ctx, doc)
+	if err := s.Store.Upsert(ctx, doc); err != nil {
+		return err
+	}
+	summary := "Скачан новый файл документа"
+	if !isNew {
+		summary = "Тело файла изменилось (новый хэш)"
+	}
+	s.recordChange(ctx, doc, isNew, summary)
+	return nil
 }
 
 type link struct {

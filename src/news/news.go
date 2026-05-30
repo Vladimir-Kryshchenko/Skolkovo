@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/feed"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
@@ -23,11 +24,12 @@ import (
 
 // Monitor загружает RSS и синхронизирует новости в реестр и RAG.
 type Monitor struct {
-	RSSURL string
-	OutDir string // корень Документы_Сколково
-	Store  store.Store
-	Rag    *rag.Service // может быть nil — тогда без индексации
-	HTTP   *http.Client
+	RSSURL  string
+	OutDir  string // корень Документы_Сколково
+	Store   store.Store
+	Rag     *rag.Service     // может быть nil — тогда без индексации
+	Changes changes.Recorder // может быть nil — тогда без ленты изменений
+	HTTP    *http.Client
 }
 
 // New создаёт монитор новостей.
@@ -74,6 +76,7 @@ func (m *Monitor) process(ctx context.Context, it feed.Item, res *Result) error 
 	sum := sha256.Sum256([]byte(body))
 	hash := hex.EncodeToString(sum[:])
 
+	isNew := false
 	if existing, err := m.Store.Get(ctx, id); err == nil {
 		if existing.FileHash == hash {
 			res.Unchanged++
@@ -82,6 +85,7 @@ func (m *Monitor) process(ctx context.Context, it feed.Item, res *Result) error 
 		res.Updated++
 	} else {
 		res.New++
+		isNew = true
 	}
 
 	dir := filepath.Join(m.OutDir, "Действующие", "Новости")
@@ -106,6 +110,24 @@ func (m *Monitor) process(ctx context.Context, it feed.Item, res *Result) error 
 	}
 	if err := m.Store.Upsert(ctx, doc); err != nil {
 		return err
+	}
+	if m.Changes != nil {
+		kind := changes.KindUpdated
+		summary := "Обновлённая новость"
+		if isNew {
+			kind = changes.KindNew
+			summary = "Новая публикация в новостях Сколково"
+		}
+		_ = m.Changes.Record(ctx, changes.Event{
+			EntityType: changes.EntityNews,
+			EntityID:   id,
+			Title:      doc.Title,
+			Category:   "Новости",
+			Kind:       kind,
+			SourceURL:  doc.SourceURL,
+			Summary:    summary,
+			DetectedAt: time.Now(),
+		})
 	}
 	if m.Rag != nil {
 		if _, err := m.Rag.IndexDocument(ctx, id); err != nil {

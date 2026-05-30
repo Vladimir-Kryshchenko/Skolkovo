@@ -546,8 +546,9 @@ function seedQwen() {
 `))
 
 var aiModelFormTmpl = template.Must(template.New("ai-model-form").Funcs(template.FuncMap{
-	"selected": func(a, b string) template.HTMLAttr {
-		if a == b {
+	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
+	"selected": func(a, b interface{}) template.HTMLAttr {
+		if fmt.Sprintf("%s", a) == fmt.Sprintf("%s", b) {
 			return "selected"
 		}
 		return ""
@@ -675,6 +676,7 @@ function updateBaseURL(provider) {
 `))
 
 var aiAgentsTmpl = template.Must(template.New("ai-agents").Funcs(template.FuncMap{
+	"string":         func(v interface{}) string { return fmt.Sprintf("%s", v) },
 	"agentTypeLabel": func(t string) string { return aimodels.AgentType(t).Label() },
 	"formatTime":     func(t time.Time) string { return t.Format("02.01.2006 15:04") },
 	"truncate": func(s string, n int) string {
@@ -881,8 +883,9 @@ function confirmDeleteAgent(url, name) {
 `))
 
 var aiAgentFormTmpl = template.Must(template.New("ai-agent-form").Funcs(template.FuncMap{
-	"selected": func(a, b string) template.HTMLAttr {
-		if a == b {
+	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
+	"selected": func(a, b interface{}) template.HTMLAttr {
+		if fmt.Sprintf("%s", a) == fmt.Sprintf("%s", b) {
 			return "selected"
 		}
 		return ""

@@ -44,6 +44,7 @@ import (
 
 	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/agents"
+	"baza-skolkovo/src/aimodels"
 	"baza-skolkovo/src/audit"
 	"baza-skolkovo/src/changes"
 	chat_widget "baza-skolkovo/src/chat_widget"
@@ -821,6 +822,23 @@ func cmdAdmin(cfg config.Config) error {
 	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil))
 
+	// Подключаем AI-хранилище (только для Postgres-бэкенда).
+	if ps, ok := st.(*store.PostgresStore); ok {
+		aiStore := aimodels.NewStore(ps.Pool())
+		srv.WithAIStore(aiStore)
+		if cfg.QwenAPIKey != "" {
+			if err := aiStore.SeedQwenModels(ctx, cfg.QwenAPIKey); err != nil {
+				log.Printf("[admin] AI seed Qwen: %v", err)
+			}
+			models, _ := aiStore.ListModels(ctx)
+			if len(models) > 0 {
+				if err := aiStore.SeedDefaultAgents(ctx, models[0].ID); err != nil {
+					log.Printf("[admin] AI seed agents: %v", err)
+				}
+			}
+		}
+	}
+
 	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту.
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
@@ -891,6 +909,23 @@ func cmdServe(cfg config.Config) error {
 
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
+
+	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
+	if ps, ok := st.(*store.PostgresStore); ok {
+		aiStore := aimodels.NewStore(ps.Pool())
+		adminSrv.WithAIStore(aiStore)
+		if cfg.QwenAPIKey != "" {
+			if err := aiStore.SeedQwenModels(ctx, cfg.QwenAPIKey); err != nil {
+				log.Printf("[serve] AI seed Qwen: %v", err)
+			}
+			models, _ := aiStore.ListModels(ctx)
+			if len(models) > 0 {
+				if err := aiStore.SeedDefaultAgents(ctx, models[0].ID); err != nil {
+					log.Printf("[serve] AI seed agents: %v", err)
+				}
+			}
+		}
+	}
 
 	go func() {
 		if err := mcpSrv.ListenAndServe(); err != nil {

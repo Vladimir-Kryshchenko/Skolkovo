@@ -105,6 +105,9 @@ type Config struct {
 	SMTPUser     string
 	SMTPPassword string
 	SMTPFrom     string
+
+	// ИИ-модели
+	QwenAPIKey string // API-ключ Alibaba Cloud Model Studio (Qwen); при наличии — автоматически сидирует модели при старте
 }
 
 // Load читает конфигурацию из окружения, подставляя разумные значения по умолчанию.
@@ -206,6 +209,9 @@ func Load() Config {
 		SMTPUser:     env("SMTP_USER", ""),
 		SMTPPassword: env("SMTP_PASSWORD", ""),
 		SMTPFrom:     env("SMTP_FROM", ""),
+
+		// ИИ-модели
+		QwenAPIKey: env("QWEN_API_KEY", ""),
 	}
 }
 

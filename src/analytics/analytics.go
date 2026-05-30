@@ -302,52 +302,239 @@ func ToHTML(report *AnalyticsReport) string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Аналитика — База Сколково</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
 <style>
-  :root {
-    --bg: #f5f7fa; --surface: #fff; --text: #1e293b; --text-secondary: #64748b;
-    --border: #e2e8f0; --primary: #1e40af; --stat-color: #1a73e8;
-    --shadow: 0 2px 8px rgba(0,0,0,.08);
+:root {
+  --bg: #f0f2f5;
+  --surface: #ffffff;
+  --text: #181b2b;
+  --text-secondary: #6b7280;
+  --border: #e0e3eb;
+  --primary: #0073ea;
+  --primary-hover: #005fbf;
+  --stat-color: #0073ea;
+  --danger: #de350b;
+  --warning: #ff8b00;
+  --success: #00875a;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.1);
+  --radius: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #181b2b;
+    --surface: #23273a;
+    --text: #e8eaed;
+    --text-secondary: #9ca3af;
+    --border: #333850;
+    --primary: #0073ea;
+    --primary-hover: #339af0;
+    --stat-color: #339af0;
+    --danger: #ff6b6b;
+    --warning: #ffa94d;
+    --success: #51cf66;
+    --shadow: 0 1px 3px rgba(0,0,0,0.3);
+    --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
   }
-  @media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]) {
-      --bg: #0f172a; --surface: #1e293b; --text: #e2e8f0; --text-secondary: #94a3b8;
-      --border: #334155; --primary: #3b82f6; --stat-color: #60a5fa;
-      --shadow: 0 2px 8px rgba(0,0,0,.4);
-    }
-  }
-  :root[data-theme="dark"] {
-    --bg: #0f172a; --surface: #1e293b; --text: #e2e8f0; --text-secondary: #94a3b8;
-    --border: #334155; --primary: #3b82f6; --stat-color: #60a5fa;
-    --shadow: 0 2px 8px rgba(0,0,0,.4);
-  }
-  * { box-sizing: border-box; }
-  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-         margin: 0; padding: 20px; background: var(--bg); color: var(--text); }
-  h1 { text-align: center; margin-bottom: 8px; font-size: 22px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-          gap: 20px; max-width: 1400px; margin: 0 auto; }
-  .card { background: var(--surface); border-radius: 12px; padding: 20px;
-          box-shadow: var(--shadow); }
-  .card h2 { margin-top: 0; font-size: 1rem; color: var(--text-secondary); font-weight: 600; text-transform: uppercase; letter-spacing: .4px; }
-  .stat-row { display: flex; justify-content: space-between; padding: 8px 0;
-              border-bottom: 1px solid var(--border); align-items: center; }
-  .stat-row:last-child { border-bottom: none; }
-  .stat-value { font-weight: 700; color: var(--stat-color); font-size: 15px; }
-  canvas { max-height: 280px; }
-  .period { text-align: center; color: var(--text-secondary); margin-bottom: 20px; font-size: 0.9rem; }
-  .header-bar { max-width: 1400px; margin: 0 auto 24px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .nav-back { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500; }
-  .theme-toggle { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; cursor: pointer; font-size: 16px; color: var(--text); }
+}
+:root[data-theme="dark"] {
+  --bg: #181b2b;
+  --surface: #23273a;
+  --text: #e8eaed;
+  --text-secondary: #9ca3af;
+  --border: #333850;
+  --primary: #0073ea;
+  --primary-hover: #339af0;
+  --stat-color: #339af0;
+  --danger: #ff6b6b;
+  --warning: #ffa94d;
+  --success: #51cf66;
+  --shadow: 0 1px 3px rgba(0,0,0,0.3);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.4);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: 'Figtree', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  padding: 20px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  z-index: 10;
+}
+[data-tooltip]:hover::after { opacity: 1; }
+
+/* Header */
+.header-bar {
+  max-width: 1400px;
+  margin: 0 auto 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.header-bar h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.header-bar h1 svg { width: 24px; height: 24px; fill: var(--primary); }
+.header-actions { display: flex; gap: 8px; align-items: center; }
+
+.nav-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--primary);
+  color: #fff;
+  border-radius: var(--radius);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s;
+}
+.nav-back:hover { background: var(--primary-hover); }
+
+.theme-toggle {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.15s, border-color 0.15s;
+}
+.theme-toggle:hover { background: var(--bg); border-color: var(--primary); }
+.theme-toggle svg { width: 18px; height: 18px; fill: currentColor; }
+
+/* Period label */
+.period {
+  text-align: center;
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  font-size: 14px;
+}
+
+/* Grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 20px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+/* Card */
+.card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+.card h2 {
+  margin-top: 0;
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 16px;
+}
+
+/* Stat rows */
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+  align-items: center;
+}
+.stat-row:last-child { border-bottom: none; }
+.stat-value {
+  font-weight: 700;
+  color: var(--stat-color);
+  font-size: 15px;
+}
+.stat-value.danger { color: var(--danger); }
+.stat-value.warning { color: var(--warning); }
+.stat-value.success { color: var(--success); }
+
+/* Chart canvas */
+canvas { max-height: 280px; }
+
+/* Responsive */
+@media (max-width: 768px) {
+  body { padding: 12px; }
+  .grid { grid-template-columns: 1fr; gap: 16px; }
+  .header-bar { margin-bottom: 16px; }
+  .header-bar h1 { font-size: 17px; }
+  .card { padding: 16px; }
+}
+@media (max-width: 480px) {
+  .header-bar { flex-direction: column; align-items: flex-start; }
+  .header-actions { width: 100%; justify-content: flex-start; }
+}
+@media (min-width: 1024px) {
+  .grid { grid-template-columns: repeat(3, 1fr); }
+}
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
+
+<!-- SVG icons -->
+<svg style="display:none" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="icon-chart" viewBox="0 0 24 24"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+  <symbol id="icon-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
+  <symbol id="icon-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3" stroke="currentColor" stroke-width="2"/><line x1="12" y1="21" x2="12" y2="23" stroke="currentColor" stroke-width="2"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64" stroke="currentColor" stroke-width="2"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" stroke="currentColor" stroke-width="2"/><line x1="1" y1="12" x2="3" y2="12" stroke="currentColor" stroke-width="2"/><line x1="21" y1="12" x2="23" y2="12" stroke="currentColor" stroke-width="2"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36" stroke="currentColor" stroke-width="2"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" stroke="currentColor" stroke-width="2"/></symbol>
+</svg>
+
 <div class="header-bar">
-  <h1 style="margin:0;font-size:20px">📊 Аналитика — База Сколково</h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <a href="/" class="nav-back" title="Вернуться к документам">← Документы</a>
-    <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">🌙</button>
+  <h1>
+    <svg><use href="#icon-chart"/></svg>
+    Аналитика — База Сколково
+  </h1>
+  <div class="header-actions">
+    <a href="/" class="nav-back" data-tooltip="Вернуться к документам">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+      Документы
+    </a>
+    <button id="themeBtn" class="theme-toggle" onclick="toggleTheme()" data-tooltip="Переключить тему">
+      <svg id="themeIcon"><use href="#icon-moon"/></svg>
+    </button>
   </div>
 </div>
 <div class="period">Период: %s — %s</div>
@@ -367,13 +554,13 @@ func ToHTML(report *AnalyticsReport) string {
     <div>%s</div>
   </div>
 
-  <!-- Deadlines timeline -->
+  <!-- Deadlines -->
   <div class="card">
     <h2>Дедлайны</h2>
     <div class="stat-row"><span>Всего</span><span class="stat-value">%d</span></div>
-    <div class="stat-row"><span>Просрочено</span><span class="stat-value" style="color:#d32f2f">%d</span></div>
-    <div class="stat-row"><span>Предстоящие (30 дн.)</span><span class="stat-value" style="color:#f9a825">%d</span></div>
-    <div class="stat-row"><span>Выполнено</span><span class="stat-value" style="color:#2e7d32">%d</span></div>
+    <div class="stat-row"><span>Просрочено</span><span class="stat-value danger">%d</span></div>
+    <div class="stat-row"><span>Предстоящие (30 дн.)</span><span class="stat-value warning">%d</span></div>
+    <div class="stat-row"><span>Выполнено</span><span class="stat-value success">%d</span></div>
   </div>
 
   <!-- Events & Contests -->
@@ -392,7 +579,7 @@ func ToHTML(report *AnalyticsReport) string {
     <h2>Чек-листы</h2>
     <div class="stat-row"><span>Всего шаблонов</span><span class="stat-value">%d</span></div>
     <div class="stat-row"><span>В работе</span><span class="stat-value">%d</span></div>
-    <div class="stat-row"><span>Завершено</span><span class="stat-value">%d</span></div>
+    <div class="stat-row"><span>Завершено</span><span class="stat-value success">%d</span></div>
   </div>
 
   <!-- MCP -->
@@ -411,7 +598,8 @@ const docData  = %s;
 new Chart(document.getElementById('chartDocStatus'), {
   type: 'pie',
   data: { labels: docLabels, datasets: [{ data: docData,
-    backgroundColor: ['#1a73e8','#2e7d32','#f9a825','#d32f2f','#7b1fa2'] }] }
+    backgroundColor: ['#0073ea','#00875a','#ffa94d','#ff6b6b','#7b1fa2'] }] },
+  options: { responsive: true, maintainAspectRatio: true }
 });
 
 const cliLabels = %s;
@@ -419,25 +607,38 @@ const cliData   = %s;
 new Chart(document.getElementById('chartClientStage'), {
   type: 'bar',
   data: { labels: cliLabels, datasets: [{ label: 'Клиенты', data: cliData,
-    backgroundColor: '#1a73e8' }] },
-  options: { scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
-             plugins: { legend: { display: false } } }
+    backgroundColor: '#0073ea' }] },
+  options: {
+    responsive: true,
+    maintainAspectRatio: true,
+    scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } },
+    plugins: { legend: { display: false } }
+  }
 });
+
+// SVG icons for theme
+var moonUse = '<use href="#icon-moon"/>';
+var sunUse = '<use href="#icon-sun"/>';
+
+function setThemeIcon(isDark) {
+  document.getElementById('themeIcon').innerHTML = isDark ? sunUse : moonUse;
+}
+
 function toggleTheme() {
   var r = document.documentElement;
   var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  setThemeIcon(next === 'dark');
 }
-document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
+
+function applyThemeIcon() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
-});
+  setThemeIcon(cur === 'dark');
+}
+
+document.addEventListener('DOMContentLoaded', applyThemeIcon);
 </script>
 </body>
 </html>`

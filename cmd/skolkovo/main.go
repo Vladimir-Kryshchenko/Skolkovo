@@ -822,6 +822,15 @@ func cmdAdmin(cfg config.Config) error {
 	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
 		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil))
 
+	// Подключаем хранилище ленты изменений (только для Postgres-бэкенда).
+	if ps, ok := st.(*store.PostgresStore); ok {
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			srv.WithChangeStore(cs)
+		} else {
+			log.Printf("[admin] хранилище изменений: %v", err)
+		}
+	}
+
 	// Подключаем AI-хранилище (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
 		aiStore := aimodels.NewStore(ps.Pool())
@@ -957,12 +966,20 @@ func cmdServe(cfg config.Config) error {
 				Password: cfg.SMTPPassword,
 				From:     cfg.SMTPFrom,
 			})
+			// Хранилище ленты изменений для портала
+			var portalChangeStore changes.Store
+			if ps, ok := st.(*store.PostgresStore); ok {
+				if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+					portalChangeStore = cs
+				}
+			}
 			portalStores := portal.PortalStores{
 				ClientStore:    stores.ClientStore,
 				ChecklistStore: stores.ChecklistStore,
 				DeadlineStore:  stores.DeadlineStore,
 				TemplateStore:  stores.TemplateStore,
 				DocumentStore:  st,
+				ChangeStore:    portalChangeStore,
 				Generator:      gen,
 				Mailer:         mlr,
 			}

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/generator"
@@ -35,6 +36,7 @@ type PortalStores struct {
 	TemplateStore  store.TemplateStore
 	DocStore       store.ClientDocumentStore
 	DocumentStore  store.Store                  // реестр документов (для скачивания)
+	ChangeStore    changes.Store                // лента изменений; может быть nil
 	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
 	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
@@ -321,11 +323,12 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 	}
 
 	data := dashboardData{
-		Client:     client,
-		Deadlines:  ps.getDeadlines(r.Context(), client.ID),
-		Checklists: ps.getClientChecklists(r.Context(), client.ID),
-		Documents:  ps.getClientDocuments(r.Context(), client.ID),
-		Flash:      r.URL.Query().Get("msg"),
+		Client:        client,
+		Deadlines:     ps.getDeadlines(r.Context(), client.ID),
+		Checklists:    ps.getClientChecklists(r.Context(), client.ID),
+		Documents:     ps.getClientDocuments(r.Context(), client.ID),
+		Flash:         r.URL.Query().Get("msg"),
+		RecentChanges: ps.getRecentChanges(r.Context()),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -375,9 +378,12 @@ func (ps *PortalServer) handleDeadlines(w http.ResponseWriter, r *http.Request) 
 
 func (ps *PortalServer) handleDocuments(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
+	clientDocs := ps.getClientDocuments(r.Context(), sess.ClientID)
+	docs := ps.enrichClientDocuments(r.Context(), clientDocs)
+
 	data := documentsData{
 		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
-		Documents: ps.getClientDocuments(r.Context(), sess.ClientID),
+		Documents: docs,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -496,7 +502,8 @@ func (ps *PortalServer) apiDeadlines(w http.ResponseWriter, r *http.Request) {
 
 func (ps *PortalServer) apiDocuments(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
-	docs := ps.getClientDocuments(r.Context(), sess.ClientID)
+	clientDocs := ps.getClientDocuments(r.Context(), sess.ClientID)
+	docs := ps.enrichClientDocuments(r.Context(), clientDocs)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(docs)
 }
@@ -547,6 +554,65 @@ func (ps *PortalServer) getClientDocuments(ctx context.Context, clientID string)
 	}
 	d, _ := ps.stores.DocStore.ListClientDocuments(ctx, clientID)
 	return d
+}
+
+// enrichClientDocuments обогащает ClientDocument данными из реестра документов
+// (название, source_url, статус) для отображения в портале.
+func (ps *PortalServer) enrichClientDocuments(ctx context.Context, clientDocs []*model.ClientDocument) []*portalDocInfo {
+	if len(clientDocs) == 0 {
+		return nil
+	}
+	result := make([]*portalDocInfo, 0, len(clientDocs))
+	for _, cd := range clientDocs {
+		info := &portalDocInfo{
+			ID:   cd.ID,
+			Role: string(cd.Role),
+		}
+		// Пытаемся получить данные из основного реестра документов.
+		if ps.stores.DocumentStore != nil && cd.DocumentID != "" {
+			if doc, err := ps.stores.DocumentStore.Get(ctx, cd.DocumentID); err == nil {
+				info.Name = doc.Title
+				info.SourceURL = doc.SourceURL
+				if doc.PublishedAt != nil {
+					info.Date = doc.PublishedAt.Format("02.01.2006")
+				}
+			}
+		}
+		// Fallback: если не нашли в реестре — используем базовые поля.
+		if info.Name == "" {
+			info.Name = "Документ " + cd.DocumentID
+		}
+		info.Status = string(cd.Status)
+		info.StatusClass = docStatusClass(cd)
+		info.StatusLabel = docStatusLabel(cd)
+		result = append(result, info)
+	}
+	return result
+}
+
+// getRecentChanges возвращает последние изменения базы знаний для портала.
+func (ps *PortalServer) getRecentChanges(ctx context.Context) []recentChange {
+	if ps.stores.ChangeStore == nil {
+		return nil
+	}
+	events, err := ps.stores.ChangeStore.Recent(ctx, changes.Filter{
+		Since: time.Now().AddDate(0, 0, -7), // Последние 7 дней
+		Limit: 10,
+	})
+	if err != nil {
+		return nil
+	}
+	result := make([]recentChange, 0, len(events))
+	for _, ev := range events {
+		result = append(result, recentChange{
+			Title:      ev.Title,
+			Kind:       string(ev.Kind),
+			EntityType: ev.EntityType,
+			DetectedAt: humanTime(ev.DetectedAt),
+			Summary:    ev.Summary,
+		})
+	}
+	return result
 }
 
 func orDefault(v, def string) string {

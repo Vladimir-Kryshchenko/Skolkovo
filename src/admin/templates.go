@@ -22,6 +22,9 @@ var tmpl = template.Must(template.New("admin").Parse(`
   --shadow-lg: 0 8px 32px rgba(0,0,0,.12);
   --green: #008653; --green-bg: #f4f9f4; --green-border: #b7e4c7;
   --red: #7a0606; --red-bg: #fdf3f3; --red-border: #f5c6c6;
+  --role-admin-bg: #e5f0fc; --role-admin-text: #0073ea;
+  --role-user-bg: #f4f9f4; --role-user-text: #008653;
+  --role-viewer-bg: #fdf8e8; --role-viewer-text: #7a5900;
   --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -32,6 +35,9 @@ var tmpl = template.Must(template.New("admin").Parse(`
     --shadow: 0 4px 16px rgba(0,0,0,.4); --shadow-lg: 0 8px 32px rgba(0,0,0,.5);
     --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
     --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+    --role-admin-bg: #1e3050; --role-admin-text: #579dff;
+    --role-user-bg: #1a2e1a; --role-user-text: #4ade80;
+    --role-viewer-bg: #2e2408; --role-viewer-text: #fbbf24;
   }
 }
 :root[data-theme="dark"] {
@@ -41,9 +47,12 @@ var tmpl = template.Must(template.New("admin").Parse(`
   --shadow: 0 4px 16px rgba(0,0,0,.4); --shadow-lg: 0 8px 32px rgba(0,0,0,.5);
   --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
   --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+  --role-admin-bg: #1e3050; --role-admin-text: #579dff;
+  --role-user-bg: #1a2e1a; --role-user-text: #4ade80;
+  --role-viewer-bg: #2e2408; --role-viewer-text: #fbbf24;
 }
 body { font-family: var(--font); background: var(--bg); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 24px; color: var(--text); }
-.card { background: var(--surface); border-radius: var(--radius); padding: 40px; box-shadow: var(--shadow-lg); max-width: 420px; width: 100%; border: 1px solid var(--border); }
+.card { background: var(--surface); border-radius: var(--radius); padding: 40px; box-shadow: var(--shadow-lg); max-width: 440px; width: 100%; border: 1px solid var(--border); }
 .logo { text-align: center; margin-bottom: 28px; }
 .logo-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--primary); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
 .logo-icon svg { width: 28px; height: 28px; fill: #fff; }
@@ -61,25 +70,49 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
 .flash.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 .role-switch { display: flex; gap: 8px; margin-bottom: 20px; }
 .role-option { flex: 1; padding: 14px 10px; border: 2px solid var(--border); border-radius: var(--radius); text-align: center; cursor: pointer; transition: all .15s; font-size: 13px; font-weight: 600; color: var(--text-secondary); background: var(--surface); }
-.role-option:hover { border-color: var(--primary); color: var(--primary); }
-.role-option.active { border-color: var(--primary); background: var(--primary-light); color: var(--primary); }
+.role-option:hover { border-color: var(--primary); }
+.role-option.active { border-color: var(--primary); background: var(--primary-light); }
 .role-option input { display: none; }
-.role-option .role-icon { width: 28px; height: 28px; margin: 0 auto 6px; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; }
-.role-option.active .role-icon { background: var(--primary); color: #fff; }
-.role-option:not(.active) .role-icon { background: var(--border); color: var(--text-secondary); }
+.role-badge { width: 32px; height: 32px; margin: 0 auto 8px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; }
+.role-option[data-role="admin"] .role-badge { background: var(--primary); }
+.role-option[data-role="user"] .role-badge { background: var(--green); }
+.role-option[data-role="viewer"] .role-badge { background: #7a5900; }
+.role-option.active[data-role="admin"] .role-badge { background: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.2); }
+.role-option.active[data-role="user"] .role-badge { background: var(--green); box-shadow: 0 0 0 3px rgba(0,134,83,.2); }
+.role-option.active[data-role="viewer"] .role-badge { background: #7a5900; box-shadow: 0 0 0 3px rgba(122,89,0,.2); }
+.role-label { font-size: 12px; font-weight: 600; }
+.role-option.active .role-label { color: var(--primary); }
+.role-desc { font-size: 10px; color: var(--text-secondary); margin-top: 2px; line-height: 1.3; }
 .footer { text-align: center; margin-top: 20px; font-size: 12px; color: var(--text-secondary); }
 .footer a { color: var(--primary); text-decoration: none; }
 .footer a:hover { text-decoration: underline; }
 .theme-btn { position: fixed; top: 16px; right: 16px; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 50%; width: 40px; height: 40px; cursor: pointer; z-index: 10; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow-sm); transition: all .15s; }
 .theme-btn:hover { box-shadow: var(--shadow); }
 .theme-btn svg { width: 18px; height: 18px; }
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+[data-tooltip]:hover::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none;
+}
+@media (max-width: 480px) {
+  .card { padding: 24px; }
+  .role-switch { flex-direction: column; }
+}
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">
-  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-  <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+<button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+  <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+  <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
 </button>
 <div class="card">
   <div class="logo">
@@ -94,35 +127,38 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
     <div class="form-group">
       <label for="role">Роль</label>
       <div class="role-switch">
-        <label class="role-option active" onclick="selectRole('admin', this)" title="Полный доступ: управление документами, настройка ИИ, индексация">
+        <label class="role-option active" data-role="admin" onclick="selectRole('admin', this)" data-tooltip="Полный доступ: управление документами, настройка ИИ, индексация">
           <input type="radio" name="role" value="admin" checked>
-          <div class="role-icon">A</div>
-          <div>Администратор</div>
+          <div class="role-badge">А</div>
+          <div class="role-label">Администратор</div>
+          <div class="role-desc">Полный доступ</div>
         </label>
-        <label class="role-option" onclick="selectRole('user', this)" title="Рабочий доступ: управление документами, без настроек системы">
+        <label class="role-option" data-role="user" onclick="selectRole('user', this)" data-tooltip="Рабочий доступ: управление документами, без настроек системы">
           <input type="radio" name="role" value="user">
-          <div class="role-icon">П</div>
-          <div>Пользователь</div>
+          <div class="role-badge">П</div>
+          <div class="role-label">Пользователь</div>
+          <div class="role-desc">Рабочий доступ</div>
         </label>
-        <label class="role-option" onclick="selectRole('viewer', this)" title="Только просмотр: просмотр документов без возможности редактирования">
+        <label class="role-option" data-role="viewer" onclick="selectRole('viewer', this)" data-tooltip="Только просмотр: просмотр документов без возможности редактирования">
           <input type="radio" name="role" value="viewer">
-          <div class="role-icon">Н</div>
-          <div>Наблюдатель</div>
+          <div class="role-badge">Н</div>
+          <div class="role-label">Наблюдатель</div>
+          <div class="role-desc">Только просмотр</div>
         </label>
       </div>
     </div>
     <div class="form-group">
       <label for="username">Имя пользователя</label>
-      <input type="text" id="username" name="username" placeholder="Введите логин" required autocomplete="username" title="Введите имя пользователя, выданное администратором">
+      <input type="text" id="username" name="username" placeholder="Введите логин" required autocomplete="username" data-tooltip="Имя пользователя, выданное администратором">
     </div>
     <div class="form-group">
       <label for="password">Пароль</label>
-      <input type="password" id="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" title="Введите пароль для входа в систему">
+      <input type="password" id="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" data-tooltip="Пароль для входа в систему">
     </div>
-    <button type="submit" class="btn btn-primary" title="Войти в систему с выбранной ролью">Войти</button>
+    <button type="submit" class="btn btn-primary" data-tooltip="Войти в систему с выбранной ролью">Войти</button>
   </form>
   <div class="footer">
-    <a href="/">Вернуться на главную</a>
+    <a href="/" data-tooltip="Вернуться на главную страницу">Вернуться на главную</a>
   </div>
 </div>
 <script>
@@ -152,6 +188,7 @@ document.addEventListener('DOMContentLoaded', function() {
 </body>
 </html>{{end}}
 
+{{/* ===== MAIN LAYOUT ===== */}}
 {{define "layout"}}<!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -169,8 +206,11 @@ document.addEventListener('DOMContentLoaded', function() {
   --green: #008653; --green-bg: #f4f9f4; --green-border: #b7e4c7;
   --yellow: #7a5900; --yellow-bg: #fdf8e8; --yellow-border: #f5e0a0;
   --red: #7a0606; --red-bg: #fdf3f3; --red-border: #f5c6c6;
-  --blue: #005cc7; --purple: #6544e0; --purple-bg: #f0ecfd;
+  --blue: #005cc7; --purple: #6544e0; --purple-bg: #f0ecfd; --purple-border: #d4b8f5;
   --gray: #676879; --gray-bg: #f0f2f5;
+  --role-admin-bg: #e5f0fc; --role-admin-text: #0073ea;
+  --role-user-bg: #f4f9f4; --role-user-text: #008653;
+  --role-viewer-bg: #fdf8e8; --role-viewer-text: #7a5900;
   --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -181,8 +221,11 @@ document.addEventListener('DOMContentLoaded', function() {
     --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
     --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
     --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
-    --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e;
+    --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e; --purple-border: #4a3580;
     --gray: #9698a6; --gray-bg: #2a2f45;
+    --role-admin-bg: #1e3050; --role-admin-text: #579dff;
+    --role-user-bg: #1a2e1a; --role-user-text: #4ade80;
+    --role-viewer-bg: #2e2408; --role-viewer-text: #fbbf24;
   }
 }
 :root[data-theme="dark"] {
@@ -192,24 +235,43 @@ document.addEventListener('DOMContentLoaded', function() {
   --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
   --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
   --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
-  --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e;
+  --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e; --purple-border: #4a3580;
   --gray: #9698a6; --gray-bg: #2a2f45;
+  --role-admin-bg: #1e3050; --role-admin-text: #579dff;
+  --role-user-bg: #1a2e1a; --role-user-text: #4ade80;
+  --role-viewer-bg: #2e2408; --role-viewer-text: #fbbf24;
 }
 body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+
+/* Header */
 header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; display: flex; align-items: center; justify-content: space-between; height: 56px; box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
 .logo-wrap { display: flex; align-items: center; gap: 10px; }
 .logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .logo-icon svg { width: 20px; height: 20px; fill: #fff; }
 header h1 { font-size: 16px; font-weight: 700; color: var(--text); }
 .header-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.header-actions a, .header-actions button { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font); display: inline-flex; align-items: center; gap: 5px; }
+.header-actions a, .header-actions button {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font);
+  display: inline-flex; align-items: center; gap: 5px;
+}
 .header-actions a:hover, .header-actions button:hover { background: var(--surface-alt); color: var(--text); border-color: var(--text-secondary); }
-.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
 .header-user { font-size: 12px; color: var(--text-secondary); padding: 0 8px; }
-.theme-btn { background: transparent !important; color: var(--text-secondary) !important; border: 1px solid var(--border) !important; border-radius: 6px !important; width: 36px !important; height: 36px !important; padding: 0 !important; display: flex !important; align-items: center; justify-content: center; }
+.theme-btn {
+  background: transparent !important; color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important; border-radius: 6px !important;
+  width: 36px !important; height: 36px !important; padding: 0 !important;
+  display: flex !important; align-items: center; justify-content: center;
+}
 .theme-btn:hover { background: var(--surface-alt) !important; color: var(--text) !important; }
 .theme-btn svg { width: 18px; height: 18px; }
+
+/* Main */
 main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+
+/* Stats */
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
 .stat { background: var(--surface); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); text-align: center; border: 1px solid var(--border); transition: box-shadow .15s; cursor: default; }
 .stat:hover { box-shadow: var(--shadow); }
@@ -226,6 +288,8 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .stat.archived .n { color: var(--gray); }
 .stat.indexed { border-top: 3px solid var(--purple); }
 .stat.indexed .n { color: var(--purple); }
+
+/* Toolbar */
 .toolbar { background: var(--surface); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--border); }
 .toolbar label { font-size: 13px; color: var(--text); font-weight: 600; white-space: nowrap; }
 .filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
@@ -237,30 +301,43 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .search-box input { width: 100%; padding: 7px 12px 7px 34px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; transition: border-color .15s; background: var(--surface); color: var(--text); font-family: var(--font); }
 .search-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.1); }
 .search-box svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); pointer-events: none; }
+
+/* Flash */
 .flash { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 500; animation: slideIn .3s ease; }
 .flash.ok { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .flash.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 @keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Table */
 .table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
-table { width: 100%; border-collapse: collapse; }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 900px; }
 thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: 0; }
-tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; word-break: break-word; }
 tbody tr { transition: background .1s; }
 tbody tr:hover { background: var(--surface-alt); }
 tbody tr:last-child td { border-bottom: none; }
+
+/* Document */
 .doc-title { font-weight: 600; color: var(--text); line-height: 1.4; max-width: 400px; word-wrap: break-word; }
 .doc-meta { font-size: 11px; color: var(--text-secondary); margin-top: 4px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .doc-meta a { color: var(--primary); text-decoration: none; font-weight: 500; }
 .doc-meta a:hover { text-decoration: underline; }
 .doc-meta .id-code { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; color: var(--text-secondary); background: var(--gray-bg); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
+
+/* Badge */
 .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .2px; }
 .s-на_проверке { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
 .s-действует { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .s-устарел { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 .s-архив { background: var(--gray-bg); color: var(--gray); border: 1px solid var(--border); }
-.s-отклонён { background: var(--purple-bg); color: var(--purple); border: 1px solid #d4b8f5; }
+.s-отклонён { background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); }
+
+/* Actions */
 .actions { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
 .action-row { display: flex; gap: 4px; align-items: center; }
+
+/* Controls */
 select, input[type=text] { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; outline: none; transition: border-color .15s, box-shadow .15s; font-family: var(--font); background: var(--surface); color: var(--text); }
 select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.1); }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; white-space: nowrap; font-family: var(--font); }
@@ -273,24 +350,55 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
 .btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
 .btn-ghost:hover { background: var(--surface-alt); color: var(--text); }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* File upload */
 .file-upload { display: flex; align-items: center; gap: 6px; }
 .file-upload input[type=file] { font-size: 11px; max-width: 150px; }
 .file-ok { display: flex; align-items: center; gap: 6px; color: var(--green); font-size: 12px; font-weight: 500; }
 .file-ok-icon { width: 16px; height: 16px; background: var(--green); border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
 .file-ok-icon svg { width: 10px; height: 10px; stroke: #fff; stroke-width: 3; fill: none; }
+
+/* Indexed */
 .idx { font-size: 16px; }
+.idx-yes { color: var(--green); }
+.idx-no { color: var(--text-secondary); }
+
+/* Empty */
 .empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
 .empty-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--gray-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
 .empty-icon svg { width: 24px; height: 24px; stroke: var(--text-secondary); fill: none; stroke-width: 2; }
 .empty p { margin-bottom: 12px; }
 .empty code { background: var(--gray-bg); padding: 3px 8px; border-radius: 4px; font-size: 12px; font-family: 'SF Mono', 'Fira Code', monospace; }
+
+/* Toast */
 #toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: var(--radius); color: #fff; font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg); z-index: 1000; transform: translateY(100px); opacity: 0; transition: all .3s ease; max-width: 320px; word-wrap: break-word; }
 #toast.show { transform: translateY(0); opacity: 1; }
 #toast.ok { background: var(--green); }
 #toast.err { background: var(--red); }
+
+/* Spinner */
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (max-width: 1024px) { .actions { min-width: auto; } .doc-title { max-width: 280px; } }
+
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+[data-tooltip]:hover::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none;
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .actions { min-width: auto; }
+  .doc-title { max-width: 280px; }
+}
 @media (max-width: 768px) {
   header { padding: 0 16px; }
   .header-actions { gap: 4px; }
@@ -326,23 +434,24 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
     <h1>База Сколково</h1>
   </div>
   <div class="header-actions">
-    <a href="/" title="Список всех документов базы знаний">Документы</a>
-    <a href="/diff" title="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" title="Граф связей между документами">Граф</a>
-    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
+    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
+    <a href="/changes" data-tooltip="История изменений: что нового появилось в базе">Изменения</a>
+    <a href="/diff" data-tooltip="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" data-tooltip="Граф связей между документами">Граф</a>
+    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
     <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" title="Запустить парсинг RSS-каналов для получения новых документов (~20 документов)">Парсинг RSS</button>
-    <button onclick="runAction('index', this)" title="Проиндексировать все документы со статусом «действует» в векторном поиске (RAG)">Индексация</button>
-    <button onclick="runAction('sync', this)" title="Полный цикл: загрузка документов, новостей и последующая индексация">Полный синк</button>
-    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов">Индекс структуры</button>
+    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы) для получения новых документов (~20 документов)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" data-tooltip="Проиндексировать все документы со статусом «действует» в векторном поиске (RAG (поиск по векторам))">Индексация</button>
+    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: загрузка документов, новостей и последующая индексация">Полный синк</button>
+    <button onclick="runAction('seed-local', this)" data-tooltip="Зарегистрировать и проиндексировать все .md-файлы из папки документов">Индекс структуры</button>
     <div class="header-divider"></div>
-    <span class="header-user" title="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
-    <a href="/logout" title="Выйти из системы" style="padding: 5px 10px">Выход</a>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    <span class="header-user" data-tooltip="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
+    <a href="/logout" data-tooltip="Выйти из системы" style="padding: 5px 10px">Выход</a>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
   </div>
 </header>
@@ -427,7 +536,7 @@ async function uploadFile(id, input) {
   } catch(e) { toast('Ошибка: ' + e.message, 'err'); input.disabled = false; }
 }
 async function deindexDoc(id) {
-  if (!confirm('Удалить документ из индекса RAG? Документ останется в реестре.')) return;
+  if (!confirm('Удалить документ из индекса RAG (поиск по векторам)? Документ останется в реестре.')) return;
   try {
     var r = await fetch('/documents/' + id + '/deindex', { method: 'POST' });
     if (r.ok) {
@@ -456,360 +565,55 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 </body>
-</html>{{end}}blue: #2563eb; --purple: #7c3aed; --purple-bg: #f5f3ff;
-  --gray: #6b7280; --gray-bg: #f3f4f6;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-    --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-    --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
-    --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
-    --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
-    --gray: #94a3b8; --gray-bg: #334155;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-  --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-  --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
-  --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
-  --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
-  --gray: #94a3b8; --gray-bg: #334155;
-}
-body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-/* Header */
-header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
-header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
-.header-actions button:hover { background: rgba(255,255,255,.25); }
-.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
-.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
-/* Main */
-main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
-/* Stats */
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 20px; }
-.stat { background: var(--surface); border-radius: var(--radius); padding: 14px 16px; box-shadow: var(--shadow); text-align: center; transition: transform .15s; cursor: pointer; }
-.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
-.stat .n { font-size: 28px; font-weight: 700; line-height: 1.1; }
-.stat .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; font-weight: 500; }
-.stat.total { border-left: 3px solid var(--primary); }
-.stat.active { border-left: 3px solid var(--green); }
-.stat.active .n { color: var(--green); }
-.stat.pending { border-left: 3px solid var(--yellow); }
-.stat.pending .n { color: var(--yellow); }
-.stat.outdated { border-left: 3px solid var(--red); }
-.stat.outdated .n { color: var(--red); }
-.stat.archived { border-left: 3px solid var(--gray); }
-.stat.archived .n { color: var(--gray); }
-.stat.indexed { border-left: 3px solid var(--purple); }
-.stat.indexed .n { color: var(--purple); }
-/* Toolbar */
-.toolbar { background: var(--surface); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.toolbar label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
-.filter-tabs { display: flex; gap: 4px; }
-.filter-tab { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; text-decoration: none; color: var(--text-secondary); transition: all .15s; border: 1px solid transparent; cursor: pointer; }
-.filter-tab:hover { background: var(--primary-light); color: var(--primary); }
-.filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-.search-box { flex: 1; min-width: 180px; max-width: 360px; position: relative; }
-.search-box input { width: 100%; padding: 7px 12px 7px 34px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; transition: border-color .15s; background: var(--surface); color: var(--text); }
-.search-box input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,.1); }
-.search-box svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--text-secondary); }
-/* Flash */
-.flash { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; animation: slideIn .3s ease; }
-.flash.ok { background: var(--green-bg); color: #15803d; border: 1px solid #bbf7d0; }
-.flash.err { background: var(--red-bg); color: #b91c1c; border: 1px solid #fecaca; }
-@keyframes slideIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-/* Table */
-.table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
-table { width: 100%; border-collapse: collapse; }
-thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: 0; }
-tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
-tbody tr { transition: background .1s; }
-tbody tr:hover { background: var(--surface-alt); }
-tbody tr:last-child td { border-bottom: none; }
-/* Document title */
-.doc-title { font-weight: 600; color: var(--text); line-height: 1.4; }
-.doc-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.doc-meta a { color: var(--blue); text-decoration: none; }
-.doc-meta a:hover { text-decoration: underline; }
-.doc-meta .id-code { font-family: 'SF Mono', 'Fira Code', monospace; color: var(--text-secondary); background: var(--gray-bg); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
-/* Badge */
-.badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .2px; }
-.s-на_проверке { background: var(--yellow-bg); color: var(--yellow); }
-.s-действует { background: var(--green-bg); color: var(--green); }
-.s-устарел { background: var(--red-bg); color: var(--red); }
-.s-архив { background: var(--gray-bg); color: var(--gray); }
-.s-отклонён { background: var(--purple-bg); color: var(--purple); }
-/* Actions */
-.actions { display: flex; flex-direction: column; gap: 6px; min-width: 220px; }
-.action-row { display: flex; gap: 4px; align-items: center; }
-/* Controls */
-select, input[type=text] { padding: 5px 8px; border: 1px solid var(--border); border-radius: 5px; font-size: 12px; outline: none; transition: border-color .15s, box-shadow .15s; font-family: inherit; background: var(--surface); color: var(--text); }
-select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,.1); }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 5px 12px; border: none; border-radius: 5px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; white-space: nowrap; font-family: inherit; }
-.btn-primary { background: var(--primary); color: #fff; }
-.btn-primary:hover { background: var(--primary-hover); }
-.btn-success { background: var(--green); color: #fff; }
-.btn-success:hover { background: #15803d; }
-.btn-danger { background: var(--red); color: #fff; }
-.btn-danger:hover { background: #b91c1c; }
-.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
-.btn-ghost:hover { background: var(--gray-bg); }
-.btn-sm { padding: 3px 8px; font-size: 11px; }
-/* File upload */
-.file-upload { display: flex; align-items: center; gap: 6px; }
-.file-upload input[type=file] { font-size: 11px; max-width: 150px; }
-.file-ok { display: flex; align-items: center; gap: 4px; color: var(--green); font-size: 12px; }
-/* Indexed */
-.idx { font-size: 16px; }
-/* Empty state */
-.empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
-.empty .icon { font-size: 48px; margin-bottom: 12px; }
-.empty p { margin-bottom: 16px; }
-.empty code { background: var(--gray-bg); padding: 3px 8px; border-radius: 4px; font-size: 12px; }
-/* Toast */
-#toast { position: fixed; bottom: 24px; right: 24px; padding: 12px 20px; border-radius: var(--radius); color: #fff; font-size: 13px; font-weight: 500; box-shadow: var(--shadow-lg); z-index: 1000; transform: translateY(100px); opacity: 0; transition: all .3s ease; }
-#toast.show { transform: translateY(0); opacity: 1; }
-#toast.ok { background: var(--green); }
-#toast.err { background: var(--red); }
-/* Spinner */
-.spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
-@keyframes spin { to { transform: rotate(360deg); } }
-/* Modal */
-.modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(2px); }
-.modal-overlay.show { display: flex; }
-.modal { background: var(--surface); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; box-shadow: var(--shadow-lg); }
-.modal h3 { font-size: 16px; margin-bottom: 12px; }
-.modal p { font-size: 13px; color: var(--text-secondary); margin-bottom: 16px; }
-.modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
-/* Responsive */
-@media (max-width: 768px) {
-  main { padding: 16px; }
-  .stats { grid-template-columns: repeat(3, 1fr); }
-  .toolbar { flex-direction: column; align-items: stretch; }
-  .filter-tabs { overflow-x: auto; padding-bottom: 4px; flex-wrap: nowrap; }
-  .search-box { max-width: 100%; }
-  .actions { min-width: auto; }
-  table { font-size: 12px; }
-  thead th, tbody td { padding: 8px 10px; }
-  .header-actions { overflow-x: auto; }
-}
-</style>
-<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
-</head>
-<body>
-<header>
-  <h1>📚 База Сколково</h1>
-  <div class="header-actions">
-    <a href="/" class="nav-btn" title="Список всех документов базы знаний">📋 Документы</a>
-    <a href="/diff" class="nav-btn" title="Сравнение версий документов (Diff)">🔀 Сравнение (Diff)</a>
-    <a href="/analytics" class="nav-btn" title="Статистика и аналитика базы">📊 Аналитика</a>
-    <a href="/graph" class="nav-btn" title="Граф связей между документами">🕸️ Граф</a>
-    <a href="/clients" class="nav-btn" title="Управление клиентами резидентства">🏢 Клиенты</a>
-    <a href="/ai/models" class="nav-btn" title="Настройка ИИ-моделей и агентов">🤖 ИИ</a>
-    <button onclick="runAction('scrape', this)" title="Парсинг RSS (~20 документов)">📥 Парсинг RSS</button>
-    <button onclick="runAction('index', this)" title="Индексация всех документов со статусом «действует»">🧠 Индексация</button>
-    <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">🔄 Полный синк</button>
-    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов">📚 Индекс структуры</button>
-    <div style="display:flex;align-items:center;gap:8px;border-left:1px solid rgba(255,255,255,.25);padding-left:12px">
-      <span style="font-size:12px;opacity:.9" title="Текущий пользователь">👤 {{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
-      <a href="/logout" class="nav-btn" title="Выйти из системы" style="padding:7px 10px">🚪 Выход</a>
-    </div>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;padding:7px 10px;min-width:36px">🌙</button>
-  </div>
-</header>
-<main>
-{{template "content" .}}
-</main>
-<div id="toast"></div>
-<script>
-// Toast notification
-function toast(msg, type) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'show ' + (type || 'ok');
-  clearTimeout(t._timer);
-  t._timer = setTimeout(() => { t.className = ''; }, 4000);
-}
-
-// AJAX action for header buttons
-async function runAction(action, btn) {
-  const orig = btn.innerHTML;
-  btn.innerHTML = '<span class="spinner"></span>';
-  btn.disabled = true;
-  try {
-    const r = await fetch('/api/' + action, { method: 'POST' });
-    const data = await r.json();
-    if (data.ok) { toast(data.msg || 'Готово', 'ok'); }
-    else { toast('Ошибка: ' + (data.error || 'неизвестно'), 'err'); }
-    // Refresh page to update stats
-    setTimeout(() => location.reload(), 800);
-  } catch(e) {
-    toast('Ошибка сети: ' + e.message, 'err');
-  } finally {
-    btn.innerHTML = orig;
-    btn.disabled = false;
-  }
-}
-
-// AJAX status change
-async function setStatus(id, status, sel) {
-  try {
-    const fd = new FormData();
-    fd.append('status', status);
-    const r = await fetch('/documents/' + id + '/status', { method: 'POST', body: fd });
-    if (r.ok) {
-      toast('Статус обновлён: ' + status, 'ok');
-      sel.closest('tr').querySelector('.badge').className = 'badge s-' + status;
-      sel.closest('tr').querySelector('.badge').textContent = status;
-    } else {
-      toast('Ошибка при обновлении статуса', 'err');
-    }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
-}
-
-// AJAX category save
-async function saveCategory(id, val, inp) {
-  try {
-    const fd = new FormData();
-    fd.append('category', val);
-    const r = await fetch('/documents/' + id + '/category', { method: 'POST', body: fd });
-    if (r.ok) { toast('Категория обновлена', 'ok'); }
-    else { toast('Ошибка', 'err'); }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
-}
-
-// AJAX supersedes save
-async function saveSupersedes(id, val, inp) {
-  try {
-    const fd = new FormData();
-    fd.append('supersedes', val);
-    const r = await fetch('/documents/' + id + '/supersedes', { method: 'POST', body: fd });
-    if (r.ok) { toast('Связь обновлена', 'ok'); }
-    else { toast('Ошибка', 'err'); }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
-}
-
-// AJAX delete
-async function deleteDoc(id) {
-  if (!confirm('Удалить документ? Это действие нельзя отменить.')) return;
-  try {
-    const r = await fetch('/documents/' + id + '/delete', { method: 'POST' });
-    if (r.ok) {
-      toast('Документ удалён', 'ok');
-      const row = document.querySelector('[data-doc-id="' + id + '"]');
-      if (row) { row.style.transition = 'opacity .3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
-    } else { toast('Ошибка удаления', 'err'); }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
-}
-
-// AJAX file upload
-async function uploadFile(id, input) {
-  const file = input.files[0];
-  if (!file) return;
-  const fd = new FormData();
-  fd.append('file', file);
-  input.disabled = true;
-  try {
-    const r = await fetch('/documents/' + id + '/upload', { method: 'POST', body: fd });
-    if (r.ok) {
-      toast('Файл загружен', 'ok');
-      // Replace upload form with file-ok indicator
-      const cell = input.closest('td');
-      cell.innerHTML = '<div class="file-ok">📄 ' + file.name + '</div>';
-    } else {
-      const t = await r.text();
-      toast('Ошибка: ' + t, 'err');
-      input.disabled = false;
-    }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); input.disabled = false; }
-}
-
-// AJAX deindex
-async function deindexDoc(id) {
-  if (!confirm('Удалить документ из индекса RAG? Документ останется в реестре.')) return;
-  try {
-    const r = await fetch('/documents/' + id + '/deindex', { method: 'POST' });
-    if (r.ok) {
-      toast('Документ удалён из индекса', 'ok');
-      const row = document.querySelector('[data-doc-id="' + id + '"]');
-      if (row) {
-        const idxCell = row.querySelector('.idx');
-        if (idxCell) idxCell.textContent = '—';
-        const deindexBtn = row.querySelector('[onclick*="deindexDoc"]');
-        if (deindexBtn) deindexBtn.remove();
-      }
-    } else { toast('Ошибка удаления из индекса', 'err'); }
-  } catch(e) { toast('Ошибка: ' + e.message, 'err'); }
-}
-
-// Переключение светлой/тёмной темы
-function toggleTheme() {
-  var r = document.documentElement;
-  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  var next = cur === 'dark' ? 'light' : 'dark';
-  r.setAttribute('data-theme', next);
-  localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
-}
-document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
-  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
-});
-</script>
-</body>
 </html>{{end}}
 
+{{/* ===== CONTENT ===== */}}
 {{define "content"}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat total" title="Общее количество документов в реестре">
+  <div class="stat total" data-tooltip="Общее количество документов в реестре">
     <div class="n">{{.Stats.Total}}</div><div class="l">Всего</div>
   </div>
-  <div class="stat active" title="Документы со статусом «действует» — участвуют в RAG-поиске">
+  <div class="stat active" data-tooltip="Документы со статусом «действует» — участвуют в RAG (поиск по векторам)-поиске">
     <div class="n">{{.Stats.Active}}</div><div class="l">Действует</div>
   </div>
-  <div class="stat pending" title="Документы ожидают проверки перед переводом в статус «действует»">
+  <div class="stat pending" data-tooltip="Документы ожидают проверки перед переводом в статус «действует»">
     <div class="n">{{.Stats.Pending}}</div><div class="l">На проверке</div>
   </div>
-  <div class="stat outdated" title="Устаревшие документы — заменены новыми версиями">
+  <div class="stat outdated" data-tooltip="Устаревшие документы — заменены новыми версиями">
     <div class="n">{{.Stats.Outdated}}</div><div class="l">Устарело</div>
   </div>
-  <div class="stat archived" title="Документы в архиве — не участвуют в поиске">
+  <div class="stat archived" data-tooltip="Документы в архиве — не участвуют в поиске">
     <div class="n">{{.Stats.Archived}}</div><div class="l">Архив</div>
   </div>
-  <div class="stat indexed" title="Документы, проиндексированные в Qdrant (векторный поиск)">
-    <div class="n">{{.Stats.Indexed}}</div><div class="l">В индексе (RAG)</div>
+  <div class="stat indexed" data-tooltip="Документы, проиндексированные в Qdrant (векторный поиск)">
+    <div class="n">{{.Stats.Indexed}}</div><div class="l">В индексе (RAG (поиск по векторам))</div>
   </div>
 </div>
 
 <div class="toolbar">
   <label>Статус:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/">Все ({{.Stats.Total}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "на_проверке"}} active{{end}}" href="/?status=на_проверке">На проверке ({{.Stats.Pending}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "действует"}} active{{end}}" href="/?status=действует">Действует ({{.Stats.Active}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "устарел"}} active{{end}}" href="/?status=устарел">Устарел ({{.Stats.Outdated}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "архив"}} active{{end}}" href="/?status=архив">Архив ({{.Stats.Archived}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "отклонён"}} active{{end}}" href="/?status=отклонён">Отклонён ({{.Stats.Rejected}})</a>
+    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/" data-tooltip="Все документы">Все ({{.Stats.Total}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "на_проверке"}} active{{end}}" href="/?status=на_проверке" data-tooltip="Документы на проверке">На проверке ({{.Stats.Pending}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "действует"}} active{{end}}" href="/?status=действует" data-tooltip="Действующие документы">Действует ({{.Stats.Active}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "устарел"}} active{{end}}" href="/?status=устарел" data-tooltip="Устаревшие документы">Устарел ({{.Stats.Outdated}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "архив"}} active{{end}}" href="/?status=архив" data-tooltip="Архивные документы">Архив ({{.Stats.Archived}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "отклонён"}} active{{end}}" href="/?status=отклонён" data-tooltip="Отклонённые документы">Отклонён ({{.Stats.Rejected}})</a>
   </div>
   <div class="search-box">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
     <form method="get" action="/">
       <input type="hidden" name="status" value="{{.FilterStatus}}">
-      <input type="text" name="q" value="{{.Query}}" placeholder="Поиск по названию…">
+      <input type="text" name="q" value="{{.Query}}" placeholder="Поиск по названию…" data-tooltip="Поиск документов по названию">
     </form>
   </div>
 </div>
 
 {{if .Docs}}
 <div class="table-wrap">
+<div class="table-scroll">
 <table>
   <thead>
     <tr>
@@ -817,8 +621,8 @@ document.addEventListener('DOMContentLoaded', function() {
       <th>Категория</th>
       <th>Статус</th>
       <th>Файл</th>
-      <th style="text-align:center">Индекс</th>
-      <th>Действия</th>
+      <th style="text-align:center;min-width:60px">Индекс</th>
+      <th style="min-width:280px">Действия</th>
     </tr>
   </thead>
   <tbody>
@@ -827,38 +631,42 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <div class="doc-title">{{.Title}}</div>
       <div class="doc-meta">
-        <a href="{{.SourceURL}}" target="_blank" rel="noopener">🔗 источник</a>
+        <a href="{{.SourceURL}}" target="_blank" rel="noopener" data-tooltip="Открыть источник в новой вкладке">источник</a>
         <span class="id-code">{{.ID}}</span>
-        {{if .PublishedAt}}<span>📅 {{.PublishedAt.Format "02.01.2006"}}</span>{{end}}
-        {{if .Supersedes}}<span>⛓ заменяет {{.Supersedes}}</span>{{end}}
+        {{if .PublishedAt}}<span>{{.PublishedAt.Format "02.01.2006"}}</span>{{end}}
+        {{if .Supersedes}}<span>заменяет {{.Supersedes}}</span>{{end}}
       </div>
     </td>
     <td>
       <input type="text" value="{{.Category}}" placeholder="категория"
              onchange="saveCategory('{{.ID}}', this.value, this)"
-             style="width:140px" title="Категория документа: Нормативный акт, Положение, Регламент и т.д. Нажмите Enter или уйдите с поля для сохранения">
+             style="width:140px" data-tooltip="Категория документа. Нажмите Enter или уйдите с поля для сохранения">
     </td>
     <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
     <td>
       {{if .LocalPath}}
-        <div class="file-ok">📄 Файл загружен</div>
+        <div class="file-ok"><span class="file-ok-icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>Файл загружен</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">{{.FileSize}} · {{.FileAge}}</div>
         <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">
-          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-ghost btn-sm" title="Просмотреть исходный файл документа">👁 Исходник</a>
-          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" title="Скачать исходный файл документа">⬇️ Скачать</a>
-          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" title="Просмотреть обработанную версию документа (текст для RAG)">🧠 Обработанный</a>{{end}}
+          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-ghost btn-sm" data-tooltip="Просмотреть исходный файл документа">Исходник</a>
+          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" data-tooltip="Скачать исходный файл документа">Скачать</a>
+          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" data-tooltip="Просмотреть обработанную версию (текст для RAG (поиск по векторам))">Обработанный</a>{{end}}
         </div>
       {{else}}
         <div class="file-upload">
-          <input type="file" onchange="uploadFile('{{.ID}}', this)" style="max-width:140px;font-size:11px">
+          <input type="file" onchange="uploadFile('{{.ID}}', this)" style="max-width:140px;font-size:11px" data-tooltip="Выберите файл документа для загрузки">
         </div>
       {{end}}
     </td>
-    <td style="text-align:center"><span class="idx">{{if .Indexed}}✅{{else}}—{{end}}</span></td>
+    <td style="text-align:center">
+      <span class="idx {{if .Indexed}}idx-yes{{else}}idx-no{{end}}">{{if .Indexed}}
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      {{else}}—{{end}}</span>
+    </td>
     <td>
       <div class="actions">
         <div class="action-row">
-          <select onchange="setStatus('{{.ID}}', this.value, this)" title="Изменить статус документа. Только документы со статусом «действует» попадают в RAG-поиск">
+          <select onchange="setStatus('{{.ID}}', this.value, this)" data-tooltip="Изменить статус документа. Только «действует» попадает в RAG (поиск по векторам)-поиск">
             <option value="на_проверке" {{if eq .StatusStr "на_проверке"}}selected{{end}}>На проверке</option>
             <option value="действует" {{if eq .StatusStr "действует"}}selected{{end}}>Действует</option>
             <option value="устарел" {{if eq .StatusStr "устарел"}}selected{{end}}>Устарел</option>
@@ -869,12 +677,14 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="action-row">
           <input type="text" value="{{.Supersedes}}" placeholder="id заменяемого"
                  onchange="saveSupersedes('{{.ID}}', this.value, this)"
-                 style="flex:1;min-width:100px" title="ID документа, который этот документ замещает (более новая редакция). Введите ID и нажмите кнопку →">
-          <button class="btn btn-ghost btn-sm" onclick="saveSupersedes('{{.ID}}', this.previousElementSibling.value, this)" title="Сохранить связь замещения">→</button>
+                 style="flex:1;min-width:100px" data-tooltip="ID документа, который этот документ замещает">
+          <button class="btn btn-ghost btn-sm" onclick="saveSupersedes('{{.ID}}', this.previousElementSibling.value, this)" data-tooltip="Сохранить связь замещения">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+          </button>
         </div>
         <div class="action-row">
-          {{if .Indexed}}<button class="btn btn-ghost btn-sm" onclick="deindexDoc('{{.ID}}')" title="Удалить документ из RAG-индекса (запись в реестре сохраняется)">🧹 Деиндекс</button>{{end}}
-          <button class="btn btn-danger btn-sm" onclick="deleteDoc('{{.ID}}')" title="Безвозвратно удалить документ из реестра и индекса">🗑 Удалить</button>
+          {{if .Indexed}}<button class="btn btn-ghost btn-sm" onclick="deindexDoc('{{.ID}}')" data-tooltip="Удалить документ из RAG (поиск по векторам)-индекса (запись в реестре сохраняется)">Деиндекс</button>{{end}}
+          <button class="btn btn-danger btn-sm" onclick="deleteDoc('{{.ID}}')" data-tooltip="Безвозвратно удалить документ из реестра и индекса">Удалить</button>
         </div>
       </div>
     </td>
@@ -883,11 +693,14 @@ document.addEventListener('DOMContentLoaded', function() {
   </tbody>
 </table>
 </div>
+</div>
 {{else}}
 <div class="empty">
-  <div class="icon">📭</div>
+  <div class="empty-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+  </div>
   <p><strong>Нет документов</strong></p>
-  <p>Запустите парсинг кнопкой <strong>«Парсинг RSS»</strong> в шапке страницы<br>
+  <p>Запустите парсинг кнопкой <strong>«Парсинг RSS (каналы)»</strong> в шапке страницы<br>
   или выполните в терминале: <code>skolkovo scrape</code></p>
 </div>
 {{end}}
@@ -899,107 +712,169 @@ document.addEventListener('DOMContentLoaded', function() {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Diff — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<title>Сравнение версий — База Сколково</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f0f2f5; --surface: #fff; --surface-alt: #f8fafc; --primary: #1e40af; --primary-hover: #1e3a8a;
-  --primary-light: #eff6ff; --text: #1e293b; --text-secondary: #64748b;
-  --border: #e2e8f0; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08);
-  --green: #16a34a; --green-bg: #f0fdf4; --red: #dc2626; --red-bg: #fef2f2;
+  --bg: #f6f7fb; --surface: #fff; --surface-alt: #f0f2f5; --primary: #0073ea; --primary-hover: #005bb5;
+  --primary-light: #e5f0fc; --text: #323338; --text-secondary: #676879;
+  --border: #c3c6d4; --radius: 8px;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.06); --shadow: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.1);
+  --green: #008653; --green-bg: #f4f9f4; --green-border: #b7e4c7;
+  --red: #7a0606; --red-bg: #fdf3f3; --red-border: #f5c6c6;
+  --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-    --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-    --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4);
-    --green: #4ade80; --green-bg: #052e16; --red: #f87171; --red-bg: #1c0707;
+    --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+    --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+    --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
+    --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+    --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-  --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-  --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4);
-  --green: #4ade80; --green-bg: #052e16; --red: #f87171; --red-bg: #1c0707;
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+  --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+  --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
+  --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+  --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
 }
-body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
-header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
-.header-actions button:hover { background: rgba(255,255,255,.25); }
-.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
-.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; display: flex; align-items: center; justify-content: space-between; height: 56px; box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
+.logo-wrap { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.logo-icon svg { width: 20px; height: 20px; fill: #fff; }
+header h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+.header-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.header-actions a, .header-actions button {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.header-actions a:hover, .header-actions button:hover { background: var(--surface-alt); color: var(--text); border-color: var(--text-secondary); }
+.header-actions a.active-link { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.theme-btn {
+  background: transparent !important; color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important; border-radius: 6px !important;
+  width: 36px !important; height: 36px !important; padding: 0 !important;
+  display: flex !important; align-items: center; justify-content: center;
+}
+.theme-btn:hover { background: var(--surface-alt) !important; color: var(--text) !important; }
+.theme-btn svg { width: 18px; height: 18px; }
 main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
-.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 20px; }
-.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); }
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); margin-bottom: 20px; border: 1px solid var(--border); }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.card h2 svg { width: 20px; height: 20px; flex-shrink: 0; }
 .form-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 16px; }
 .form-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 250px; }
 .form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
-.form-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; font-family: inherit; background: var(--surface); color: var(--text); }
-.form-group select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(30,64,175,.1); }
-.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: inherit; }
+.form-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 14px; outline: none; font-family: var(--font); background: var(--surface); color: var(--text); }
+.form-group select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.1); }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: var(--font); }
 .btn-primary { background: var(--primary); color: #fff; }
 .btn-primary:hover { background: var(--primary-hover); }
-.btn-success { background: var(--green); color: #fff; }
-.btn-success:hover { background: #15803d; }
-.error-box { background: var(--red-bg); color: var(--red); padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; border: 1px solid #fecaca; font-size: 13px; }
-.diff-result { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.error-box { background: var(--red-bg); color: var(--red); padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; border: 1px solid var(--red-border); font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.error-box svg { width: 18px; height: 18px; flex-shrink: 0; }
+.diff-result { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .diff-result iframe { width: 100%; height: 70vh; border: none; }
 .diff-summary { display: flex; gap: 16px; margin-bottom: 12px; }
 .diff-stat { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; }
-.diff-stat.added { background: var(--green-bg); color: var(--green); }
-.diff-stat.removed { background: var(--red-bg); color: var(--red); }
+.diff-stat.added { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.diff-stat.removed { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+[data-tooltip]:hover::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none;
+}
+@media (max-width: 768px) {
+  header { padding: 0 16px; }
+  .header-actions a, .header-actions button { padding: 5px 8px; font-size: 12px; }
+  main { padding: 16px; }
+  .form-row { flex-direction: column; }
+  .form-group { min-width: auto; }
+}
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
-  <h1>📚 База Сколково</h1>
+  <div class="logo-wrap">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
+    </div>
+    <h1>База Сколково</h1>
+  </div>
   <div class="header-actions">
-    <a href="/" class="nav-btn" title="Список всех документов базы знаний">📋 Документы</a>
-    <a href="/diff" class="nav-btn" style="background:rgba(255,255,255,.25)" title="Сравнение версий документов (Diff)">🔀 Сравнение (Diff)</a>
-    <a href="/analytics" class="nav-btn" title="Статистика и аналитика базы">📊 Аналитика</a>
-    <a href="/graph" class="nav-btn" title="Граф связей между документами">🕸️ Граф</a>
-    <a href="/clients" class="nav-btn" title="Управление клиентами резидентства">🏢 Клиенты</a>
-    <a href="/ai/models" class="nav-btn" title="Настройка ИИ-моделей и агентов">🤖 ИИ</a>
-    <button onclick="runAction('scrape', this)" title="Парсинг RSS (~20 документов)">📥 Парсинг RSS</button>
-    <button onclick="runAction('index', this)" title="Индексация всех документов со статусом «действует»">🧠 Индексация</button>
-    <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">🔄 Полный синк</button>
-    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов">📚 Индекс структуры</button>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;padding:7px 10px;min-width:36px">🌙</button>
+    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
+    <a href="/diff" class="active-link" data-tooltip="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" data-tooltip="Граф связей между документами">Граф</a>
+    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
+    <div class="header-divider"></div>
+    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" data-tooltip="Индексация в RAG (поиск по векторам)">Индексация</button>
+    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: документы + новости + индексация">Полный синк</button>
+    <button onclick="runAction('seed-local', this)" data-tooltip="Индекс структуры">Индекс структуры</button>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
   </div>
 </header>
 <main>
 <div class="card">
-  <h2>🔀 Сравнение документов</h2>
+  <h2>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
+    Сравнение версий документов
+  </h2>
   <form method="post" action="/diff" id="diffForm">
     <div class="form-row">
       <div class="form-group">
         <label for="doc1">Документ 1</label>
-        <select name="doc1" id="doc1" required>
+        <select name="doc1" id="doc1" required data-tooltip="Выберите первый документ для сравнения">
           <option value="">— выберите —</option>
           {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc1ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
         </select>
       </div>
       <div class="form-group">
         <label for="doc2">Документ 2</label>
-        <select name="doc2" id="doc2" required>
+        <select name="doc2" id="doc2" required data-tooltip="Выберите второй документ для сравнения">
           <option value="">— выберите —</option>
           {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc2ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
         </select>
       </div>
-      <button type="submit" class="btn btn-primary" id="compareBtn">🔀 Сравнить</button>
+      <button type="submit" class="btn btn-primary" id="compareBtn" data-tooltip="Сравнить выбранные документы">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
+        Сравнить
+      </button>
     </div>
   </form>
-  {{if .Error}}<div class="error-box">⚠️ {{.Error}}</div>{{end}}
+  {{if .Error}}<div class="error-box">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+    {{.Error}}
+  </div>{{end}}
 </div>
 {{if .DiffHTML}}
 <div class="card">
-  <h2>📋 Результат сравнения</h2>
+  <h2>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+    Результат сравнения
+  </h2>
   <div class="diff-result">
     {{.DiffHTML}}
   </div>
@@ -1008,12 +883,12 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 </main>
 <script>
 async function runAction(action, btn) {
-  const orig = btn.innerHTML;
+  var orig = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span>';
   btn.disabled = true;
   try {
-    const r = await fetch('/api/' + action, { method: 'POST' });
-    const data = await r.json();
+    var r = await fetch('/api/' + action, { method: 'POST' });
+    var data = await r.json();
     if (data.ok) { alert(data.msg || 'Готово'); location.reload(); }
     else { alert('Ошибка: ' + (data.error || 'неизвестно')); }
   } catch(e) { alert('Ошибка сети: ' + e.message); }
@@ -1025,14 +900,16 @@ function toggleTheme() {
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(next);
+}
+function updateThemeIcons(theme) {
+  var moon = document.querySelector('.icon-moon');
+  var sun = document.querySelector('.icon-sun');
+  if (moon && sun) { moon.style.display = theme === 'dark' ? 'none' : ''; sun.style.display = theme === 'dark' ? '' : 'none'; }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(cur);
 });
 </script>
 </body>
@@ -1045,96 +922,136 @@ document.addEventListener('DOMContentLoaded', function() {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Граф связей — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f0f2f5; --surface: #fff; --surface-alt: #f8fafc; --primary: #1e40af; --primary-hover: #1e3a8a;
-  --text: #1e293b; --text-secondary: #64748b; --border: #e2e8f0; --radius: 8px;
-  --shadow: 0 1px 3px rgba(0,0,0,.08);
+  --bg: #f6f7fb; --surface: #fff; --surface-alt: #f0f2f5; --primary: #0073ea; --primary-hover: #005bb5;
+  --primary-light: #e5f0fc; --text: #323338; --text-secondary: #676879;
+  --border: #c3c6d4; --radius: 8px;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.06); --shadow: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.1);
+  --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-    --text: #e2e8f0; --text-secondary: #94a3b8; --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4);
+    --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+    --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+    --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-  --text: #e2e8f0; --text-secondary: #94a3b8; --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4);
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+  --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+  --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
 }
-body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
-header { background: linear-gradient(135deg, var(--primary) 0%, #3b82f6 100%); color: #fff; padding: 16px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.15); position: sticky; top: 0; z-index: 100; }
-header h1 { font-size: 18px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-.header-actions button { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); }
-.header-actions button:hover { background: rgba(255,255,255,.25); }
-.nav-btn { background: rgba(255,255,255,.15); color: #fff; border: 1px solid rgba(255,255,255,.25); border-radius: 6px; padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; backdrop-filter: blur(4px); text-decoration: none; display: inline-block; }
-.nav-btn:hover { background: rgba(255,255,255,.25); text-decoration: none; }
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; display: flex; align-items: center; justify-content: space-between; height: 56px; box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
+.logo-wrap { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.logo-icon svg { width: 20px; height: 20px; fill: #fff; }
+header h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+.header-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.header-actions a, .header-actions button {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.header-actions a:hover, .header-actions button:hover { background: var(--surface-alt); color: var(--text); border-color: var(--text-secondary); }
+.header-actions a.active-link { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.theme-btn {
+  background: transparent !important; color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important; border-radius: 6px !important;
+  width: 36px !important; height: 36px !important; padding: 0 !important;
+  display: flex !important; align-items: center; justify-content: center;
+}
+.theme-btn:hover { background: var(--surface-alt) !important; color: var(--text) !important; }
+.theme-btn svg { width: 18px; height: 18px; }
 main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
-.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); margin-bottom: 20px; }
-.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); }
-#graph-container { width: 100%; height: 75vh; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.card { background: var(--surface); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow-sm); margin-bottom: 20px; border: 1px solid var(--border); }
+.card h2 { font-size: 16px; margin-bottom: 12px; color: var(--text); display: flex; align-items: center; gap: 8px; }
+.card h2 svg { width: 20px; height: 20px; flex-shrink: 0; }
+#graph-container { width: 100%; height: 75vh; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
 .legend-item { display: flex; align-items: center; gap: 6px; }
 .legend-color { width: 24px; height: 4px; border-radius: 2px; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+[data-tooltip]:hover::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none;
+}
+@media (max-width: 768px) {
+  header { padding: 0 16px; }
+  .header-actions a, .header-actions button { padding: 5px 8px; font-size: 12px; }
+  main { padding: 16px; }
+  .legend { flex-direction: column; gap: 8px; }
+}
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
-  <h1>📚 База Сколково</h1>
+  <div class="logo-wrap">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
+    </div>
+    <h1>База Сколково</h1>
+  </div>
   <div class="header-actions">
-    <a href="/" class="nav-btn" title="Список всех документов базы знаний">📋 Документы</a>
-    <a href="/diff" class="nav-btn" title="Сравнение версий документов (Diff)">🔀 Сравнение (Diff)</a>
-    <a href="/analytics" class="nav-btn" title="Статистика и аналитика базы">📊 Аналитика</a>
-    <a href="/graph" class="nav-btn" style="background:rgba(255,255,255,.25)" title="Граф связей между документами">🕸️ Граф</a>
-    <a href="/clients" class="nav-btn" title="Управление клиентами резидентства">🏢 Клиенты</a>
-    <a href="/ai/models" class="nav-btn" title="Настройка ИИ-моделей и агентов">🤖 ИИ</a>
-    <button onclick="runAction('scrape', this)" title="Парсинг RSS (~20 документов)">📥 Парсинг RSS</button>
-    <button onclick="runAction('index', this)" title="Индексация всех документов со статусом «действует»">🧠 Индексация</button>
-    <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">🔄 Полный синк</button>
-    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов">📚 Индекс структуры</button>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="font-size:16px;padding:7px 10px;min-width:36px">🌙</button>
+    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
+    <a href="/diff" data-tooltip="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" class="active-link" data-tooltip="Граф связей между документами">Граф</a>
+    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
+    <div class="header-divider"></div>
+    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" data-tooltip="Индексация в RAG (поиск по векторам)">Индексация</button>
+    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: документы + новости + индексация">Полный синк</button>
+    <button onclick="runAction('seed-local', this)" data-tooltip="Индекс структуры">Индекс структуры</button>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
   </div>
 </header>
 <main>
 <div class="card">
-  <h2>🕸️ Граф связей документов</h2>
+  <h2>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="4" r="2"/><circle cx="20" cy="4" r="2"/><circle cx="4" cy="20" r="2"/><circle cx="20" cy="20" r="2"/><line x1="6" y1="5" x2="10" y2="10"/><line x1="18" y1="5" x2="14" y2="10"/><line x1="6" y1="19" x2="10" y2="14"/><line x1="18" y1="19" x2="14" y2="14"/></svg>
+    Граф связей документов
+  </h2>
   <div class="legend">
-    <div class="legend-item" title="Документ ссылается на другой"><div class="legend-color" style="background:#2563eb"></div><span>Ссылается (references)</span></div>
-    <div class="legend-item" title="Документ замещает другой (более новая версия)"><div class="legend-color" style="background:#dc2626"></div><span>Замещает (supersedes)</span></div>
-    <div class="legend-item" title="Документы связаны по теме"><div class="legend-color" style="background:#16a34a"></div><span>Связано (related)</span></div>
+    <div class="legend-item" data-tooltip="Документ ссылается на другой"><div class="legend-color" style="background:#2563eb"></div><span>Ссылается (references)</span></div>
+    <div class="legend-item" data-tooltip="Документ замещает другой (более новая версия)"><div class="legend-color" style="background:#dc2626"></div><span>Замещает (supersedes)</span></div>
+    <div class="legend-item" data-tooltip="Документы связаны по теме"><div class="legend-color" style="background:#16a34a"></div><span>Связано (related)</span></div>
   </div>
   <div id="graph-container"></div>
 </div>
 </main>
 <script src="https://unpkg.com/vis-network@9.1.6/standalone/umd/vis-network.min.js"></script>
 <script>
-const graphData = {{.GraphJSON}};
-const nodes = new vis.DataSet(graphData.nodes.map(n => ({
-  id: n.id,
-  label: n.label,
-  group: n.group,
-  title: n.title,
-  shape: 'dot',
-  size: 20,
-  font: { size: 12, face: 'Inter' }
-})));
-const edges = new vis.DataSet(graphData.edges.map(e => ({
-  from: e.from,
-  to: e.to,
-  label: e.label,
-  color: { color: e.color || '#6b7280' },
-  dashes: e.dashes || false,
-  font: { size: 10, align: 'middle' },
-  smooth: { type: 'continuous' }
-})));
-const container = document.getElementById('graph-container');
-const data = { nodes, edges };
-const options = {
+var graphData = {{.GraphJSON}};
+var nodes = new vis.DataSet(graphData.nodes.map(function(n) {
+  return { id: n.id, label: n.label, group: n.group, title: n.title, shape: 'dot', size: 20, font: { size: 12, face: 'Figtree' } };
+}));
+var edges = new vis.DataSet(graphData.edges.map(function(e) {
+  return { from: e.from, to: e.to, label: e.label, color: { color: e.color || '#6b7280' }, dashes: e.dashes || false, font: { size: 10, align: 'middle' }, smooth: { type: 'continuous' } };
+}));
+var container = document.getElementById('graph-container');
+var data = { nodes: nodes, edges: edges };
+var options = {
   physics: {
     enabled: true,
     stabilization: { iterations: 150 },
@@ -1142,27 +1059,25 @@ const options = {
     forceAtlas2Based: { gravitationalConstant: -80, springLength: 120, springConstant: 0.05 }
   },
   interaction: { hover: true, zoomView: true, zoomSpeed: 0.1 },
-  groups: {
-    default: { color: { background: '#3b82f6', border: '#1e40af' } }
-  }
+  groups: { default: { color: { background: '#3b82f6', border: '#1e40af' } } }
 };
-const network = new vis.Network(container, data, options);
+var network = new vis.Network(container, data, options);
 network.on('click', function(params) {
   if (params.nodes.length > 0) {
-    const nodeId = params.nodes[0];
-    const node = nodes.get(nodeId);
+    var nodeId = params.nodes[0];
+    var node = nodes.get(nodeId);
     if (node && node.id) {
       window.open('/?q=' + encodeURIComponent(node.label), '_blank');
     }
   }
 });
 async function runAction(action, btn) {
-  const orig = btn.innerHTML;
+  var orig = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span>';
   btn.disabled = true;
   try {
-    const r = await fetch('/api/' + action, { method: 'POST' });
-    const data = await r.json();
+    var r = await fetch('/api/' + action, { method: 'POST' });
+    var data = await r.json();
     if (data.ok) { alert(data.msg || 'Готово'); location.reload(); }
     else { alert('Ошибка: ' + (data.error || 'неизвестно')); }
   } catch(e) { alert('Ошибка сети: ' + e.message); }
@@ -1174,16 +1089,343 @@ function toggleTheme() {
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(next);
+}
+function updateThemeIcons(theme) {
+  var moon = document.querySelector('.icon-moon');
+  var sun = document.querySelector('.icon-sun');
+  if (moon && sun) { moon.style.display = theme === 'dark' ? 'none' : ''; sun.style.display = theme === 'dark' ? '' : 'none'; }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(cur);
 });
 </script>
 </body>
 </html>{{end}}
+
+{{/* ======================== CHANGES TEMPLATE ======================== */}}
+{{define "changes-layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>История изменений — База Сколково</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f6f7fb; --surface: #fff; --surface-alt: #f0f2f5; --primary: #0073ea; --primary-hover: #005bb5;
+  --primary-light: #e5f0fc; --text: #323338; --text-secondary: #676879;
+  --border: #c3c6d4; --radius: 8px;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.06); --shadow: 0 2px 8px rgba(0,0,0,.08); --shadow-lg: 0 8px 24px rgba(0,0,0,.1);
+  --green: #008653; --green-bg: #f4f9f4; --green-border: #b7e4c7;
+  --yellow: #7a5900; --yellow-bg: #fdf8e8; --yellow-border: #f5e0a0;
+  --red: #7a0606; --red-bg: #fdf3f3; --red-border: #f5c6c6;
+  --blue: #005cc7; --purple: #6544e0; --purple-bg: #f0ecfd; --purple-border: #d4b8f5;
+  --gray: #676879; --gray-bg: #f0f2f5;
+  --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+    --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+    --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
+    --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+    --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
+    --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+    --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e; --purple-border: #4a3580;
+    --gray: #9698a6; --gray-bg: #2a2f45;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+  --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6;
+  --border: #3b3f54; --shadow-sm: 0 1px 4px rgba(0,0,0,.3); --shadow: 0 2px 8px rgba(0,0,0,.4); --shadow-lg: 0 8px 24px rgba(0,0,0,.5);
+  --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+  --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
+  --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+  --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #2d1f5e; --purple-border: #4a3580;
+  --gray: #9698a6; --gray-bg: #2a2f45;
+}
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+
+/* Header — reuse admin header */
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; display: flex; align-items: center; justify-content: space-between; height: 56px; box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
+.logo-wrap { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.logo-icon svg { width: 20px; height: 20px; fill: #fff; }
+header h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+.header-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.header-actions a, .header-actions button {
+  background: transparent; color: var(--text-secondary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500;
+  cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font);
+  display: inline-flex; align-items: center; gap: 5px;
+}
+.header-actions a:hover, .header-actions button:hover { background: var(--surface-alt); color: var(--text); border-color: var(--text-secondary); }
+.header-actions a.active-link { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; flex-shrink: 0; }
+.theme-btn {
+  background: transparent !important; color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important; border-radius: 6px !important;
+  width: 36px !important; height: 36px !important; padding: 0 !important;
+  display: flex !important; align-items: center; justify-content: center;
+}
+.theme-btn:hover { background: var(--surface-alt) !important; color: var(--text) !important; }
+.theme-btn svg { width: 18px; height: 18px; }
+main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+
+/* Last parse info bar */
+.parse-info { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+.parse-info .label { font-weight: 600; color: var(--primary); }
+.parse-info .time { color: var(--text); font-weight: 500; }
+
+/* Stats cards */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stat-card { background: var(--surface); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow-sm); text-align: center; border: 1px solid var(--border); }
+.stat-card .n { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.stat-card .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; font-weight: 600; }
+.stat-card.new { border-top: 3px solid var(--green); }
+.stat-card.new .n { color: var(--green); }
+.stat-card.updated { border-top: 3px solid var(--blue); }
+.stat-card.updated .n { color: var(--blue); }
+.stat-card.outdated { border-top: 3px solid var(--red); }
+.stat-card.outdated .n { color: var(--red); }
+.stat-card.removed { border-top: 3px solid var(--gray); }
+.stat-card.removed .n { color: var(--gray); }
+.stat-card.total { border-top: 3px solid var(--primary); }
+
+/* Filter bar */
+.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+.filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.filter-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+.filter-group label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: var(--font); background: var(--surface); color: var(--text); }
+.filter-group input:focus, .filter-group select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.1); }
+.filter-actions { display: flex; gap: 8px; align-items: flex-end; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: var(--font); text-decoration: none; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--surface-alt); }
+
+/* Timeline / events table */
+.table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 800px; }
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); }
+tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+tbody tr { transition: background .1s; }
+tbody tr:hover { background: var(--surface-alt); }
+
+/* Kind badge */
+.kind-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.kind-new { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.kind-updated { background: var(--blue-bg, #e5f0fc); color: var(--blue); border: 1px solid var(--blue-border, #b3d4fc); }
+.kind-outdated { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.kind-removed { background: var(--gray-bg); color: var(--gray); border: 1px solid var(--border); }
+
+/* Entity type tag */
+.entity-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); font-family: 'SF Mono', 'Fira Code', monospace; }
+
+/* Empty */
+.empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
+.empty-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--gray-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.empty-icon svg { width: 24px; height: 24px; stroke: var(--text-secondary); fill: none; stroke-width: 2; }
+
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  header { padding: 0 16px; }
+  .header-actions { gap: 4px; }
+  main { padding: 16px; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  .filter-row { flex-direction: column; }
+  .filter-group { min-width: 100%; }
+  table { font-size: 12px; }
+  thead th, tbody td { padding: 8px 10px; }
+}
+</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
+</head>
+<body>
+<header>
+  <div class="logo-wrap">
+    <div class="logo-icon">
+      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
+    </div>
+    <h1>База Сколково</h1>
+  </div>
+  <div class="header-actions">
+    <a href="/">Документы</a>
+    <a href="/changes" class="active-link">Изменения</a>
+    <a href="/diff">Сравнение</a>
+    <a href="/analytics">Аналитика</a>
+    <a href="/graph">Граф</a>
+    <a href="/clients">Клиенты</a>
+    <a href="/ai/models">ИИ</a>
+    <div class="header-divider"></div>
+    <a href="/logout" style="padding: 5px 10px">Выход</a>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
+      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+    </button>
+  </div>
+</header>
+<main>
+{{template "changes-content" .}}
+</main>
+<script>
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeIcons(next);
+}
+function updateThemeIcons(theme) {
+  var moon = document.querySelector('.icon-moon');
+  var sun = document.querySelector('.icon-sun');
+  if (moon && sun) { moon.style.display = theme === 'dark' ? 'none' : ''; sun.style.display = theme === 'dark' ? '' : 'none'; }
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  updateThemeIcons(cur);
+});
+</script>
+</body>
+</html>{{end}}
+
+{{define "changes-content"}}
+{{/* Last parse info */}}
+<div class="parse-info">
+  <div>
+    <span class="label">📡 Последний парсинг:</span>
+    {{if .Stats.LastParse.IsZero}}
+      <span class="time">ещё не выполнялся</span>
+    {{else}}
+      <span class="time" data-tooltip="Когда последний раз успешно работал сбор данных">{{.Stats.LastParse.Format "02.01.2006 15:04"}}</span>
+    {{end}}
+  </div>
+  <div style="font-size:12px;color:var(--text-secondary)">
+    Показано изменений: <strong>{{.Stats.Total}}</strong>
+  </div>
+</div>
+
+{{/* Stats */}}
+<div class="stats-row">
+  <div class="stat-card total"><div class="n">{{.Stats.Total}}</div><div class="l">Всего</div></div>
+  <div class="stat-card new"><div class="n">{{.Stats.New}}</div><div class="l">Новые</div></div>
+  <div class="stat-card updated"><div class="n">{{.Stats.Updated}}</div><div class="l">Обновлены</div></div>
+  <div class="stat-card outdated"><div class="n">{{.Stats.Outdated}}</div><div class="l">Устарели</div></div>
+  <div class="stat-card removed"><div class="n">{{.Stats.Removed}}</div><div class="l">Удалены</div></div>
+</div>
+
+{{/* Filters */}}
+<div class="filter-bar">
+  <form method="get" action="/changes">
+    <div class="filter-row">
+      <div class="filter-group" style="min-width:200px">
+        <label for="q">Поиск</label>
+        <input type="text" id="q" name="q" value="{{.Query}}" placeholder="По названию или ID…">
+      </div>
+      <div class="filter-group">
+        <label for="entity_type">Тип сущности</label>
+        <select id="entity_type" name="entity_type">
+          <option value="">Все</option>
+          <option value="document"{{if eq .EntityType "document"}} selected{{end}}>📄 Документ</option>
+          <option value="news"{{if eq .EntityType "news"}} selected{{end}}>📰 Новость</option>
+          <option value="event"{{if eq .EntityType "event"}} selected{{end}}>📅 Мероприятие</option>
+          <option value="contest"{{if eq .EntityType "contest"}} selected{{end}}>🏆 Конкурс/грант</option>
+          <option value="npa"{{if eq .EntityType "npa"}} selected{{end}}>📜 НПА</option>
+          <option value="preference"{{if eq .EntityType "preference"}} selected{{end}}>💼 Льгота</option>
+          <option value="faq"{{if eq .EntityType "faq"}} selected{{end}}>❓ FAQ</option>
+          <option value="telegram"{{if eq .EntityType "telegram"}} selected{{end}}>📱 Telegram</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="date_from">Дата от</label>
+        <input type="date" id="date_from" name="date_from" value="{{.DateFrom}}">
+      </div>
+      <div class="filter-group">
+        <label for="date_to">Дата до</label>
+        <input type="date" id="date_to" name="date_to" value="{{.DateTo}}">
+      </div>
+      <div class="filter-actions">
+        <button type="submit" class="btn btn-primary" data-tooltip="Применить фильтры">🔍 Применить</button>
+        <a href="/changes" class="btn btn-ghost" data-tooltip="Сбросить все фильтры">Сбросить</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{{/* Events table */}}
+{{if .Events}}
+<div class="table-wrap">
+<div class="table-scroll">
+<table>
+  <thead>
+    <tr>
+      <th style="width:120px">Время</th>
+      <th style="width:100px">Тип</th>
+      <th style="width:100px">Сущность</th>
+      <th>Название</th>
+      <th style="width:140px">Категория</th>
+      <th style="width:100px">Изменение</th>
+    </tr>
+  </thead>
+  <tbody>
+  {{range .Events}}
+  <tr>
+    <td style="white-space:nowrap;font-size:12px" data-tooltip="{{.DetectedAt.Format "02.01.2006 15:04:05"}}">
+      {{.DetectedAt.Format "02.01 15:04"}}
+    </td>
+    <td>
+      <span class="kind-badge kind-{{.Kind}}" data-tooltip="
+        {{if eq .Kind "new"}}Сущность впервые появилась в базе
+        {{else if eq .Kind "updated"}}Содержимое или метаданные изменились
+        {{else if eq .Kind "outdated"}}Сущность переведена в статус «устарела»
+        {{else if eq .Kind "removed"}}Сущность удалена из источника{{end}}
+      ">
+        {{if eq .Kind "new"}}🆕 Новая{{else if eq .Kind "updated"}}🔄 Обновлена{{else if eq .Kind "outdated"}}⛔ Устарела{{else if eq .Kind "removed"}}🗑 Удалена{{end}}
+      </span>
+    </td>
+    <td><span class="entity-tag">{{.EntityType}}</span></td>
+    <td>
+      <div style="font-weight:600;font-size:13px">{{.Title}}</div>
+      {{if .Summary}}<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">{{.Summary}}</div>{{end}}
+      <div style="font-size:10px;color:var(--text-secondary);margin-top:2px;font-family:monospace">{{.EntityID}}</div>
+    </td>
+    <td style="font-size:12px">{{if .Category}}{{.Category}}{{else}}—{{end}}</td>
+    <td>
+      {{if .SourceURL}}<a href="{{.SourceURL}}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть источник">источник ↗</a>{{else}}—{{end}}
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+</div>
+{{else}}
+<div class="empty">
+  <div class="empty-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+  </div>
+  <p><strong>Нет изменений</strong></p>
+  <p>За указанный период изменений не найдено.<br>
+  Попробуйте расширить диапазон дат или сбросить фильтры.</p>
+</div>
+{{end}}
+{{end}}
 `))

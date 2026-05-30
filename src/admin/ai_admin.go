@@ -51,133 +51,217 @@ var aiTmpl = template.Must(template.New("ai").Funcs(template.FuncMap{
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>База Сколково — ИИ Конфигурация</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --bg: #f0f2f5; --surface: #fff; --surface-alt: #f8fafc; --primary: #1e40af; --primary-hover: #1e3a8a;
-  --primary-light: #eff6ff; --text: #1e293b; --text-secondary: #64748b;
-  --border: #e2e8f0; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);
-  --shadow-lg: 0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -2px rgba(0,0,0,.05);
-  --green: #16a34a; --green-bg: #f0fdf4; --yellow: #ca8a04; --yellow-bg: #fefce8;
-  --red: #dc2626; --red-bg: #fef2f2; --blue: #2563eb; --purple: #7c3aed; --purple-bg: #f5f3ff;
-  --gray: #6b7280; --gray-bg: #f3f4f6;
+  --bg: #f5f6f8; --surface: #ffffff; --surface-alt: #f0f4f8; --primary: #0073ea; --primary-hover: #005bb5;
+  --primary-light: #e6f0fa; --text: #1a1d2e; --text-secondary: #5f6577;
+  --border: #d5d9e2; --radius: 8px; --shadow: 0 1px 3px rgba(0,0,0,.06), 0 1px 2px rgba(0,0,0,.04);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,.08);
+  --green: #00875a; --green-bg: #e3fcef; --yellow: #ff991f; --yellow-bg: #fff7e6;
+  --red: #de350b; --red-bg: #ffeae6; --blue: #0073ea; --purple: #6554c0; --purple-bg: #eae6ff;
+  --gray: #6b778c; --gray-bg: #f4f5f7;
+  --header-bg: #ffffff; --header-text: #1a1d2e; --card-border: 1px solid #d5d9e2;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-    --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-    --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
-    --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
-    --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
-    --gray: #94a3b8; --gray-bg: #334155;
+    --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #4c9aff; --primary-hover: #6db3f8;
+    --primary-light: #1e3a5f; --text: #e8eaf0; --text-secondary: #a0a5b8;
+    --border: #3a3f56; --shadow: 0 1px 3px rgba(0,0,0,.3); --shadow-lg: 0 8px 24px rgba(0,0,0,.4);
+    --green: #36b37e; --green-bg: #1b3a2a; --yellow: #ff991f; --yellow-bg: #3a2a0a;
+    --red: #ff5630; --red-bg: #3a1510; --blue: #4c9aff; --purple: #998dd9; --purple-bg: #2d2450;
+    --gray: #a0a5b8; --gray-bg: #2a2f45;
+    --header-bg: #23273a; --header-text: #e8eaf0; --card-border: 1px solid #3a3f56;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0f172a; --surface: #1e293b; --surface-alt: #243357; --primary: #3b82f6; --primary-hover: #60a5fa;
-  --primary-light: #1a2d4f; --text: #e2e8f0; --text-secondary: #94a3b8;
-  --border: #334155; --shadow: 0 1px 3px rgba(0,0,0,.4); --shadow-lg: 0 10px 20px rgba(0,0,0,.6);
-  --green: #4ade80; --green-bg: #052e16; --yellow: #fbbf24; --yellow-bg: #1c1202;
-  --red: #f87171; --red-bg: #1c0707; --blue: #60a5fa; --purple: #a78bfa; --purple-bg: #200b3d;
-  --gray: #94a3b8; --gray-bg: #334155;
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #4c9aff; --primary-hover: #6db3f8;
+  --primary-light: #1e3a5f; --text: #e8eaf0; --text-secondary: #a0a5b8;
+  --border: #3a3f56; --shadow: 0 1px 3px rgba(0,0,0,.3); --shadow-lg: 0 8px 24px rgba(0,0,0,.4);
+  --green: #36b37e; --green-bg: #1b3a2a; --yellow: #ff991f; --yellow-bg: #3a2a0a;
+  --red: #ff5630; --red-bg: #3a1510; --blue: #4c9aff; --purple: #998dd9; --purple-bg: #2d2450;
+  --gray: #a0a5b8; --gray-bg: #2a2f45;
+  --header-bg: #23273a; --header-text: #e8eaf0; --card-border: 1px solid #3a3f56;
 }
-body { font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text); line-height:1.5; }
-header { background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%); color:#fff; padding:16px 28px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,.15); position:sticky; top:0; z-index:100; }
-header h1 { font-size:18px; font-weight:600; display:flex; align-items:center; gap:8px; }
-.nav-btn { background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.25); border-radius:6px; padding:7px 14px; font-size:13px; font-weight:500; cursor:pointer; transition:all .2s; text-decoration:none; display:inline-block; }
-.nav-btn:hover { background:rgba(255,255,255,.25); }
-.nav-btn.active { background:rgba(255,255,255,.35); border-color:rgba(255,255,255,.5); }
-main { max-width:1400px; margin:0 auto; padding:24px 28px; }
-@media(max-width:768px) { main { padding:16px; } .form-row { grid-template-columns:1fr; } }
-.tabs { display:flex; gap:4px; margin-bottom:20px; background:var(--surface); border-radius:var(--radius); padding:6px; box-shadow:var(--shadow); width:fit-content; }
-.tab { padding:8px 20px; border-radius:6px; font-size:13px; font-weight:500; cursor:pointer; text-decoration:none; color:var(--text-secondary); transition:all .15s; }
-.tab:hover { background:var(--primary-light); color:var(--primary); }
-.tab.active { background:var(--primary); color:#fff; }
-.card { background:var(--surface); border-radius:var(--radius); box-shadow:var(--shadow); overflow:hidden; }
-.card-header { padding:16px 20px; border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; gap:12px; }
-.card-header h2 { font-size:15px; font-weight:600; }
-.card-body { padding:20px; }
-table { width:100%; border-collapse:collapse; }
-thead th { background:var(--surface-alt); padding:10px 14px; text-align:left; font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; border-bottom:2px solid var(--border); }
-tbody td { padding:12px 14px; border-bottom:1px solid var(--border); font-size:13px; vertical-align:middle; }
-tbody tr:hover { background:var(--surface-alt); }
-tbody tr:last-child td { border-bottom:none; }
-.badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:600; }
-.badge-green { background:var(--green-bg); color:var(--green); }
-.badge-gray { background:var(--gray-bg); color:var(--gray); }
-.badge-blue { background:var(--primary-light); color:var(--primary); }
-.badge-purple { background:var(--purple-bg); color:var(--purple); }
-.badge-yellow { background:var(--yellow-bg); color:var(--yellow); }
-.btn { display:inline-flex; align-items:center; justify-content:center; gap:4px; padding:6px 14px; border:none; border-radius:6px; font-size:12px; font-weight:500; cursor:pointer; transition:all .15s; white-space:nowrap; font-family:inherit; text-decoration:none; }
-.btn-primary { background:var(--primary); color:#fff; }
-.btn-primary:hover { background:var(--primary-hover); }
-.btn-success { background:var(--green); color:#fff; }
-.btn-success:hover { background:#15803d; }
-.btn-danger { background:var(--red); color:#fff; }
-.btn-danger:hover { background:#b91c1c; }
-.btn-secondary { background:var(--gray-bg); color:var(--text); border:1px solid var(--border); }
-.btn-secondary:hover { background:var(--border); }
-.btn-sm { padding:4px 10px; font-size:11px; }
-.btn-test { background:var(--purple-bg); color:var(--purple); border:1px solid #ddd6fe; }
-.btn-test:hover { background:#ede9fe; }
-.form-group { margin-bottom:16px; }
-.form-group label { display:block; font-size:13px; font-weight:500; margin-bottom:6px; color:var(--text); }
+body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; font-size: 14px; }
+
+/* ── Header ── */
+header { background: var(--header-bg); color: var(--header-text); padding: 12px 28px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; border-bottom: var(--card-border); position: sticky; top: 0; z-index: 100; box-shadow: var(--shadow); }
+header h1 { font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 8px; color: var(--header-text); }
+
+/* ── Tooltip ── */
+[data-tooltip] { position: relative; }
+[data-tooltip]::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%); background: #1a1d2e; color: #fff; font-size: 11px; font-weight: 400; padding: 4px 8px; border-radius: 4px; white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 200; }
+[data-tooltip]:hover::after { opacity: 1; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) [data-tooltip]::after { background: #e8eaf0; color: #1a1d2e; } }
+:root[data-theme="dark"] [data-tooltip]::after { background: #e8eaf0; color: #1a1d2e; }
+
+/* ── Nav ── */
+.nav-btn { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 14px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; font-family: inherit; }
+.nav-btn:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.nav-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+
+/* ── Theme toggle ── */
+#themeBtn { font-size: 18px; min-width: 36px; cursor: pointer; border: 1px solid var(--border); background: var(--surface); border-radius: 6px; padding: 6px; display: inline-flex; align-items: center; justify-content: center; transition: all .15s; color: var(--text); }
+#themeBtn:hover { border-color: var(--primary); color: var(--primary); }
+
+/* ── Main ── */
+main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+@media(max-width: 768px) { main { padding: 16px; } .form-row { grid-template-columns: 1fr; } }
+
+/* ── Tabs ── */
+.tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--surface); border-radius: var(--radius); padding: 6px; box-shadow: var(--shadow); width: fit-content; border: var(--card-border); }
+.tab { padding: 8px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; text-decoration: none; color: var(--text-secondary); transition: all .15s; }
+.tab:hover { background: var(--primary-light); color: var(--primary); }
+.tab.active { background: var(--primary); color: #fff; }
+
+/* ── Cards ── */
+.card { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; border: var(--card-border); }
+.card-header { padding: 16px 20px; border-bottom: var(--card-border); display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.card-header h2 { font-size: 15px; font-weight: 600; }
+.card-body { padding: 20px; }
+
+/* ── Table ── */
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); }
+tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; word-break: break-word; overflow-wrap: break-word; }
+tbody tr:hover { background: var(--surface-alt); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* ── Badge ── */
+.badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-green { background: var(--green-bg); color: var(--green); }
+.badge-gray { background: var(--gray-bg); color: var(--gray); }
+.badge-blue { background: var(--primary-light); color: var(--primary); }
+.badge-purple { background: var(--purple-bg); color: var(--purple); }
+.badge-yellow { background: var(--yellow-bg); color: var(--yellow); }
+
+/* ── Buttons ── */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 6px 14px; border: none; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all .15s; white-space: nowrap; font-family: inherit; text-decoration: none; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-success { background: var(--green); color: #fff; }
+.btn-success:hover { background: #006644; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { background: #bf2600; }
+.btn-secondary { background: var(--gray-bg); color: var(--text); border: 1px solid var(--border); }
+.btn-secondary:hover { background: var(--border); }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+.btn-test { background: var(--purple-bg); color: var(--purple); border: 1px solid #c3bdf0; }
+.btn-test:hover { background: #ddd6fe; }
+
+/* ── Forms ── */
+.form-group { margin-bottom: 16px; }
+.form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text); }
 .form-group input, .form-group select, .form-group textarea {
-  width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:6px;
-  font-size:13px; font-family:inherit; outline:none; transition:border-color .15s,box-shadow .15s;
-  background:var(--surface); color:var(--text);
+  width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; font-family: inherit; outline: none; transition: border-color .15s, box-shadow .15s;
+  background: var(--surface); color: var(--text);
 }
-.form-group input:focus,.form-group select:focus,.form-group textarea:focus {
-  border-color:var(--primary); box-shadow:0 0 0 3px rgba(30,64,175,.1);
+.form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+  border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.15);
 }
-.form-group textarea { resize:vertical; min-height:120px; }
-.form-group .hint { font-size:11px; color:var(--text-secondary); margin-top:4px; }
-.form-row { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
-.form-actions { display:flex; gap:10px; margin-top:20px; padding-top:20px; border-top:1px solid var(--border); }
-.flash { padding:12px 16px; border-radius:var(--radius); margin-bottom:16px; font-size:13px; font-weight:500; display:flex; align-items:center; gap:8px; }
-.flash-ok { background:var(--green-bg); color:#15803d; border:1px solid #bbf7d0; }
-.flash-err { background:var(--red-bg); color:#b91c1c; border:1px solid #fecaca; }
-.provider-icon { width:24px; height:24px; border-radius:4px; display:inline-flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; flex-shrink:0; }
-.pi-alibaba { background:#ff6a00; color:#fff; }
-.pi-openai { background:#000; color:#fff; }
-.pi-anthropic { background:#d97706; color:#fff; }
-.pi-custom { background:#7c3aed; color:#fff; }
-.test-area { margin-top:24px; background:var(--surface-alt); border:1px solid var(--border); border-radius:var(--radius); padding:16px; }
-.test-area h3 { font-size:13px; font-weight:600; margin-bottom:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; }
-.test-input { display:flex; gap:8px; align-items:flex-start; }
-.test-input textarea { flex:1; min-height:80px; }
-.test-result { margin-top:12px; background:var(--surface); border:1px solid var(--border); border-radius:6px; padding:14px; font-size:13px; min-height:60px; white-space:pre-wrap; line-height:1.6; color:var(--text); }
-.test-result.loading { color:var(--text-secondary); font-style:italic; }
-.test-result.success { border-left:3px solid var(--green); }
-.test-result.error { border-left:3px solid var(--red); color:var(--red); }
-.test-meta { font-size:11px; color:var(--text-secondary); margin-top:8px; }
-.stats-row { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:24px; }
-.stat-card { background:var(--surface); border-radius:var(--radius); padding:16px; box-shadow:var(--shadow); text-align:center; }
-.stat-card .n { font-size:28px; font-weight:700; line-height:1.1; }
-.stat-card .l { font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; margin-top:4px; }
-.stat-card.blue { border-left:3px solid var(--blue); }
-.stat-card.blue .n { color:var(--blue); }
-.stat-card.green { border-left:3px solid var(--green); }
-.stat-card.green .n { color:var(--green); }
-.stat-card.purple { border-left:3px solid var(--purple); }
-.stat-card.purple .n { color:var(--purple); }
-.prompt-preview { font-family:'SF Mono','Fira Code',monospace; font-size:12px; background:var(--surface-alt); border:1px solid var(--border); border-radius:4px; padding:8px; max-height:80px; overflow:hidden; position:relative; cursor:pointer; color:var(--text); }
-.prompt-preview::after { content:''; position:absolute; bottom:0; left:0; right:0; height:24px; background:linear-gradient(transparent,var(--surface-alt)); }
-.key-display { font-family:'SF Mono','Fira Code',monospace; font-size:12px; color:var(--text-secondary); }
-.actions-cell { display:flex; gap:4px; flex-wrap:wrap; }
-@media(max-width:768px) { .form-row { grid-template-columns:1fr; } main { padding:16px; } }
+.form-group textarea { resize: vertical; min-height: 120px; }
+.form-group .hint { font-size: 11px; color: var(--text-secondary); margin-top: 4px; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.form-actions { display: flex; gap: 10px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* ── Flash ── */
+.flash { padding: 12px 16px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+.flash-ok { background: var(--green-bg); color: var(--green); border: 1px solid #abf5d1; }
+.flash-err { background: var(--red-bg); color: var(--red); border: 1px solid #ffbdad; }
+
+/* ── Provider icon (text initials) ── */
+.provider-icon { width: 28px; height: 28px; border-radius: 6px; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; flex-shrink: 0; color: #fff; letter-spacing: .3px; }
+.pi-alibaba { background: #ff6a00; }
+.pi-openai { background: #1a1d2e; }
+.pi-anthropic { background: #d97706; }
+.pi-custom { background: #6554c0; }
+
+/* ── Test area ── */
+.test-area { margin-top: 24px; background: var(--surface-alt); border: var(--card-border); border-radius: var(--radius); padding: 16px; }
+.test-area h3 { font-size: 13px; font-weight: 600; margin-bottom: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+.test-input { display: flex; gap: 8px; align-items: flex-start; }
+.test-input textarea { flex: 1; min-height: 80px; }
+.test-result { margin-top: 12px; background: var(--surface); border: var(--card-border); border-radius: 6px; padding: 14px; font-size: 13px; min-height: 60px; white-space: pre-wrap; line-height: 1.6; color: var(--text); }
+.test-result.loading { color: var(--text-secondary); font-style: italic; }
+.test-result.success { border-left: 3px solid var(--green); }
+.test-result.error { border-left: 3px solid var(--red); color: var(--red); }
+.test-meta { font-size: 11px; color: var(--text-secondary); margin-top: 8px; }
+
+/* ── Stats ── */
+.stats-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--surface); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); text-align: center; border: var(--card-border); }
+.stat-card .n { font-size: 28px; font-weight: 700; line-height: 1.1; }
+.stat-card .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; }
+.stat-card.blue { border-left: 3px solid var(--blue); }
+.stat-card.blue .n { color: var(--blue); }
+.stat-card.green { border-left: 3px solid var(--green); }
+.stat-card.green .n { color: var(--green); }
+.stat-card.purple { border-left: 3px solid var(--purple); }
+.stat-card.purple .n { color: var(--purple); }
+.stat-card.yellow { border-left: 3px solid var(--yellow); }
+.stat-card.yellow .n { color: var(--yellow); }
+
+/* ── Misc ── */
+.prompt-preview { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 4px; padding: 8px; max-height: 80px; overflow: hidden; position: relative; cursor: pointer; color: var(--text); }
+.prompt-preview::after { content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 24px; background: linear-gradient(transparent, var(--surface-alt)); }
+.key-display { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; color: var(--text-secondary); }
+.actions-cell { display: flex; gap: 4px; flex-wrap: wrap; }
+
+/* ── Responsive ── */
+@media(max-width: 1024px) {
+  main { padding: 20px; }
+  .stats-row { grid-template-columns: repeat(3, 1fr); }
+}
+@media(max-width: 768px) {
+  .form-row { grid-template-columns: 1fr; }
+  main { padding: 16px; }
+  header { padding: 12px 16px; }
+  .stats-row { grid-template-columns: repeat(2, 1fr); }
+  table { font-size: 12px; }
+  thead th, tbody td { padding: 8px 10px; }
+}
+@media(max-width: 480px) {
+  header { flex-direction: column; align-items: flex-start; }
+  header > div { width: 100%; flex-wrap: wrap; }
+  .stats-row { grid-template-columns: 1fr; }
+  .actions-cell { flex-direction: column; }
+  .nav-btn { font-size: 12px; padding: 5px 10px; }
+}
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
 <header>
-  <h1>🤖 База Сколково — ИИ Конфигурация</h1>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4c0 1.1-.9 2-2 2h-4a2 2 0 0 1-2-2 4 4 0 0 1 4-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="4"/><path d="M8 16h8"/><path d="M10 20h4"/></svg>
+    База Сколково — ИИ Конфигурация
+  </h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" class="nav-btn" title="Вернуться к документам">← Документы</a>
-    <a href="/clients" class="nav-btn" title="Управление клиентами резидентства">🏢 Клиенты</a>
-    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}" title="ИИ-модели: API-ключи, провайдеры, параметры">Модели</a>
-    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}" title="ИИ-агенты: промпты, типы, настройки">Агенты</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" class="nav-btn" style="font-size:16px;min-width:36px;cursor:pointer;border:none">🌙</button>
+    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+      Документы
+    </a>
+    <a href="/clients" class="nav-btn" data-tooltip="Управление клиентами резидентства">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+      Клиенты
+    </a>
+    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}" data-tooltip="ИИ-модели: API-ключи, провайдеры, параметры">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Модели
+    </a>
+    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}" data-tooltip="ИИ-агенты: промпты, типы, настройки">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      Агенты
+    </a>
+    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="font-size:16px;min-width:36px;cursor:pointer;border:1px solid var(--border);padding:6px">
+      <!-- sun icon (shown in dark) -->
+      <svg class="theme-icon-sun" style="display:none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      <!-- moon icon (shown in light) -->
+      <svg class="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
   </div>
 </header>
 <main>
@@ -186,80 +270,81 @@ tbody tr:last-child td { border-bottom:none; }
 </main>
 <script>
 function testModel(modelId) {
-  const msg = document.getElementById('test-msg-'+modelId).value.trim();
+  var msg = document.getElementById('test-msg-'+modelId).value.trim();
   if (!msg) { alert('Введите сообщение для теста'); return; }
-  const resultEl = document.getElementById('test-result-'+modelId);
-  const metaEl = document.getElementById('test-meta-'+modelId);
-  const btn = document.getElementById('test-btn-'+modelId);
-  resultEl.textContent = 'Отправляю запрос…';
+  var resultEl = document.getElementById('test-result-'+modelId);
+  var metaEl = document.getElementById('test-meta-'+modelId);
+  var btn = document.getElementById('test-btn-'+modelId);
+  resultEl.textContent = 'Отправляю запрос\u2026';
   resultEl.className = 'test-result loading';
   btn.disabled = true;
-  const t0 = Date.now();
+  var t0 = Date.now();
   fetch('/api/ai/models/'+modelId+'/test', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({message:msg})
-  }).then(r=>r.json()).then(d=>{
-    const ms = Date.now()-t0;
+  }).then(function(r){return r.json()}).then(function(d){
+    var ms = Date.now()-t0;
     if (d.error) {
-      resultEl.textContent = '❌ Ошибка: '+d.error;
+      resultEl.textContent = 'Ошибка: '+d.error;
       resultEl.className = 'test-result error';
       metaEl.textContent = '';
     } else {
       resultEl.textContent = d.answer;
       resultEl.className = 'test-result success';
-      metaEl.textContent = 'Время: '+ms+'мс · Токены: '+(d.tokens||'—');
+      metaEl.textContent = 'Время: '+ms+'мс \u00B7 Токены: '+(d.tokens||'\u2014');
     }
-  }).catch(e=>{
-    resultEl.textContent = '❌ '+e.message;
+  }).catch(function(e){
+    resultEl.textContent = 'Ошибка: '+e.message;
     resultEl.className = 'test-result error';
-  }).finally(()=>{ btn.disabled=false; });
+  }).finally(function(){ btn.disabled=false; });
 }
 function testAgent(agentId) {
-  const msg = document.getElementById('test-msg-agent-'+agentId).value.trim();
+  var msg = document.getElementById('test-msg-agent-'+agentId).value.trim();
   if (!msg) { alert('Введите сообщение для теста'); return; }
-  const resultEl = document.getElementById('test-result-agent-'+agentId);
-  const metaEl = document.getElementById('test-meta-agent-'+agentId);
-  const btn = document.getElementById('test-btn-agent-'+agentId);
-  resultEl.textContent = 'Запускаю агента…';
+  var resultEl = document.getElementById('test-result-agent-'+agentId);
+  var metaEl = document.getElementById('test-meta-agent-'+agentId);
+  var btn = document.getElementById('test-btn-agent-'+agentId);
+  resultEl.textContent = 'Запускаю агента\u2026';
   resultEl.className = 'test-result loading';
   btn.disabled = true;
-  const t0 = Date.now();
+  var t0 = Date.now();
   fetch('/api/ai/agents/'+agentId+'/test', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({message:msg})
-  }).then(r=>r.json()).then(d=>{
-    const ms = Date.now()-t0;
+  }).then(function(r){return r.json()}).then(function(d){
+    var ms = Date.now()-t0;
     if (d.error) {
-      resultEl.textContent = '❌ Ошибка: '+d.error;
+      resultEl.textContent = 'Ошибка: '+d.error;
       resultEl.className = 'test-result error';
       metaEl.textContent = '';
     } else {
       resultEl.textContent = d.answer;
       resultEl.className = 'test-result success';
-      metaEl.textContent = 'Время: '+ms+'мс · Токены: '+(d.tokens||'—')+' · Модель: '+(d.model||'—');
+      metaEl.textContent = 'Время: '+ms+'мс \u00B7 Токены: '+(d.tokens||'\u2014')+' \u00B7 Модель: '+(d.model||'\u2014');
     }
-  }).catch(e=>{
-    resultEl.textContent = '❌ '+e.message;
+  }).catch(function(e){
+    resultEl.textContent = 'Ошибка: '+e.message;
     resultEl.className = 'test-result error';
-  }).finally(()=>{ btn.disabled=false; });
+  }).finally(function(){ btn.disabled=false; });
 }
 function confirmDelete(url, name) {
-  if (confirm('Удалить «'+name+'»?')) {
-    fetch(url, {method:'POST'}).then(r=>{
+  if (confirm('Удалить \u00AB'+name+'\u00BB?')) {
+    fetch(url, {method:'POST'}).then(function(r){
       if (r.ok) location.reload(); else alert('Ошибка удаления');
     });
   }
 }
 function seedQwen() {
-  const key = document.getElementById('qwen-key').value.trim();
+  var key = document.getElementById('qwen-key').value.trim();
   if (!key) { alert('Введите API-ключ'); return; }
+  if (!confirm('Добавить все модели Qwen с этим ключом?')) return;
   fetch('/api/ai/models/seed-qwen', {
     method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({api_key:key})
-  }).then(r=>r.json()).then(d=>{
+  }).then(function(r){return r.json()}).then(function(d){
     if (d.error) alert('Ошибка: '+d.error);
     else { alert('Добавлено '+d.count+' моделей Qwen'); location.reload(); }
   });
@@ -270,14 +355,18 @@ function toggleTheme() {
   var next = cur === 'dark' ? 'light' : 'dark';
   r.setAttribute('data-theme', next);
   localStorage.setItem('theme', next);
-  var btn = document.getElementById('themeBtn');
-  if (btn) btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(next);
+}
+function updateThemeIcons(theme) {
+  var sun = document.querySelector('.theme-icon-sun');
+  var moon = document.querySelector('.theme-icon-moon');
+  if (!sun || !moon) return;
+  if (theme === 'dark') { sun.style.display=''; moon.style.display='none'; }
+  else { sun.style.display='none'; moon.style.display=''; }
 }
 document.addEventListener('DOMContentLoaded', function() {
-  var btn = document.getElementById('themeBtn');
-  if (!btn) return;
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-  btn.textContent = cur === 'dark' ? '☀️' : '🌙';
+  updateThemeIcons(cur);
 });
 </script>
 </body>
@@ -300,9 +389,9 @@ var aiModelsTmpl = template.Must(template.New("ai-models").Funcs(template.FuncMa
 		}
 		return k[:4] + strings.Repeat("*", len(k)-8) + k[len(k)-4:]
 	},
-	"providerLabel": func(p string) string { return aimodels.Provider(p).Label() },
+	"providerLabel":  func(p string) string { return aimodels.Provider(p).Label() },
 	"agentTypeLabel": func(t string) string { return aimodels.AgentType(t).Label() },
-	"formatTime": func(t time.Time) string { return t.Format("02.01.2006 15:04") },
+	"formatTime":     func(t time.Time) string { return t.Format("02.01.2006 15:04") },
 	"truncate": func(s string, n int) string {
 		r := []rune(s)
 		if len(r) <= n {
@@ -354,83 +443,140 @@ var aiModelsTmpl = template.Must(template.New("ai-models").Funcs(template.FuncMa
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ИИ Модели — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f0f2f5;--surface:#fff;--primary:#1e40af;--primary-hover:#1e3a8a;--primary-light:#eff6ff;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);--shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -2px rgba(0,0,0,.05);--green:#16a34a;--green-bg:#f0fdf4;--yellow:#ca8a04;--yellow-bg:#fefce8;--red:#dc2626;--red-bg:#fef2f2;--blue:#2563eb;--purple:#7c3aed;--purple-bg:#f5f3ff;--gray:#6b7280;--gray-bg:#f3f4f6}
-body{font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-header{background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%);color:#fff;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);position:sticky;top:0;z-index:100}
-header h1{font-size:18px;font-weight:600}
-.nav-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:7px 14px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s;text-decoration:none;display:inline-block}
-.nav-btn:hover{background:rgba(255,255,255,.25)}
-.nav-btn.active{background:rgba(255,255,255,.35);border-color:rgba(255,255,255,.5)}
+:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);--shadow-lg:0 8px 24px rgba(0,0,0,.08);--green:#00875a;--green-bg:#e3fcef;--yellow:#ff991f;--yellow-bg:#fff7e6;--red:#de350b;--red-bg:#ffeae6;--blue:#0073ea;--purple:#6554c0;--purple-bg:#eae6ff;--gray:#6b778c;--gray-bg:#f4f5f7;--header-bg:#fff;--card-border:1px solid #d5d9e2}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--shadow:0 1px 3px rgba(0,0,0,.3);--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--shadow:0 1px 3px rgba(0,0,0,.3);--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}
+body{font-family:'Figtree',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+
+/* Header */
+header{background:var(--header-bg);color:var(--text);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border-bottom:var(--card-border);box-shadow:var(--shadow);position:sticky;top:0;z-index:100}
+header h1{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+
+/* Tooltip */
+[data-tooltip]{position:relative}
+[data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
+[data-tooltip]:hover::after{opacity:1}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"])[data-tooltip]::after{background:#e8eaf0;color:#1a1d2e}}
+:root[data-theme="dark"][data-tooltip]::after{background:#e8eaf0;color:#1a1d2e}
+
+/* Nav */
+.nav-btn{background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-family:inherit}
+.nav-btn:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+.nav-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
 main{max-width:1400px;margin:0 auto;padding:24px 28px}
+@media(max-width:768px){main{padding:16px}}
+@media(max-width:480px){header{flex-direction:column;align-items:flex-start}.nav-btn{font-size:12px;padding:5px 10px}}
+
+/* Stats */
 .stats-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:24px}
-.stat-card{background:var(--surface);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);text-align:center}
+.stat-card{background:var(--surface);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);text-align:center;border:var(--card-border)}
 .stat-card .n{font-size:28px;font-weight:700;line-height:1.1}
 .stat-card .l{font-size:11px;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
 .stat-card.blue{border-left:3px solid var(--blue)}.stat-card.blue .n{color:var(--blue)}
 .stat-card.green{border-left:3px solid var(--green)}.stat-card.green .n{color:var(--green)}
 .stat-card.yellow{border-left:3px solid var(--yellow)}.stat-card.yellow .n{color:var(--yellow)}
-.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px}
-.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* Cards */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:20px;border:var(--card-border)}
+.card-header{padding:16px 20px;border-bottom:var(--card-border);display:flex;align-items:center;justify-content:space-between;gap:12px}
 .card-header h2{font-size:15px;font-weight:600}
 .card-body{padding:20px}
-table{width:100%;border-collapse:collapse}
-thead th{background:#f8fafc;padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}
-tbody td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle}
-tbody tr:hover{background:#f8fafc}
+
+/* Table */
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+thead th{background:var(--surface-alt);padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}
+tbody td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:middle;word-break:break-word;overflow-wrap:break-word}
+tbody tr:hover{background:var(--surface-alt)}
 tbody tr:last-child td{border-bottom:none}
+
+/* Badge */
 .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
 .badge-green{background:var(--green-bg);color:var(--green)}
 .badge-gray{background:var(--gray-bg);color:var(--gray)}
 .badge-blue{background:var(--primary-light);color:var(--primary)}
 .badge-purple{background:var(--purple-bg);color:var(--purple)}
 .badge-yellow{background:var(--yellow-bg);color:var(--yellow)}
+
+/* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:6px 14px;border:none;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit;text-decoration:none}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-.btn-success{background:var(--green);color:#fff}.btn-success:hover{background:#15803d}
-.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#b91c1c}
+.btn-success{background:var(--green);color:#fff}.btn-success:hover{background:#006644}
+.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#bf2600}
 .btn-secondary{background:var(--gray-bg);color:var(--text);border:1px solid var(--border)}.btn-secondary:hover{background:var(--border)}
-.btn-test{background:var(--purple-bg);color:var(--purple);border:1px solid #ddd6fe}.btn-test:hover{background:#ede9fe}
+.btn-test{background:var(--purple-bg);color:var(--purple);border:1px solid #c3bdf0}.btn-test:hover{background:#ddd6fe}
 .btn-sm{padding:4px 10px;font-size:11px}
 .actions-cell{display:flex;gap:4px;flex-wrap:wrap}
-.provider-icon{width:26px;height:26px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;flex-shrink:0;margin-right:4px}
-.pi-alibaba{background:#ff6a00;color:#fff}.pi-openai{background:#000;color:#fff}
-.pi-anthropic{background:#d97706;color:#fff}.pi-custom{background:#7c3aed;color:#fff}
+
+/* Provider icon */
+.provider-icon{width:28px;height:28px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;margin-right:4px;color:#fff;letter-spacing:.3px}
+.pi-alibaba{background:#ff6a00}.pi-openai{background:#1a1d2e}
+.pi-anthropic{background:#d97706}.pi-custom{background:#6554c0}
+
 .key-mono{font-family:'SF Mono','Fira Code',monospace;font-size:12px;color:var(--text-secondary)}
+
+/* Flash */
 .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
-.flash-ok{background:var(--green-bg);color:#15803d;border:1px solid #bbf7d0}
-.flash-err{background:var(--red-bg);color:#b91c1c;border:1px solid #fecaca}
-.test-panel{background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-top:12px}
+.flash-ok{background:var(--green-bg);color:var(--green);border:1px solid #abf5d1}
+.flash-err{background:var(--red-bg);color:var(--red);border:1px solid #ffbdad}
+
+/* Test panel */
+.test-panel{background:var(--surface-alt);border:var(--card-border);border-radius:var(--radius);padding:16px;margin-top:12px}
 .test-panel h4{font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
 .test-input{display:flex;gap:8px}
-.test-input input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none}
-.test-input input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,64,175,.1)}
-.test-result{margin-top:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;font-size:13px;min-height:50px;white-space:pre-wrap;line-height:1.6;display:none}
+.test-input input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;color:var(--text);background:var(--surface)}
+.test-input input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,115,234,.15)}
+.test-result{margin-top:10px;background:var(--surface);border:var(--card-border);border-radius:6px;padding:12px;font-size:13px;min-height:50px;white-space:pre-wrap;line-height:1.6;color:var(--text);display:none}
 .test-result.visible{display:block}
 .test-result.loading{color:var(--text-secondary);font-style:italic}
 .test-result.ok{border-left:3px solid var(--green)}
 .test-result.err{border-left:3px solid var(--red);color:var(--red)}
 .test-meta{font-size:11px;color:var(--text-secondary);margin-top:6px}
-.seed-box{background:linear-gradient(135deg,#fff7ed 0%,#fff 100%);border:1px solid #fed7aa;border-radius:var(--radius);padding:20px;margin-bottom:20px}
-.seed-box h3{font-size:14px;font-weight:600;color:#c2410c;margin-bottom:8px}
+
+/* Seed box */
+.seed-box{background:var(--surface-alt);border:var(--card-border);border-radius:var(--radius);padding:20px;margin-bottom:20px}
+.seed-box h3{font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px;display:flex;align-items:center;gap:8px}
 .seed-box p{font-size:13px;color:var(--text-secondary);margin-bottom:12px}
 .seed-input{display:flex;gap:8px}
-.seed-input input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none}
+.seed-input input{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;color:var(--text);background:var(--surface)}
+.seed-input input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,115,234,.15)}
+
 .model-name-cell{display:flex;align-items:center;gap:8px}
 .model-desc{font-size:11px;color:var(--text-secondary);margin-top:2px}
 tr.disabled-row td{opacity:.55}
+
+/* Responsive */
+@media(max-width:768px){.form-row{grid-template-columns:1fr}table{font-size:12px}thead th,tbody td{padding:8px 10px}}
+@media(max-width:480px){.stats-row{grid-template-columns:1fr}.actions-cell{flex-direction:column}}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
 <header>
-  <h1>🤖 ИИ Конфигурация</h1>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    ИИ Конфигурация
+  </h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn">← Документы</a>
-    <a href="/ai/models" class="nav-btn active">Модели</a>
-    <a href="/ai/agents" class="nav-btn">Агенты</a>
-    <a href="/ai/models/new" class="nav-btn" style="background:rgba(255,255,255,.3)">+ Добавить модель</a>
+    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+      Документы
+    </a>
+    <a href="/ai/models" class="nav-btn active" data-tooltip="Управление ИИ-моделями">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Модели
+    </a>
+    <a href="/ai/agents" class="nav-btn" data-tooltip="Управление ИИ-агентами">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
+      Агенты
+    </a>
+    <a href="/ai/models/new" class="btn btn-primary" data-tooltip="Добавить новую модель">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Добавить модель
+    </a>
   </div>
 </header>
 <main>
@@ -438,11 +584,14 @@ tr.disabled-row td{opacity:.55}
 
 {{if not .Models}}
 <div class="seed-box">
-  <h3>🚀 Быстрое подключение моделей Qwen (Alibaba Cloud)</h3>
+  <h3>
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+    Быстрое подключение моделей Qwen (Alibaba Cloud)
+  </h3>
   <p>Добавить все доступные модели Qwen автоматически — вставьте API-ключ от Alibaba Cloud Model Studio:</p>
   <div class="seed-input">
     <input type="password" id="qwen-key" placeholder="sk-..." autocomplete="off">
-    <button class="btn btn-success" onclick="seedQwen()">Импортировать Qwen модели</button>
+    <button class="btn btn-success" onclick="seedQwen()" data-tooltip="Импортировать модели Qwen">Импортировать Qwen модели</button>
   </div>
 </div>
 {{end}}
@@ -456,9 +605,13 @@ tr.disabled-row td{opacity:.55}
 <div class="card">
   <div class="card-header">
     <h2>Зарегистрированные модели</h2>
-    <a href="/ai/models/new" class="btn btn-primary">+ Добавить модель</a>
+    <a href="/ai/models/new" class="btn btn-primary" data-tooltip="Добавить новую модель">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Добавить модель
+    </a>
   </div>
   {{if .Models}}
+  <div style="overflow-x:auto">
   <table>
     <thead><tr>
       <th>Модель</th>
@@ -482,7 +635,7 @@ tr.disabled-row td{opacity:.55}
         </div>
       </td>
       <td><span class="badge {{badgeClass (string .Provider)}}">{{providerLabel (string .Provider)}}</span></td>
-      <td><code style="font-size:12px;background:#f3f4f6;padding:2px 6px;border-radius:4px">{{.ModelID}}</code></td>
+      <td><code style="font-size:12px;background:var(--surface-alt);padding:2px 6px;border-radius:4px">{{.ModelID}}</code></td>
       <td><span class="key-mono">{{maskKey .APIKey}}</span></td>
       <td style="font-size:12px">T={{.Temperature}} · {{.MaxTokens}}tok</td>
       <td>
@@ -490,16 +643,25 @@ tr.disabled-row td{opacity:.55}
       </td>
       <td>
         <div class="actions-cell">
-          <a href="/ai/models/{{.ID}}/edit" class="btn btn-secondary btn-sm">Изменить</a>
-          <button class="btn btn-test btn-sm" onclick="toggleTest('{{.ID}}')">Тест</button>
-          <button class="btn btn-danger btn-sm" onclick="confirmDelete('/api/ai/models/{{.ID}}/delete','{{.Name}}')">Удалить</button>
+          <a href="/ai/models/{{.ID}}/edit" class="btn btn-secondary btn-sm" data-tooltip="Редактировать модель">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Изменить
+          </a>
+          <button class="btn btn-test btn-sm" onclick="toggleTest('{{.ID}}')" data-tooltip="Протестировать модель">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Тест
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDelete('/api/ai/models/{{.ID}}/delete','{{.Name}}')" data-tooltip="Удалить модель">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Удалить
+          </button>
         </div>
         <div id="test-{{.ID}}" style="display:none">
           <div class="test-panel">
             <h4>Тест модели</h4>
             <div class="test-input">
               <input type="text" id="test-msg-{{.ID}}" placeholder="Введите тестовое сообщение…" onkeydown="if(event.key==='Enter')testModel('{{.ID}}')">
-              <button class="btn btn-test" id="test-btn-{{.ID}}" onclick="testModel('{{.ID}}')">Отправить</button>
+              <button class="btn btn-test" id="test-btn-{{.ID}}" onclick="testModel('{{.ID}}')" data-tooltip="Отправить запрос">Отправить</button>
             </div>
             <div id="test-result-{{.ID}}" class="test-result"></div>
             <div id="test-meta-{{.ID}}" class="test-meta"></div>
@@ -510,71 +672,73 @@ tr.disabled-row td{opacity:.55}
     {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div style="padding:40px;text-align:center;color:var(--text-secondary)">
-    <div style="font-size:48px;margin-bottom:12px">🤖</div>
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:12px;opacity:.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
     <div style="font-size:15px;font-weight:600;margin-bottom:8px">Модели не настроены</div>
     <div style="font-size:13px;margin-bottom:20px">Добавьте модели вручную или используйте быстрый импорт Qwen выше</div>
-    <a href="/ai/models/new" class="btn btn-primary">+ Добавить первую модель</a>
+    <a href="/ai/models/new" class="btn btn-primary">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Добавить первую модель
+    </a>
   </div>
   {{end}}
 </div>
 </main>
 <script>
 function toggleTest(id) {
-  const el = document.getElementById('test-'+id);
+  var el = document.getElementById('test-'+id);
   el.style.display = el.style.display === 'none' ? 'block' : 'none';
-  if (el.style.display === 'block') {
-    document.getElementById('test-msg-'+id).focus();
-  }
+  if (el.style.display === 'block') document.getElementById('test-msg-'+id).focus();
 }
 function testModel(id) {
-  const msg = document.getElementById('test-msg-'+id).value.trim();
+  var msg = document.getElementById('test-msg-'+id).value.trim();
   if (!msg) { alert('Введите сообщение'); return; }
-  const resultEl = document.getElementById('test-result-'+id);
-  const metaEl = document.getElementById('test-meta-'+id);
-  const btn = document.getElementById('test-btn-'+id);
-  resultEl.textContent = 'Отправляю запрос…';
+  var resultEl = document.getElementById('test-result-'+id);
+  var metaEl = document.getElementById('test-meta-'+id);
+  var btn = document.getElementById('test-btn-'+id);
+  resultEl.textContent = 'Отправляю запрос\u2026';
   resultEl.className = 'test-result visible loading';
   metaEl.textContent = '';
   btn.disabled = true;
-  const t0 = Date.now();
+  var t0 = Date.now();
   fetch('/api/ai/models/'+id+'/test', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({message:msg})
-  }).then(r=>r.json()).then(d=>{
-    const ms = Date.now()-t0;
+  }).then(function(r){return r.json()}).then(function(d){
+    var ms = Date.now()-t0;
     if (d.error) {
-      resultEl.textContent = '❌ '+d.error;
+      resultEl.textContent = 'Ошибка: '+d.error;
       resultEl.className = 'test-result visible err';
     } else {
       resultEl.textContent = d.answer;
       resultEl.className = 'test-result visible ok';
-      metaEl.textContent = 'Время: '+ms+'мс  Токены: '+(d.tokens||'—');
+      metaEl.textContent = 'Время: '+ms+'мс  Токены: '+(d.tokens||'\u2014');
     }
-  }).catch(e=>{
-    resultEl.textContent = '❌ '+e.message;
+  }).catch(function(e){
+    resultEl.textContent = 'Ошибка: '+e.message;
     resultEl.className = 'test-result visible err';
-  }).finally(()=>{ btn.disabled=false; });
+  }).finally(function(){ btn.disabled=false; });
 }
 function confirmDelete(url, name) {
-  if (!confirm('Удалить модель «'+name+'»?')) return;
-  fetch(url, {method:'POST'}).then(r=>{
-    if (r.redirected) { location.href = r.url; }
-    else if (r.ok) { location.reload(); }
-    else { r.text().then(t=>alert('Ошибка: '+t)); }
+  if (!confirm('Удалить модель \u00AB'+name+'\u00BB?')) return;
+  fetch(url, {method:'POST'}).then(function(r){
+    if (r.redirected) location.href=r.url;
+    else if (r.ok) location.reload();
+    else r.text().then(function(t){alert('Ошибка: '+t)});
   });
 }
 function seedQwen() {
-  const key = document.getElementById('qwen-key').value.trim();
+  var key = document.getElementById('qwen-key').value.trim();
   if (!key) { alert('Введите API-ключ'); return; }
   if (!confirm('Добавить все модели Qwen с этим ключом?')) return;
   fetch('/api/ai/models/seed-qwen', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({api_key:key})
-  }).then(r=>r.json()).then(d=>{
+  }).then(function(r){return r.json()}).then(function(d){
     if (d.error) alert('Ошибка: '+d.error);
-    else { alert('✅ Добавлено '+d.count+' моделей Qwen'); location.reload(); }
+    else { alert('Добавлено '+d.count+' моделей Qwen'); location.reload(); }
   });
 }
 </script>
@@ -597,39 +761,53 @@ var aiModelFormTmpl = template.Must(template.New("ai-model-form").Funcs(template
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{if .Model.ID}}Редактировать{{else}}Добавить{{end}} модель — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f0f2f5;--surface:#fff;--primary:#1e40af;--primary-hover:#1e3a8a;--primary-light:#eff6ff;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.08)}
-body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-header{background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%);color:#fff;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,.15)}
-header h1{font-size:18px;font-weight:600}
-.nav-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:7px 14px;font-size:13px;text-decoration:none;display:inline-block}
-.nav-btn:hover{background:rgba(255,255,255,.25)}
+:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06);--card-border:1px solid #d5d9e2}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56}
+body{font-family:'Figtree',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+header{background:var(--surface);color:var(--text);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow);border-bottom:var(--card-border)}
+header h1{font-size:17px;font-weight:700}
+.nav-btn{background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all .15s}
+.nav-btn:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
 main{max-width:800px;margin:32px auto;padding:0 28px}
-.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-.card-header{padding:20px 24px;border-bottom:1px solid var(--border)}.card-header h2{font-size:16px;font-weight:600}
+@media(max-width:768px){main{margin:16px auto;padding:0 16px}}
+@media(max-width:480px){header{flex-direction:column;align-items:flex-start}}
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;border:var(--card-border)}
+.card-header{padding:20px 24px;border-bottom:var(--card-border)}.card-header h2{font-size:16px;font-weight:600}
 .card-body{padding:24px}
 .form-group{margin-bottom:18px}
 .form-group label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
-.form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s}
-.form-group input:focus,.form-group select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,64,175,.1)}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s;color:var(--text);background:var(--surface)}
+.form-group input:focus,.form-group select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,115,234,.15)}
 .form-group .hint{font-size:11px;color:var(--text-secondary);margin-top:4px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:768px){.form-row{grid-template-columns:1fr}}
 .form-actions{display:flex;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .btn{display:inline-flex;align-items:center;padding:8px 18px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;text-decoration:none}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-.btn-secondary{background:#f3f4f6;color:var(--text);border:1px solid var(--border)}
+.btn-secondary{background:var(--surface-alt,#f4f5f7);color:var(--text);border:1px solid var(--border)}
 .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;font-weight:500}
-.flash-err{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
+.flash-err{background:#ffeae6;color:#de350b;border:1px solid #ffbdad}
 .toggle-wrap{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer}
 .toggle-wrap label{cursor:pointer;font-size:13px;font-weight:500}
+[data-tooltip]{position:relative}
+[data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
+[data-tooltip]:hover::after{opacity:1}
 </style>
 </head>
 <body>
 <header>
-  <h1>{{if .Model.ID}}Редактировать модель{{else}}Добавить ИИ-модель{{end}}</h1>
-  <a href="/ai/models" class="nav-btn">← Назад</a>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    {{if .Model.ID}}Редактировать модель{{else}}Добавить ИИ-модель{{end}}
+  </h1>
+  <a href="/ai/models" class="nav-btn" data-tooltip="Вернуться к списку моделей">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+    Назад
+  </a>
 </header>
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
@@ -695,15 +873,15 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
 </div>
 </main>
 <script>
-const defaultURLs = {
+var defaultURLs = {
   alibabacloud: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
   openai: 'https://api.openai.com/v1',
   anthropic: '',
   custom: ''
 };
 function updateBaseURL(provider) {
-  const urlInput = document.getElementById('base-url');
-  if (!urlInput.value || Object.values(defaultURLs).includes(urlInput.value)) {
+  var urlInput = document.getElementById('base-url');
+  if (!urlInput.value || Object.values(defaultURLs).indexOf(urlInput.value) !== -1) {
     urlInput.value = defaultURLs[provider] || '';
   }
 }
@@ -744,45 +922,77 @@ var aiAgentsTmpl = template.Must(template.New("ai-agents").Funcs(template.FuncMa
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ИИ Агенты — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f0f2f5;--surface:#fff;--primary:#1e40af;--primary-hover:#1e3a8a;--primary-light:#eff6ff;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.08),0 1px 2px rgba(0,0,0,.06);--shadow-lg:0 10px 15px -3px rgba(0,0,0,.1);--green:#16a34a;--green-bg:#f0fdf4;--yellow:#ca8a04;--yellow-bg:#fefce8;--red:#dc2626;--red-bg:#fef2f2;--blue:#2563eb;--purple:#7c3aed;--purple-bg:#f5f3ff;--gray:#6b7280;--gray-bg:#f3f4f6}
-body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-header{background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%);color:#fff;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);position:sticky;top:0;z-index:100}
-header h1{font-size:18px;font-weight:600}
-.nav-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:7px 14px;font-size:13px;text-decoration:none;display:inline-block}.nav-btn:hover{background:rgba(255,255,255,.25)}.nav-btn.active{background:rgba(255,255,255,.35)}
+:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);--green:#00875a;--green-bg:#e3fcef;--yellow:#ff991f;--yellow-bg:#fff7e6;--red:#de350b;--red-bg:#ffeae6;--blue:#0073ea;--purple:#6554c0;--purple-bg:#eae6ff;--gray:#6b778c;--gray-bg:#f4f5f7;--card-border:1px solid #d5d9e2}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}
+body{font-family:'Figtree',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+
+/* Header */
+header{background:var(--surface);color:var(--text);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;border-bottom:var(--card-border);box-shadow:var(--shadow);position:sticky;top:0;z-index:100}
+header h1{font-size:17px;font-weight:700;display:flex;align-items:center;gap:8px}
+
+/* Tooltip */
+[data-tooltip]{position:relative}
+[data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
+[data-tooltip]:hover::after{opacity:1}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"])[data-tooltip]::after{background:#e8eaf0;color:#1a1d2e}}
+:root[data-theme="dark"][data-tooltip]::after{background:#e8eaf0;color:#1a1d2e}
+
+/* Nav */
+.nav-btn{background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all .15s;cursor:pointer}
+.nav-btn:hover{background:var(--primary-light);color:var(--primary);border-color:var(--primary)}
+.nav-btn.active{background:var(--primary);color:#fff;border-color:var(--primary)}
+
 main{max-width:1400px;margin:0 auto;padding:24px 28px}
-.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:24px}
-.card-header{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px}
+@media(max-width:768px){main{padding:16px}}
+@media(max-width:480px){header{flex-direction:column;align-items:flex-start}.nav-btn{font-size:12px;padding:5px 10px}}
+
+/* Card */
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:24px;border:var(--card-border)}
+.card-header{padding:16px 20px;border-bottom:var(--card-border);display:flex;align-items:center;justify-content:space-between;gap:12px}
 .card-header h2{font-size:15px;font-weight:600}
-table{width:100%;border-collapse:collapse}
-thead th{background:#f8fafc;padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}
-tbody td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top}
-tbody tr:hover{background:#f8fafc}
+
+/* Table */
+table{width:100%;border-collapse:collapse;table-layout:fixed}
+thead th{background:var(--surface-alt,#f4f5f7);padding:10px 14px;text-align:left;font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;border-bottom:2px solid var(--border)}
+tbody td{padding:12px 14px;border-bottom:1px solid var(--border);font-size:13px;vertical-align:top;word-break:break-word;overflow-wrap:break-word}
+tbody tr:hover{background:var(--surface-alt,#f4f5f7)}
 tbody tr:last-child td{border-bottom:none}
+
+/* Badge */
 .badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
 .badge-green{background:var(--green-bg);color:var(--green)}.badge-gray{background:var(--gray-bg);color:var(--gray)}
 .badge-blue{background:var(--primary-light);color:var(--primary)}.badge-purple{background:var(--purple-bg);color:var(--purple)}
 .badge-yellow{background:var(--yellow-bg);color:var(--yellow)}
+
+/* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;padding:6px 14px;border:none;border-radius:6px;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s;white-space:nowrap;font-family:inherit;text-decoration:none}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#b91c1c}
+.btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#bf2600}
 .btn-secondary{background:var(--gray-bg);color:var(--text);border:1px solid var(--border)}.btn-secondary:hover{background:var(--border)}
-.btn-test{background:var(--purple-bg);color:var(--purple);border:1px solid #ddd6fe}.btn-test:hover{background:#ede9fe}
+.btn-test{background:var(--purple-bg);color:var(--purple);border:1px solid #c3bdf0}.btn-test:hover{background:#ddd6fe}
 .btn-sm{padding:4px 10px;font-size:11px}
 .actions-cell{display:flex;gap:4px;flex-wrap:wrap}
-.prompt-box{font-family:'SF Mono','Fira Code',monospace;font-size:11px;background:#f8fafc;border:1px solid var(--border);border-radius:4px;padding:6px 8px;max-height:60px;overflow:hidden;position:relative;color:var(--text-secondary)}
-.prompt-box::after{content:'';position:absolute;bottom:0;left:0;right:0;height:20px;background:linear-gradient(transparent,#f8fafc)}
+
+/* Prompt */
+.prompt-box{font-family:'SF Mono','Fira Code',monospace;font-size:11px;background:var(--surface-alt,#f4f5f7);border:1px solid var(--border);border-radius:4px;padding:6px 8px;max-height:60px;overflow:hidden;position:relative;color:var(--text-secondary)}
+.prompt-box::after{content:'';position:absolute;bottom:0;left:0;right:0;height:20px;background:linear-gradient(transparent,var(--surface-alt,#f4f5f7))}
+
+/* Flash */
 .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;font-weight:500;display:flex;align-items:center;gap:8px}
-.flash-ok{background:var(--green-bg);color:#15803d;border:1px solid #bbf7d0}
-.flash-err{background:var(--red-bg);color:#b91c1c;border:1px solid #fecaca}
-.test-panel{background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius);padding:14px;margin-top:10px}
+.flash-ok{background:var(--green-bg);color:var(--green);border:1px solid #abf5d1}
+.flash-err{background:var(--red-bg);color:var(--red);border:1px solid #ffbdad}
+
+/* Test */
+.test-panel{background:var(--surface-alt,#f4f5f7);border:var(--card-border);border-radius:var(--radius);padding:14px;margin-top:10px}
 .test-panel h4{font-size:11px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
 .test-input{display:flex;gap:8px}
-.test-input textarea{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;outline:none;min-height:60px;resize:vertical}
-.test-input textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,64,175,.1)}
-.test-result{margin-top:10px;background:#fff;border:1px solid var(--border);border-radius:6px;padding:12px;font-size:13px;min-height:50px;white-space:pre-wrap;line-height:1.6;display:none}
+.test-input textarea{flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:12px;font-family:inherit;outline:none;min-height:60px;resize:vertical;color:var(--text);background:var(--surface)}
+.test-input textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,115,234,.15)}
+.test-result{margin-top:10px;background:var(--surface);border:var(--card-border);border-radius:6px;padding:12px;font-size:13px;min-height:50px;white-space:pre-wrap;line-height:1.6;color:var(--text);display:none}
 .test-result.visible{display:block}
 .test-result.loading{color:var(--text-secondary);font-style:italic}
 .test-result.ok{border-left:3px solid var(--green)}
@@ -790,15 +1000,31 @@ tbody tr:last-child td{border-bottom:none}
 .test-meta{font-size:11px;color:var(--text-secondary);margin-top:6px}
 tr.disabled-row td{opacity:.55}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
 <header>
-  <h1>🤖 ИИ Конфигурация</h1>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
+    ИИ Конфигурация
+  </h1>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn">← Документы</a>
-    <a href="/ai/models" class="nav-btn">Модели</a>
-    <a href="/ai/agents" class="nav-btn active">Агенты</a>
-    <a href="/ai/agents/new" class="nav-btn" style="background:rgba(255,255,255,.3)">+ Добавить агента</a>
+    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+      Документы
+    </a>
+    <a href="/ai/models" class="nav-btn" data-tooltip="Управление ИИ-моделями">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      Модели
+    </a>
+    <a href="/ai/agents" class="nav-btn active" data-tooltip="Управление ИИ-агентами">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
+      Агенты
+    </a>
+    <a href="/ai/agents/new" class="btn btn-primary" data-tooltip="Создать нового агента">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Добавить агента
+    </a>
   </div>
 </header>
 <main>
@@ -806,9 +1032,13 @@ tr.disabled-row td{opacity:.55}
 <div class="card">
   <div class="card-header">
     <h2>Настроенные агенты</h2>
-    <a href="/ai/agents/new" class="btn btn-primary">+ Добавить агента</a>
+    <a href="/ai/agents/new" class="btn btn-primary" data-tooltip="Создать нового агента">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Добавить агента
+    </a>
   </div>
   {{if .Agents}}
+  <div style="overflow-x:auto">
   <table>
     <thead><tr>
       <th>Агент</th>
@@ -841,16 +1071,25 @@ tr.disabled-row td{opacity:.55}
       <td>{{if .Agent.Enabled}}<span class="badge badge-green">Активен</span>{{else}}<span class="badge badge-gray">Отключён</span>{{end}}</td>
       <td>
         <div class="actions-cell">
-          <a href="/ai/agents/{{.Agent.ID}}/edit" class="btn btn-secondary btn-sm">Изменить</a>
-          <button class="btn btn-test btn-sm" onclick="toggleAgentTest('{{.Agent.ID}}')">Тест</button>
-          <button class="btn btn-danger btn-sm" onclick="confirmDeleteAgent('/api/ai/agents/{{.Agent.ID}}/delete','{{.Agent.Name}}')">Удалить</button>
+          <a href="/ai/agents/{{.Agent.ID}}/edit" class="btn btn-secondary btn-sm" data-tooltip="Редактировать агента">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            Изменить
+          </a>
+          <button class="btn btn-test btn-sm" onclick="toggleAgentTest('{{.Agent.ID}}')" data-tooltip="Протестировать агента">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Тест
+          </button>
+          <button class="btn btn-danger btn-sm" onclick="confirmDeleteAgent('/api/ai/agents/{{.Agent.ID}}/delete','{{.Agent.Name}}')" data-tooltip="Удалить агента">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Удалить
+          </button>
         </div>
         <div id="agent-test-{{.Agent.ID}}" style="display:none">
           <div class="test-panel">
             <h4>Тест агента</h4>
             <div class="test-input">
               <textarea id="test-msg-agent-{{.Agent.ID}}" placeholder="Введите тестовый запрос к агенту…"></textarea>
-              <button class="btn btn-test" id="test-btn-agent-{{.Agent.ID}}" onclick="testAgent('{{.Agent.ID}}')">Запустить</button>
+              <button class="btn btn-test" id="test-btn-agent-{{.Agent.ID}}" onclick="testAgent('{{.Agent.ID}}')" data-tooltip="Запустить агента">Запустить</button>
             </div>
             <div id="test-result-agent-{{.Agent.ID}}" class="test-result"></div>
             <div id="test-meta-agent-{{.Agent.ID}}" class="test-meta"></div>
@@ -861,57 +1100,61 @@ tr.disabled-row td{opacity:.55}
     {{end}}
     </tbody>
   </table>
+  </div>
   {{else}}
   <div style="padding:40px;text-align:center;color:var(--text-secondary)">
-    <div style="font-size:48px;margin-bottom:12px">🧑‍💼</div>
+    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom:12px;opacity:.5"><circle cx="12" cy="8" r="4"/><path d="M6 20v-2a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v2"/></svg>
     <div style="font-size:15px;font-weight:600;margin-bottom:8px">Агенты не настроены</div>
     <div style="font-size:13px;margin-bottom:20px">Создайте первого агента — выберите модель и задайте системный промпт</div>
-    <a href="/ai/agents/new" class="btn btn-primary">+ Создать агента</a>
+    <a href="/ai/agents/new" class="btn btn-primary">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Создать агента
+    </a>
   </div>
   {{end}}
 </div>
 </main>
 <script>
 function toggleAgentTest(id) {
-  const el = document.getElementById('agent-test-'+id);
+  var el = document.getElementById('agent-test-'+id);
   el.style.display = el.style.display==='none' ? 'block' : 'none';
   if (el.style.display==='block') document.getElementById('test-msg-agent-'+id).focus();
 }
 function testAgent(id) {
-  const msg = document.getElementById('test-msg-agent-'+id).value.trim();
+  var msg = document.getElementById('test-msg-agent-'+id).value.trim();
   if (!msg) { alert('Введите запрос'); return; }
-  const resultEl = document.getElementById('test-result-agent-'+id);
-  const metaEl = document.getElementById('test-meta-agent-'+id);
-  const btn = document.getElementById('test-btn-agent-'+id);
-  resultEl.textContent = 'Запускаю агента…';
+  var resultEl = document.getElementById('test-result-agent-'+id);
+  var metaEl = document.getElementById('test-meta-agent-'+id);
+  var btn = document.getElementById('test-btn-agent-'+id);
+  resultEl.textContent = 'Запускаю агента\u2026';
   resultEl.className = 'test-result visible loading';
   metaEl.textContent = '';
   btn.disabled = true;
-  const t0 = Date.now();
+  var t0 = Date.now();
   fetch('/api/ai/agents/'+id+'/test', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body:JSON.stringify({message:msg})
-  }).then(r=>r.json()).then(d=>{
-    const ms = Date.now()-t0;
+  }).then(function(r){return r.json()}).then(function(d){
+    var ms = Date.now()-t0;
     if (d.error) {
-      resultEl.textContent = '❌ '+d.error;
+      resultEl.textContent = 'Ошибка: '+d.error;
       resultEl.className = 'test-result visible err';
     } else {
       resultEl.textContent = d.answer;
       resultEl.className = 'test-result visible ok';
-      metaEl.textContent = 'Время: '+ms+'мс  Токены: '+(d.tokens||'—')+'  Модель: '+(d.model||'—');
+      metaEl.textContent = 'Время: '+ms+'мс  Токены: '+(d.tokens||'\u2014')+'  Модель: '+(d.model||'\u2014');
     }
-  }).catch(e=>{
-    resultEl.textContent = '❌ '+e.message;
+  }).catch(function(e){
+    resultEl.textContent = 'Ошибка: '+e.message;
     resultEl.className = 'test-result visible err';
-  }).finally(()=>{ btn.disabled=false; });
+  }).finally(function(){ btn.disabled=false; });
 }
 function confirmDeleteAgent(url, name) {
-  if (!confirm('Удалить агента «'+name+'»?')) return;
-  fetch(url, {method:'POST'}).then(r=>{
+  if (!confirm('Удалить агента \u00AB'+name+'\u00BB?')) return;
+  fetch(url, {method:'POST'}).then(function(r){
     if (r.redirected) location.href=r.url;
     else if (r.ok) location.reload();
-    else r.text().then(t=>alert('Ошибка: '+t));
+    else r.text().then(function(t){alert('Ошибка: '+t)});
   });
 }
 </script>
@@ -934,42 +1177,57 @@ var aiAgentFormTmpl = template.Must(template.New("ai-agent-form").Funcs(template
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{if .Agent.ID}}Редактировать{{else}}Добавить{{end}} агента — База Сколково</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f0f2f5;--surface:#fff;--primary:#1e40af;--primary-hover:#1e3a8a;--text:#1e293b;--text-secondary:#64748b;--border:#e2e8f0;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.08);--red:#dc2626;--red-bg:#fef2f2}
-body{font-family:'Inter',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
-header{background:linear-gradient(135deg,var(--primary) 0%,#3b82f6 100%);color:#fff;padding:16px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,.15)}
-header h1{font-size:18px;font-weight:600}
-.nav-btn{background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;padding:7px 14px;font-size:13px;text-decoration:none;display:inline-block}.nav-btn:hover{background:rgba(255,255,255,.25)}
+:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06);--red:#de350b;--red-bg:#ffeae6;--card-border:1px solid #d5d9e2;--surface-alt:#f4f5f7}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--red:#ff5630;--red-bg:#3a1510;--card-border:1px solid #3a3f56;--surface-alt:#2a2f45}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--red:#ff5630;--red-bg:#3a1510;--card-border:1px solid #3a3f56;--surface-alt:#2a2f45}
+body{font-family:'Figtree',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
+header{background:var(--surface);color:var(--text);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow);border-bottom:var(--card-border)}
+header h1{font-size:17px;font-weight:700}
+.nav-btn{background:transparent;color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:13px;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-family:inherit;transition:all .15s}
+.nav-btn:hover{background:var(--primary-light,#e6f0fa);color:var(--primary);border-color:var(--primary)}
 main{max-width:900px;margin:32px auto;padding:0 28px}
-.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden}
-.card-header{padding:20px 24px;border-bottom:1px solid var(--border)}.card-header h2{font-size:16px;font-weight:600}
+@media(max-width:768px){main{margin:16px auto;padding:0 16px}}
+@media(max-width:480px){header{flex-direction:column;align-items:flex-start}}
+.card{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;border:var(--card-border)}
+.card-header{padding:20px 24px;border-bottom:var(--card-border)}.card-header h2{font-size:16px;font-weight:600}
 .card-body{padding:24px}
 .form-group{margin-bottom:18px}
 .form-group label{display:block;font-size:13px;font-weight:500;margin-bottom:6px}
-.form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s}
-.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(30,64,175,.1)}
+.form-group input,.form-group select,.form-group textarea{width:100%;padding:9px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;font-family:inherit;outline:none;transition:border-color .15s;color:var(--text);background:var(--surface)}
+.form-group input:focus,.form-group select:focus,.form-group textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(0,115,234,.15)}
 .form-group textarea{resize:vertical;min-height:200px}
 .form-group .hint{font-size:11px;color:var(--text-secondary);margin-top:4px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:768px){.form-row{grid-template-columns:1fr}}
 .form-actions{display:flex;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .btn{display:inline-flex;align-items:center;padding:8px 18px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;font-family:inherit;text-decoration:none;transition:all .15s}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-.btn-secondary{background:#f3f4f6;color:var(--text);border:1px solid var(--border)}
+.btn-secondary{background:var(--surface-alt);color:var(--text);border:1px solid var(--border)}
 .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;font-weight:500}
-.flash-err{background:var(--red-bg);color:#b91c1c;border:1px solid #fecaca}
+.flash-err{background:var(--red-bg);color:var(--red);border:1px solid #ffbdad}
 .toggle-wrap{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer}
-.prompt-defaults{background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
+.prompt-defaults{background:var(--surface-alt);border:1px solid var(--border);border-radius:6px;padding:16px;margin-bottom:12px}
 .prompt-defaults h4{font-size:12px;font-weight:600;color:var(--text-secondary);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
-.preset-btn{display:inline-block;padding:5px 12px;border:1px solid var(--border);border-radius:4px;font-size:12px;cursor:pointer;margin:4px;background:#fff;transition:all .15s}
+.preset-btn{display:inline-block;padding:5px 12px;border:1px solid var(--border);border-radius:4px;font-size:12px;cursor:pointer;margin:4px;background:var(--surface);transition:all .15s;color:var(--text);font-family:inherit}
 .preset-btn:hover{background:var(--primary);color:#fff;border-color:var(--primary)}
+[data-tooltip]{position:relative}
+[data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
+[data-tooltip]:hover::after{opacity:1}
 </style>
 </head>
 <body>
 <header>
-  <h1>{{if .Agent.ID}}Редактировать агента{{else}}Добавить ИИ-агента{{end}}</h1>
-  <a href="/ai/agents" class="nav-btn">← Назад</a>
+  <h1>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
+    {{if .Agent.ID}}Редактировать агента{{else}}Добавить ИИ-агента{{end}}
+  </h1>
+  <a href="/ai/agents" class="nav-btn" data-tooltip="Вернуться к списку агентов">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
+    Назад
+  </a>
 </header>
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
@@ -1012,7 +1270,7 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
           <button type="button" class="preset-btn" onclick="loadDefaultPrompt('coordinator')">Координатор</button>
         </div>
         <textarea name="system_prompt" id="system-prompt" placeholder="Системный промпт агента…">{{.Agent.SystemPrompt}}</textarea>
-        <div class="hint">Инструкции для агента. Определяет его поведение и специализацию.</div>
+        <div class="hint">Инструкции для агента. Определяют его поведение и специализацию.</div>
       </div>
       <div class="form-row">
         <div class="form-group">
@@ -1042,9 +1300,9 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
 </div>
 </main>
 <script>
-const defaultPrompts = {{.DefaultPromptsJSON}};
+var defaultPrompts = {{.DefaultPromptsJSON}};
 function loadDefaultPrompt(type) {
-  const p = defaultPrompts[type];
+  var p = defaultPrompts[type];
   if (p) document.getElementById('system-prompt').value = p;
 }
 </script>
@@ -1588,4 +1846,3 @@ func parseAgentForm(r *http.Request) (aimodels.Agent, string) {
 func writeJSON(w http.ResponseWriter, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
-

@@ -16,11 +16,13 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"baza-skolkovo/src/aimodels"
 	"baza-skolkovo/src/analytics"
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/collector"
 	"baza-skolkovo/src/common/extract"
 	"baza-skolkovo/src/common/model"
@@ -34,6 +36,7 @@ import (
 type Server struct {
 	store       store.Store
 	linkStore   store.DocumentLinkStore
+	changeStore changes.Store
 	rag         *rag.Service
 	schedStore  *scheduler.Store
 	reportStore *scheduler.ReportStore
@@ -71,6 +74,12 @@ func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 // WithLinkStore устанавливает хранилище связей документов.
 func (s *Server) WithLinkStore(ls store.DocumentLinkStore) *Server {
 	s.linkStore = ls
+	return s
+}
+
+// WithChangeStore устанавливает хранилище ленты изменений.
+func (s *Server) WithChangeStore(cs changes.Store) *Server {
+	s.changeStore = cs
 	return s
 }
 
@@ -181,6 +190,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /api/graph/{document_id}", s.requireAuthJSON(s.handleAPIGraphDoc))
 	mux.HandleFunc("POST /api/graph", s.requireAuthJSON(s.handleAPIGraphCreateLink))
 	mux.HandleFunc("DELETE /api/graph/{link_id}", s.requireAuthJSON(s.handleAPIGraphDeleteLink))
+
+	// Лента изменений (история обновлений)
+	mux.HandleFunc("GET /changes", s.requireAuth(s.handleChangesPage))
+	mux.HandleFunc("GET /api/changes", s.requireAuthJSON(s.handleAPIChanges))
 
 	// ИИ Конфигурация — модели и агенты
 	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))
@@ -1692,4 +1705,158 @@ func truncate(s string, n int) string {
 func graphToJSON(g graphData) string {
 	data, _ := json.Marshal(g)
 	return string(data)
+}
+
+// ===========================================================================
+// Лента изменений (история обновлений базы)
+// ===========================================================================
+
+type changesPageData struct {
+	Events     []changes.Event
+	Flash      string
+	FlashKind  string
+	Query      string
+	EntityType string
+	Category   string
+	DateFrom   string
+	DateTo     string
+	Stats      changesStats
+}
+
+type changesStats struct {
+	Total     int
+	New       int
+	Updated   int
+	Outdated  int
+	Removed   int
+	LastParse time.Time
+}
+
+// handleChangesPage показывает HTML-страницу истории изменений.
+func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	entityType := r.URL.Query().Get("entity_type")
+	category := r.URL.Query().Get("category")
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+
+	// Период по умолчанию: последние 30 дней
+	since := time.Now().AddDate(0, 0, -30)
+	if dateFrom != "" {
+		if t, err := time.Parse("2006-01-02", dateFrom); err == nil {
+			since = t
+		}
+	}
+
+	filter := changes.Filter{
+		Since:      since,
+		EntityType: entityType,
+		Category:   category,
+		Limit:      500,
+	}
+
+	events, err := s.changeStore.Recent(r.Context(), filter)
+	if err != nil && s.changeStore != nil {
+		log.Printf("[admin/changes] ошибка загрузки: %v", err)
+		events = nil
+	}
+
+	// Фильтрация по поиску на стороне Go (для заголовков)
+	if query != "" && len(events) > 0 {
+		filtered := make([]changes.Event, 0, len(events))
+		qLower := strings.ToLower(query)
+		for _, ev := range events {
+			if strings.Contains(strings.ToLower(ev.Title), qLower) ||
+				strings.Contains(strings.ToLower(ev.Summary), qLower) ||
+				strings.Contains(strings.ToLower(ev.EntityID), qLower) {
+				filtered = append(filtered, ev)
+			}
+		}
+		events = filtered
+	}
+
+	// Ограничение по date_to
+	if dateTo != "" {
+		if t, err := time.Parse("2006-01-02 15:04", dateTo+" 23:59"); err == nil {
+			filtered := make([]changes.Event, 0, len(events))
+			for _, ev := range events {
+				if !ev.DetectedAt.After(t) {
+					filtered = append(filtered, ev)
+				}
+			}
+			events = filtered
+		}
+	}
+
+	// Статистика
+	var st changesStats
+	st.Total = len(events)
+	for _, ev := range events {
+		switch ev.Kind {
+		case changes.KindNew:
+			st.New++
+		case changes.KindUpdated:
+			st.Updated++
+		case changes.KindOutdated:
+			st.Outdated++
+		case changes.KindRemoved:
+			st.Removed++
+		}
+	}
+
+	// Время последнего парсинга — берём из отчётов коллектора
+	if reports, err := s.reportStore.GetReports(1); err == nil && len(reports) > 0 {
+		st.LastParse = reports[0].StartedAt
+	}
+
+	data := changesPageData{
+		Events:     events,
+		Query:      query,
+		EntityType: entityType,
+		Category:   category,
+		DateFrom:   dateFrom,
+		DateTo:     dateTo,
+		Stats:      st,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "changes-layout", data); err != nil {
+		log.Println("[admin] changes шаблон:", err)
+	}
+}
+
+// handleAPIChanges отдаёт ленту изменений в JSON.
+func (s *Server) handleAPIChanges(w http.ResponseWriter, r *http.Request) {
+	if s.changeStore == nil {
+		jsonResp(w, false, "", "Хранилище изменений не подключено")
+		return
+	}
+
+	sinceDays := 30
+	if v := r.URL.Query().Get("since_days"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			sinceDays = n
+		}
+	}
+
+	since := time.Now().AddDate(0, 0, -sinceDays)
+	filter := changes.Filter{
+		Since:      since,
+		EntityType: r.URL.Query().Get("entity_type"),
+		Category:   r.URL.Query().Get("category"),
+		Limit:      200,
+	}
+
+	events, err := s.changeStore.Recent(r.Context(), filter)
+	if err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"events": events,
+		"count":  len(events),
+	})
 }

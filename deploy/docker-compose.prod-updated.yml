@@ -1,0 +1,92 @@
+name: baza-skolkovo
+
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  tei:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.7
+    restart: unless-stopped
+    command: ["--model-id", "intfloat/multilingual-e5-base"]
+    environment:
+      HF_ENDPOINT: https://huggingface.co
+    ports:
+      - "8081:80"
+    volumes:
+      - tei_data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: skolkovo
+      POSTGRES_PASSWORD: skolkovo
+      POSTGRES_DB: skolkovo
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+  skolkovo:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+      - tei
+      - postgres
+    environment:
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_COLLECTION: skolkovo_docs
+      TEI_URL: http://tei:80
+      EMBEDDING_DIM: 768
+      POSTGRES_DSN: postgres://skolkovo:skolkovo@postgres:5432/skolkovo?sslmode=disable
+      STORE_BACKEND: postgres
+      MCP_ADDR: ":8080"
+      MCP_API_KEY: skolkovo-mcp-key
+      MCP_RATE_LIMIT_RPS: 5
+      ADMIN_ADDR: ":8090"
+      ADMIN_USER: admin
+      ADMIN_PASSWORD: skolkovo-admin-pass
+      NEWS_RSS_URL: https://sk.ru/news/rss/
+      NOTIFY_WEBHOOK: ""
+      DOCS_DIR: /data/docs
+      REGISTRY_PATH: /data/docs/Metadannye/reestr_dokumentov.json
+      REPORT_DIR: /data/reports
+      CHROME_PATH: /usr/bin/chromium
+      QWEN_API_KEY: sk-qwen-key-placeholder
+      PORTAL_ENABLED: "false"
+      PORTAL_ADDR: ":8092"
+      CHAT_WIDGET_ENABLED: "false"
+      CHAT_WIDGET_ADDR: ":8093"
+      CONSULTANT_ENABLED: "true"
+      CONSULTANT_ADDR: ":8094"
+      CLASSIFIER_ENABLED: "false"
+      AUTO_MIGRATE: "true"
+      MIGRATIONS_DIR: ./migrations
+      SCRAPE_INTERVAL: 6h
+    ports:
+      - "8080:8080"
+      - "8090:8090"
+      - "8091:8091"
+      - "8092:8092"
+      - "8093:8093"
+      - "8094:8094"
+      - "9090:9090"
+    volumes:
+      - docs_data:/data/docs
+      - reports_data:/data/reports
+
+volumes:
+  qdrant_data:
+  tei_data:
+  pg_data:
+  docs_data:
+  reports_data

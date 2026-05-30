@@ -109,10 +109,6 @@ func main() {
 		mustRun(cmdResidents(cfg))
 	case "telegram":
 		mustRun(cmdTelegram(cfg))
-	case "preferences":
-		mustRun(cmdPreferences(cfg))
-	case "regulations":
-		mustRun(cmdRegulations(cfg))
 	case "sync":
 		mustRun(cmdSync(cfg))
 	case "migrate":

@@ -590,7 +590,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="change-content">
         <div class="change-header">
           <span class="change-kind change-kind-{{.Kind}}">
-            {{if eq .Kind "new"}}🆕 Новая{{else if eq .Kind "updated"}}🔄 Обновлена{{else if eq .Kind "outdated"}}⛔ Устарела{{else if eq .Kind "removed"}}🗑 Удалена{{end}}
+            {{if eq .Kind "new"}}Новая{{else if eq .Kind "updated"}}Обновлена{{else if eq .Kind "outdated"}}Устарела{{else if eq .Kind "removed"}}Удалена{{end}}
           </span>
           <span class="change-entity">{{.EntityType}}</span>
           <span class="change-time">{{.DetectedAt}}</span>

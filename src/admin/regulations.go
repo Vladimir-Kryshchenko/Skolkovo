@@ -284,8 +284,8 @@ a.source-link:hover { text-decoration: underline; }
 {{if .Flash}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="tabs">
-  <div class="tab active" onclick="showTab('prefs',this)">💼 Льготы ({{len .Preferences}})</div>
-  <div class="tab" onclick="showTab('npas',this)">📋 НПА ({{len .NPAs}})</div>
+  <div class="tab active" onclick="showTab('prefs',this)">Льготы ({{len .Preferences}})</div>
+  <div class="tab" onclick="showTab('npas',this)">НПА (нормативные акты) ({{len .NPAs}})</div>
 </div>
 
 <div id="prefs" class="tab-content active">

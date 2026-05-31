@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -307,9 +308,52 @@ func (f *Fetcher) execOpts() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("disable-sync", true),
 	}
 	if f.ProxyURL != "" {
-		opts = append(opts, chromedp.ProxyServer(f.ProxyURL))
+		// Chrome --proxy-server не принимает логин/пароль в URL — передаём чистый
+		// scheme://host:port; авторизация резидентного прокси выполняется через
+		// CDP Fetch.authRequired в OpenSession.
+		clean, _, _ := parseProxy(f.ProxyURL)
+		opts = append(opts, chromedp.ProxyServer(clean))
 	}
 	return opts
+}
+
+// parseProxy разбирает URL прокси на «чистый» URL (без userinfo) и креды.
+func parseProxy(raw string) (clean, user, pass string) {
+	if strings.TrimSpace(raw) == "" {
+		return "", "", ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw, "", ""
+	}
+	if u.User != nil {
+		user = u.User.Username()
+		pass, _ = u.User.Password()
+		u.User = nil
+	}
+	return u.String(), user, pass
+}
+
+// setupProxyAuth вешает CDP-обработчик аутентификации на прокси: на запрос
+// учётных данных отвечает логином/паролем, остальные приостановленные запросы
+// пропускает. Нужен для резидентных прокси с авторизацией (user:pass).
+func setupProxyAuth(ctx context.Context, user, pass string) {
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		switch e := ev.(type) {
+		case *fetch.EventAuthRequired:
+			go func() {
+				_ = chromedp.Run(ctx, fetch.ContinueWithAuth(e.RequestID, &fetch.AuthChallengeResponse{
+					Response: fetch.AuthChallengeResponseResponseProvideCredentials,
+					Username: user,
+					Password: pass,
+				}))
+			}()
+		case *fetch.EventRequestPaused:
+			go func() {
+				_ = chromedp.Run(ctx, fetch.ContinueRequest(e.RequestID))
+			}()
+		}
+	})
 }
 
 // humanDelay — случайная задержка в диапазоне [minMs, maxMs].
@@ -463,6 +507,16 @@ func (f *Fetcher) OpenSession(ctx context.Context) (*Session, error) {
 	allocCtx, cancelA := chromedp.NewExecAllocator(ctx, f.execOpts()...)
 	bctx, cancelB := chromedp.NewContext(allocCtx)
 	s := &Session{f: f, bctx: bctx, cancelA: cancelA, cancelB: cancelB}
+
+	// Аутентификация на резидентном прокси (если задан user:pass): вешаем
+	// обработчик до Enable и до навигации, иначе прокси вернёт 407.
+	if _, user, pass := parseProxy(f.ProxyURL); user != "" {
+		setupProxyAuth(bctx, user, pass)
+		if err := chromedp.Run(bctx, fetch.Enable().WithHandleAuthRequests(true)); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("включение прокси-аутентификации: %w", err)
+		}
+	}
 
 	// Stealth на каждую новую страницу.
 	if err := chromedp.Run(bctx, chromedp.ActionFunc(func(ctx context.Context) error {

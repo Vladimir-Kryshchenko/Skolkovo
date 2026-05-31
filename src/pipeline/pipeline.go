@@ -40,7 +40,12 @@ type Pipeline struct {
 // RunOnce выполняет один полный цикл актуализации.
 func (p *Pipeline) RunOnce(ctx context.Context) error {
 	log.Println("[pipeline] старт цикла: парсинг dochub.sk.ru")
-	rep, err := p.Scraper.Run(ctx)
+	var rep *scraper.Report
+	err := withRetry(ctx, 3, 5*time.Second, func() error {
+		var e error
+		rep, e = p.Scraper.Run(ctx)
+		return e
+	})
 	p.recordHealth(ctx, "documents", docItems(rep), err)
 	if err != nil {
 		return fmt.Errorf("парсинг: %w", err)
@@ -158,6 +163,29 @@ func (p *Pipeline) notifyChanges(ctx context.Context) {
 		return
 	}
 	log.Printf("[pipeline] отправлено алертов по изменениям: %d", len(ids))
+}
+
+// withRetry выполняет fn до attempts раз с экспоненциальной паузой при ошибке
+// (base, 2·base, 4·base …). Прерывается при отмене контекста. Возвращает
+// последнюю ошибку, если все попытки неуспешны.
+func withRetry(ctx context.Context, attempts int, base time.Duration, fn func() error) error {
+	var err error
+	for i := 0; i < attempts; i++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if i == attempts-1 {
+			break
+		}
+		delay := base * time.Duration(1<<i)
+		log.Printf("[pipeline] попытка %d/%d не удалась: %v — повтор через %s", i+1, attempts, err, delay)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+	}
+	return err
 }
 
 // recordHealth фиксирует результат прогона источника в мониторинге свежести.

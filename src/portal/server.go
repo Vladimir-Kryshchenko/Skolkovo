@@ -259,8 +259,15 @@ func (ps *PortalServer) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Fallback (dev): показываем ссылку прямо на странице.
-	http.Redirect(w, r, "/login?msg=Ссылка+для+входа:+&link="+url.QueryEscape(link)+"&kind=ok", http.StatusSeeOther)
+	// Без SMTP ссылку показываем на странице ТОЛЬКО в явном dev-режиме
+	// (PORTAL_DEV_LOGIN_LINK=true). Иначе это утечка: любой, кто знает email
+	// клиента, получил бы рабочую ссылку входа прямо на экране.
+	if os.Getenv("PORTAL_DEV_LOGIN_LINK") == "true" {
+		http.Redirect(w, r, "/login?msg=Ссылка+для+входа+(dev):+&link="+url.QueryEscape(link)+"&kind=ok", http.StatusSeeOther)
+		return
+	}
+	log.Printf("[portal] SMTP не настроен — ссылка для %s не отправлена; вход по email недоступен", email)
+	http.Redirect(w, r, "/login?msg=Вход+по+email+временно+недоступен,+обратитесь+к+администратору&kind=err", http.StatusSeeOther)
 }
 
 func (ps *PortalServer) handleVerifyToken(w http.ResponseWriter, r *http.Request) {

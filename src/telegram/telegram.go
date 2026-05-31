@@ -50,20 +50,20 @@ func New(cfg TelegramConfig, st store.TelegramStore) *Monitor {
 
 // Result — итог синхронизации постов.
 type Result struct {
-	Fetched   int
-	New       int
-	Skipped   int
-	Errors    []string
+	Fetched int
+	New     int
+	Skipped int
+	Errors  []string
 }
 
 // FetchChannelPosts получает посты из одного канала через RSS-агрегатор.
 // Поддерживаемые подходы:
-//  1. RSS через rsshub.app/rss?url=t.me/{channel} — работает без API-ключа.
+//  1. RSS через rsshub (по умолчанию rsshub.app; для прод лучше self-hosted) — без API-ключа.
 //  2. telegra.ph RSS — если канал публикует статьи через Telegraph.
 //
-// Fallback: если RSS недоступен, возвращается заглушка с комментарием про
-// Telegram Bot API — для реальной работы нужно подключить официальный
-// Bot API (https://core.telegram.org/bots/api#getchathistory).
+// Если оба источника недоступны, возвращается пустой результат и ошибка —
+// в базу знаний НЕ попадают плейсхолдеры. Для надёжного доступа настройте
+// self-hosted rsshub/RSSBridge через TELEGRAM_RSS_HUB_URL.
 func FetchChannelPosts(ctx context.Context, channel string, apiURL string, hc *http.Client) ([]*model.TelegramPost, error) {
 	if hc == nil {
 		hc = &http.Client{Timeout: 30 * time.Second}
@@ -73,7 +73,7 @@ func FetchChannelPosts(ctx context.Context, channel string, apiURL string, hc *h
 		return nil, fmt.Errorf("пустое имя канала")
 	}
 
-	// Стратегия 1: RSS через rsshub.app.
+	// Стратегия 1: RSS через rsshub.
 	if apiURL == "" {
 		apiURL = "https://rsshub.app/telegram/channel/"
 	}
@@ -89,8 +89,8 @@ func FetchChannelPosts(ctx context.Context, channel string, apiURL string, hc *h
 		return posts, nil
 	}
 
-	// Fallback: заглушка.
-	return stubPosts(channel), nil
+	// Нет данных — возвращаем пусто (без заглушек, чтобы не засорять базу).
+	return nil, fmt.Errorf("посты канала %s недоступны через RSS (настройте TELEGRAM_RSS_HUB_URL)", channel)
 }
 
 // FetchAllChannels получает посты из всех каналов конфигурации.
@@ -250,25 +250,6 @@ func parseTelegramRSS(data []byte, channel string) ([]*model.TelegramPost, error
 	}
 
 	return posts, nil
-}
-
-// stubPosts возвращает заглушку с комментарием про Telegram Bot API.
-func stubPosts(channel string) []*model.TelegramPost {
-	channel = "@" + strings.TrimPrefix(channel, "@")
-
-	return []*model.TelegramPost{
-		{
-			ID:      postID("stub", channel, time.Time{}),
-			Channel: channel,
-			Text: "[ЗАГЛУШКА] Telegram Bot API недоступен. " +
-				"Для получения постов подключите официальный Telegram Bot API: " +
-				"https://core.telegram.org/bots/api#getchathistory. " +
-				"Альтернатива: настройте RSSBridge или локальный rsshub.app.",
-			PublishedAt: time.Now(),
-			SourceURL:   fmt.Sprintf("https://t.me/%s", strings.TrimPrefix(channel, "@")),
-			CreatedAt:   time.Now(),
-		},
-	}
 }
 
 // IngestPosts записывает посты в хранилище TelegramStore.

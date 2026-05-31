@@ -5,7 +5,7 @@
 //	scrape          — каталог из RSS (~20 свежих) + обход HTML               (E1)
 //	catalog         — полное перечисление каталога по категориям (headless)  (E1)
 //	index [-force]  — проиндексировать действующие документы в RAG          (E2)
-//	navindex [act]  — навигационная карта сайта: render|export|index|all (для get_navigation)
+//	navindex [act]  — навигационная карта сайта: render|export|index|search|all (для get_navigation)
 //	fetch           — скачать тела файлов через headless-браузер (E1, обход WAF)
 //	news            — синхронизировать новости/RSS в RAG                    (E5)
 //	events          — парсинг мероприятий
@@ -178,12 +178,32 @@ func newNavIndexer(cfg config.Config) *navindex.Indexer {
 //	navindex render — Markdown-карта (RAG_Структура_сайта.md) для каталога;
 //	navindex export — navigation.json (источник истины в JSON);
 //	navindex index  — векторный индекс в Qdrant-коллекцию навигации (для get_navigation);
+//	navindex search <запрос> — смоук-проверка навигационного поиска;
 //	navindex        — всё сразу (render + export + index).
 func cmdNavIndex(cfg config.Config, args []string) error {
 	action := "all"
 	if len(args) > 0 {
 		action = args[0]
 	}
+
+	// navindex search <запрос> — смоук-проверка навигационного поиска (get_navigation).
+	if action == "search" {
+		query := strings.TrimSpace(strings.Join(args[1:], " "))
+		if query == "" {
+			return fmt.Errorf("использование: navindex search <запрос>")
+		}
+		searcher := navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+		hits, err := searcher.Search(context.Background(), query, 5)
+		if err != nil {
+			return fmt.Errorf("поиск навигации: %w", err)
+		}
+		for i, h := range hits {
+			fmt.Printf("%d. [%.3f] %s — %s (%s%s)\n   как попасть: %s\n",
+				i+1, h.Score, h.PageTitle, h.Interface, h.Port, h.Route, h.HowTo)
+		}
+		return nil
+	}
+
 	tree := navindex.Tree()
 	outDir := filepath.Join(cfg.DocsDir, "RAG_Структура_сайта")
 

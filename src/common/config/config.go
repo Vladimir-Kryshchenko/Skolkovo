@@ -12,6 +12,7 @@ type Config struct {
 	PostgresDSN     string
 	QdrantURL       string
 	QdrantColl      string
+	NavColl         string // отдельная Qdrant-коллекция навигации по сайту
 	TEIURL          string
 	EmbeddingDim    int
 	SourceURL       string
@@ -123,6 +124,7 @@ func Load() Config {
 		PostgresDSN:     env("POSTGRES_DSN", "postgres://skolkovo:skolkovo@localhost:5432/skolkovo?sslmode=disable"),
 		QdrantURL:       env("QDRANT_URL", "http://localhost:6333"),
 		QdrantColl:      env("QDRANT_COLLECTION", "skolkovo_docs"),
+		NavColl:         env("NAV_COLLECTION", "skolkovo_navigation"),
 		TEIURL:          env("TEI_URL", "http://localhost:8081"),
 		EmbeddingDim:    envInt("EMBEDDING_DIM", 768),
 		SourceURL:       env("SOURCE_URL", "https://dochub.sk.ru/foundation/documents/"),

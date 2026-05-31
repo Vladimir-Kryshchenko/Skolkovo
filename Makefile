@@ -2,7 +2,7 @@
 
 BIN := bin/skolkovo
 
-.PHONY: build test vet fmt up down scrape index sync mcp admin serve embed
+.PHONY: build test vet fmt up down scrape index sync mcp admin serve embed navindex
 
 build:
 	go build -o $(BIN) ./cmd/skolkovo
@@ -42,3 +42,9 @@ serve: build
 
 embed: build
 	$(BIN) embed
+
+# Пересборка навигационной карты сайта (для чат-бота): Markdown + JSON.
+# Индексацию в Qdrant (`navindex index`) запускайте при живых Qdrant+TEI.
+navindex: build
+	$(BIN) navindex render
+	$(BIN) navindex export

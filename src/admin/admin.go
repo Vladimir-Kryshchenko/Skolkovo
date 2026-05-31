@@ -29,6 +29,7 @@ import (
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/diff"
 	"baza-skolkovo/src/fetcher"
+	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scheduler"
 	"baza-skolkovo/src/scraper"
@@ -44,8 +45,9 @@ type Server struct {
 	rag          *rag.Service
 	schedStore   *scheduler.Store
 	reportStore  *scheduler.ReportStore
-	aiStore      *aimodels.Store // ИИ-модели и агенты (опционально, требует Postgres)
-	proxyManager *ProxyManager   // Управление прокси
+	aiStore      *aimodels.Store    // ИИ-модели и агенты (опционально, требует Postgres)
+	navIndexer   *navindex.Indexer  // Переиндексация навигации по сайту (опционально)
+	proxyManager *ProxyManager      // Управление прокси
 	addr         string
 	user         string
 	pass         string
@@ -113,6 +115,13 @@ func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
 // WithNPAStore устанавливает хранилище НПА.
 func (s *Server) WithNPAStore(ns store.NPAStore) *Server {
 	s.npaStore = ns
+	return s
+}
+
+// WithNavIndexer устанавливает индексатор навигации по сайту (для кнопки
+// «Переиндексировать навигацию» — пересборка коллекции skolkovo_navigation).
+func (s *Server) WithNavIndexer(ix *navindex.Indexer) *Server {
+	s.navIndexer = ix
 	return s
 }
 
@@ -206,6 +215,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/index", s.requireAuthJSON(s.handleAPIIndex))
 	mux.HandleFunc("POST /api/sync", s.requireAuthJSON(s.handleAPISync))
 	mux.HandleFunc("POST /api/seed-local", s.requireAuthJSON(s.handleAPISeedLocal))
+	mux.HandleFunc("POST /api/navindex", s.requireAuthJSON(s.handleAPINavIndex))
 
 	// API для коллектора (полный цикл)
 	mux.HandleFunc("POST /api/collect", s.requireAuthJSON(s.handleAPICollect))
@@ -910,6 +920,24 @@ func (s *Server) handleAPISync(w http.ResponseWriter, r *http.Request) {
 
 // handleAPISeedLocal регистрирует и индексирует все .md-файлы из DocsDir в RAG.
 // Идемпотентно: уже зарегистрированные файлы (по LocalPath) не дублируются.
+// handleAPINavIndex пересобирает навигационный индекс сайта (коллекция
+// skolkovo_navigation) из src/navindex — питает MCP-инструмент get_navigation.
+func (s *Server) handleAPINavIndex(w http.ResponseWriter, r *http.Request) {
+	if s.navIndexer == nil {
+		jsonResp(w, false, "", "Индексатор навигации не подключён (нужен Qdrant + TEI)")
+		return
+	}
+	jsonResp(w, true, "Переиндексация навигации запущена в фоне.", "")
+	go func() {
+		n, err := s.navIndexer.Reindex(context.Background())
+		if err != nil {
+			log.Printf("[admin/navindex] ошибка переиндексации: %v", err)
+			return
+		}
+		log.Printf("[admin/navindex] навигация переиндексирована: %d узлов", n)
+	}()
+}
+
 func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 	if s.rag == nil {
 		jsonResp(w, false, "", "RAG-сервис не подключён")
@@ -962,6 +990,14 @@ func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Категорию навешиваем только файлам навигационной карты сайта;
+			// остальной локальный markdown оставляем без категории, чтобы его
+			// классифицировал классификатор при индексации (а не мислейблил).
+			category := ""
+			if strings.Contains(absPath, "RAG_Структура_сайта") {
+				category = "RAG Структура сайта"
+			}
+
 			now := time.Now()
 			doc := model.Document{
 				ID:        docID,
@@ -969,7 +1005,7 @@ func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 				LocalPath: absPath,
 				SourceURL: "file://" + absPath,
 				Status:    model.StatusActive,
-				Category:  "RAG Структура сайта",
+				Category:  category,
 				FetchedAt: now,
 			}
 			if uerr := s.store.Upsert(ctx, doc); uerr != nil {

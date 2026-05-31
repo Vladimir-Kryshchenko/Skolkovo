@@ -7,8 +7,19 @@ import (
 	"time"
 
 	"baza-skolkovo/src/aimodels"
+	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
 )
+
+// navMinScore — порог релевантности навигационного результата, ниже которого
+// подсказку «где это на сайте» не показываем (косинусная близость e5).
+const navMinScore = 0.80
+
+// NavSearcher ищет по навигационной карте сайта (реализуется *navindex.Searcher).
+// Может быть nil — тогда консультант отвечает только по документам.
+type NavSearcher interface {
+	Search(ctx context.Context, query string, limit int) ([]navindex.Hit, error)
+}
 
 // LLMProvider отдаёт конфигурацию агентов и моделей (реализуется *aimodels.Store).
 // Может быть nil — тогда консультант формирует ответ из RAG-фрагментов без LLM.
@@ -60,7 +71,8 @@ type ConsultantAgent struct {
 	mcpURL     string
 	mcpAPIKey  string
 	logger     QueryLogger
-	ai         LLMProvider // опционально: LLM-синтез ответа
+	ai         LLMProvider  // опционально: LLM-синтез ответа
+	nav        NavSearcher  // опционально: навигация по сайту (get_navigation)
 	chat       chatFunc
 }
 
@@ -78,6 +90,13 @@ func NewConsultantAgent(ragSvc *rag.Service, mcpURL, mcpAPIKey string) *Consulta
 // Без него консультант возвращает найденные RAG-фрагменты как есть.
 func (a *ConsultantAgent) WithLLM(ai LLMProvider) *ConsultantAgent {
 	a.ai = ai
+	return a
+}
+
+// WithNavigation подключает навигационный поиск по сайту: при вопросах «где…»,
+// «как открыть…» консультант дополняет ответ подсказкой «где это и как попасть».
+func (a *ConsultantAgent) WithNavigation(ns NavSearcher) *ConsultantAgent {
+	a.nav = ns
 	return a
 }
 
@@ -102,13 +121,25 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 		return ConsultantResponse{}, fmt.Errorf("вопрос не может быть пустым")
 	}
 
-	// Шаг 1: RAG-поиск (top 5).
+	// Шаг 1: RAG-поиск (top 5) + навигационный поиск по сайту (опционально).
 	results, err := a.ragService.Search(ctx, question, 5)
 	if err != nil {
 		return ConsultantResponse{}, fmt.Errorf("RAG-поиск: %w", err)
 	}
+	navHits := a.searchNav(ctx, question)
+	navBlock := buildNavBlock(navHits)
 
 	if len(results) == 0 {
+		// По документам пусто, но если это навигационный вопрос — отвечаем картой сайта.
+		if navBlock != "" {
+			resp := ConsultantResponse{
+				Answer:     "Похоже, вопрос о том, где найти функцию в системе «База Сколково».\n\n" + navBlock,
+				Sources:    nil,
+				Confidence: float64(navHits[0].Score),
+			}
+			a.logQuery(ctx, question, resp, clientID)
+			return resp, nil
+		}
 		resp := ConsultantResponse{
 			Answer:     "К сожалению, в базе документов не найдено информации по вашему вопросу. Попробуйте переформулировать запрос или обратитесь к специалисту.",
 			Sources:    nil,
@@ -119,8 +150,8 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 	}
 
 	// Шаг 2: Синтез ответа. Если подключён LLM — генерируем связный ответ с
-	// опорой на найденные фрагменты; иначе отдаём сами фрагменты.
-	answer, usedLLM := a.synthesize(ctx, question, results)
+	// опорой на найденные фрагменты (и навигацию); иначе отдаём сами фрагменты.
+	answer, usedLLM := a.synthesize(ctx, question, results, navHits)
 	if !usedLLM {
 		var parts []string
 		for i, r := range results {
@@ -128,6 +159,10 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 		}
 		answer = fmt.Sprintf("По вашему запросу найдено %d релевантных фрагментов:\n\n%s",
 			len(results), strings.Join(parts, "\n\n---\n\n"))
+		// В обход LLM добавляем навигационную подсказку отдельным блоком.
+		if navBlock != "" {
+			answer += "\n\n" + navBlock
+		}
 	}
 
 	// Шаг 3: Ссылки на источники.
@@ -157,7 +192,7 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 // synthesize формирует связный ответ языковой моделью на основе найденных
 // фрагментов. Возвращает ok=false, если LLM не настроен или вызов не удался —
 // тогда вызывающий код отдаёт сами фрагменты.
-func (a *ConsultantAgent) synthesize(ctx context.Context, question string, results []rag.Result) (string, bool) {
+func (a *ConsultantAgent) synthesize(ctx context.Context, question string, results []rag.Result, navHits []navindex.Hit) (string, bool) {
 	if a.ai == nil {
 		return "", false
 	}
@@ -177,6 +212,11 @@ func (a *ConsultantAgent) synthesize(ctx context.Context, question string, resul
 	for i, r := range results {
 		fmt.Fprintf(&b, "[%d] %s\n%s\n\n", i+1, r.Title, r.Text)
 	}
+	if navBlock := buildNavBlock(navHits); navBlock != "" {
+		b.WriteString("Если вопрос о том, ГДЕ найти функцию на сайте — используй эту навигацию (укажи страницу и как попасть):\n")
+		b.WriteString(navBlock)
+		b.WriteString("\n\n")
+	}
 	b.WriteString("Дай краткий точный ответ на русском со ссылками на источники [N]. " +
 		"Если фрагменты не содержат ответа — честно сообщи об этом.")
 
@@ -185,6 +225,49 @@ func (a *ConsultantAgent) synthesize(ctx context.Context, question string, resul
 		return "", false
 	}
 	return strings.TrimSpace(answer), true
+}
+
+// searchNav ищет по навигационной карте сайта top-5 и оставляет только узлы выше
+// порога релевантности. Ошибки/отсутствие навигации не критичны — возвращает nil.
+func (a *ConsultantAgent) searchNav(ctx context.Context, question string) []navindex.Hit {
+	if a.nav == nil {
+		return nil
+	}
+	hits, err := a.nav.Search(ctx, question, 5)
+	if err != nil {
+		return nil
+	}
+	var out []navindex.Hit
+	for _, h := range hits {
+		if h.Score >= navMinScore {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// buildNavBlock формирует подсказку «где это на сайте и как попасть» из
+// навигационных результатов, дедуплицируя по странице (маршруту), максимум 3.
+func buildNavBlock(hits []navindex.Hit) string {
+	if len(hits) == 0 {
+		return ""
+	}
+	seen := map[string]bool{}
+	var lines []string
+	for _, h := range hits {
+		key := h.Port + h.Route
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		line := fmt.Sprintf("• %s — %s (%s%s); как попасть: %s",
+			h.PageTitle, h.Interface, h.Port, h.Route, h.HowTo)
+		lines = append(lines, line)
+		if len(lines) >= 3 {
+			break
+		}
+	}
+	return "🧭 Где это в системе «База Сколково»:\n" + strings.Join(lines, "\n")
 }
 
 // consultantModel находит включённого агента-консультанта и его включённую модель.

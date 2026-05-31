@@ -5,6 +5,7 @@
 //	scrape          — каталог из RSS (~20 свежих) + обход HTML               (E1)
 //	catalog         — полное перечисление каталога по категориям (headless)  (E1)
 //	index [-force]  — проиндексировать действующие документы в RAG          (E2)
+//	navindex [act]  — навигационная карта сайта: render|export|index|all (для get_navigation)
 //	fetch           — скачать тела файлов через headless-браузер (E1, обход WAF)
 //	news            — синхронизировать новости/RSS в RAG                    (E5)
 //	events          — парсинг мероприятий
@@ -62,6 +63,7 @@ import (
 	"baza-skolkovo/src/mailer"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
+	"baza-skolkovo/src/navindex"
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	"baza-skolkovo/src/pipeline"
@@ -92,6 +94,8 @@ func main() {
 		mustRun(cmdScrape(cfg))
 	case "index":
 		mustRun(cmdIndex(cfg, args))
+	case "navindex":
+		mustRun(cmdNavIndex(cfg, args))
 	case "catalog":
 		mustRun(cmdCatalog(cfg))
 	case "crawl":
@@ -156,6 +160,69 @@ func newRAG(cfg config.Config, st store.Store, cls *classifier.DocumentClassifie
 		svc.WithClassifier(cls)
 	}
 	return svc
+}
+
+// newNavQdrant создаёт Qdrant-клиент для отдельной коллекции навигации.
+func newNavQdrant(cfg config.Config) *qdrant.Client {
+	return qdrant.New(cfg.QdrantURL, cfg.NavColl)
+}
+
+// newNavIndexer создаёт индексатор навигации по сайту (коллекция NAV_COLLECTION).
+func newNavIndexer(cfg config.Config) *navindex.Indexer {
+	return navindex.NewIndexer(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL), cfg.EmbeddingDim)
+}
+
+// cmdNavIndex собирает навигационную карту сайта из src/navindex (источник истины)
+// и выгружает её во все формы:
+//
+//	navindex render — Markdown-карта (RAG_Структура_сайта.md) для каталога;
+//	navindex export — navigation.json (источник истины в JSON);
+//	navindex index  — векторный индекс в Qdrant-коллекцию навигации (для get_navigation);
+//	navindex        — всё сразу (render + export + index).
+func cmdNavIndex(cfg config.Config, args []string) error {
+	action := "all"
+	if len(args) > 0 {
+		action = args[0]
+	}
+	tree := navindex.Tree()
+	outDir := filepath.Join(cfg.DocsDir, "RAG_Структура_сайта")
+
+	doRender := action == "all" || action == "render"
+	doExport := action == "all" || action == "export"
+	doIndex := action == "all" || action == "index"
+
+	if doRender || doExport {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			return fmt.Errorf("создание каталога %s: %w", outDir, err)
+		}
+	}
+	if doRender {
+		mdPath := filepath.Join(outDir, "RAG_Структура_сайта.md")
+		if err := os.WriteFile(mdPath, []byte(navindex.ToMarkdown(tree)), 0o644); err != nil {
+			return fmt.Errorf("запись Markdown-карты: %w", err)
+		}
+		log.Printf("[navindex] Markdown-карта обновлена: %s", mdPath)
+	}
+	if doExport {
+		jsonData, err := navindex.ToJSON(tree)
+		if err != nil {
+			return fmt.Errorf("сериализация JSON: %w", err)
+		}
+		jsonPath := filepath.Join(outDir, "navigation.json")
+		if err := os.WriteFile(jsonPath, jsonData, 0o644); err != nil {
+			return fmt.Errorf("запись navigation.json: %w", err)
+		}
+		log.Printf("[navindex] JSON-карта обновлена: %s", jsonPath)
+	}
+	if doIndex {
+		ctx := context.Background()
+		n, err := newNavIndexer(cfg).Reindex(ctx)
+		if err != nil {
+			return fmt.Errorf("индексация навигации: %w", err)
+		}
+		log.Printf("[navindex] навигация проиндексирована: %d узлов в коллекцию %q", n, cfg.NavColl)
+	}
+	return nil
 }
 
 func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
@@ -853,7 +920,7 @@ func cmdMCP(cfg config.Config) error {
 
 	// Регистрируем дополнительные инструменты, если доступны соответствующие хранилища.
 	mcpSrv := srv.MCPServer()
-	registerExtraMCPTools(mcpSrv, st)
+	registerExtraMCPTools(mcpSrv, st, cfg)
 
 	return srv.ListenAndServe()
 }
@@ -867,7 +934,8 @@ func cmdAdmin(cfg config.Config) error {
 
 	// Создаём основной сервер админки.
 	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil))
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil)).
+		WithNavIndexer(newNavIndexer(cfg))
 
 	// Подключаем хранилище ленты изменений (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -943,8 +1011,19 @@ func cmdServe(cfg config.Config) error {
 
 	// --- MCP-сервер ---
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
-	registerExtraMCPTools(mcpSrv.MCPServer(), st)
+	registerExtraMCPTools(mcpSrv.MCPServer(), st, cfg)
 	registerAgentMCPTools(mcpSrv.MCPServer(), st, svc, cfg)
+
+	// --- Навигационный индекс сайта (для get_navigation) ---
+	// Пересобираем при старте из src/navindex (источник истины), чтобы чат-бот
+	// всегда знал актуальную структуру страниц/блоков. Фоном, не блокируя старт.
+	go func() {
+		if n, err := newNavIndexer(cfg).Reindex(context.Background()); err != nil {
+			log.Printf("[serve:navindex] навигация не проиндексирована: %v", err)
+		} else {
+			log.Printf("[serve:navindex] навигация проиндексирована: %d узлов", n)
+		}
+	}()
 
 	// --- Prometheus /metrics на отдельном порту ---
 	promAddr := ":9090"
@@ -968,7 +1047,8 @@ func cmdServe(cfg config.Config) error {
 	}()
 
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc).
+		WithNavIndexer(newNavIndexer(cfg))
 
 	// Подключаем хранилища льгот и НПА к админке.
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -1458,8 +1538,14 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	}
 }
 
-// registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство и источники).
-func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
+// registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство,
+// источники, навигацию по сайту).
+func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.Config) {
+	// Навигация по сайту (get_navigation) работает на любом бэкенде — индекс
+	// в отдельной Qdrant-коллекции, не зависит от Postgres.
+	navSearcher := navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+	mcpserver.RegisterNavigationTools(mcpSrv, navSearcher)
+
 	ps, ok := st.(*store.PostgresStore)
 	if !ok {
 		log.Printf("[mcp] дополнительные инструменты: требуется backend=postgres")
@@ -1521,7 +1607,8 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 	// Создаём агентов. Консультанту даём доступ к LLM-конфигу (агент Consultant)
 	// для синтеза связного ответа; без настроенной модели работает на чистом RAG.
 	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey).
-		WithLLM(aimodels.NewStore(pool))
+		WithLLM(aimodels.NewStore(pool)).
+		WithNavigation(navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
 	validator := agents.NewValidatorAgent(ragSvc, pcs)
 	monitorStores := agents.MonitorStores{
 		DocStore:      st,

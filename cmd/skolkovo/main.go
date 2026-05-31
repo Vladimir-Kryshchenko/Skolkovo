@@ -167,8 +167,14 @@ func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
 	return sc
 }
 
-func newPipeline(cfg config.Config, st store.Store, svc *rag.Service) *pipeline.Pipeline {
+// newPipeline собирает конвейер. proxyFn (опц.) — резолвер активного прокси из
+// ProxyManager: если задан, каталог планировщика ходит через выбранный в админке
+// прокси (динамически, без перезапуска). nil — статический PROXY_URL из env.
+func newPipeline(cfg config.Config, st store.Store, svc *rag.Service, proxyFn func() string) *pipeline.Pipeline {
 	sc := newScraper(cfg, st)
+	if proxyFn != nil {
+		sc.UseDynamicProxy(proxyFn)
+	}
 	newsMon := news.New(cfg.NewsRSSURL, cfg.DocsDir, st, svc)
 	p := &pipeline.Pipeline{
 		Scraper:   sc,
@@ -829,7 +835,7 @@ func cmdSync(cfg config.Config) error {
 	} else {
 		fmt.Printf("Sync: headless — найдено %d, скачано %d\n", found, fetched)
 	}
-	return newPipeline(cfg, st, svc).RunOnce(ctx)
+	return newPipeline(cfg, st, svc, nil).RunOnce(ctx)
 }
 
 func cmdMCP(cfg config.Config) error {
@@ -1061,7 +1067,15 @@ func cmdServe(cfg config.Config) error {
 	}
 
 	// --- Планировщик ---
-	go newPipeline(cfg, st, svc).Schedule(ctx, cfg.ScrapeInterval)
+	// Прокси для каталога: сначала активный из ProxyManager (управляется в админке
+	// :8090 /proxy), иначе статический PROXY_URL из env. Резолвится на каждый запрос.
+	proxyResolver := func() string {
+		if u := pm.GetActiveURL(); u != "" {
+			return u
+		}
+		return cfg.ProxyURL
+	}
+	go newPipeline(cfg, st, svc, proxyResolver).Schedule(ctx, cfg.ScrapeInterval)
 
 	// --- Telegram-нотификатор консультанту ---
 	tgNotifier := notify.NewTelegramNotifier(

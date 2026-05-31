@@ -71,6 +71,9 @@ type Scraper struct {
 	// Versions — необязательное хранилище версий документов. Если задано,
 	// скрейпер сохраняет снимок текста каждой редакции (для диффа «что изменилось»).
 	Versions VersionArchiver
+	// GetProxyURL — необязательный резолвер активного прокси (ProxyManager).
+	// Устанавливается через UseDynamicProxy.
+	GetProxyURL func() string
 }
 
 // recordChange фиксирует изменение документа в ленте (если она подключена).
@@ -111,8 +114,8 @@ func New(baseURL, outDir string, st store.Store) *Scraper {
 }
 
 // UseProxy направляет каталожные HTTP-запросы (RSS + страницы документов) через
-// прокси. Нужно, когда сервер не имеет прямого доступа к dochub.sk.ru (например,
-// зарубежный дата-центр за гео/WAF-блокировкой). Пустой proxyURL — без изменений.
+// статический прокси. Нужно, когда сервер не имеет прямого доступа к dochub.sk.ru
+// (например, зарубежный дата-центр за гео/WAF-блокировкой). Пустой proxyURL — без изменений.
 func (s *Scraper) UseProxy(proxyURL string) {
 	if strings.TrimSpace(proxyURL) == "" {
 		return
@@ -122,11 +125,36 @@ func (s *Scraper) UseProxy(proxyURL string) {
 		log.Printf("[scraper] некорректный PROXY_URL %q: %v — прокси не применён", proxyURL, err)
 		return
 	}
-	timeout := 60 * time.Second
-	if s.HTTP != nil && s.HTTP.Timeout > 0 {
-		timeout = s.HTTP.Timeout
-	}
+	timeout := s.clientTimeout()
 	s.HTTP = &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+}
+
+// UseDynamicProxy направляет каталожные запросы через прокси, выбираемый функцией
+// fn на КАЖДЫЙ запрос. Позволяет управлять прокси из админки (ProxyManager) на
+// лету: следующий цикл планировщика подхватит активный прокси без перезапуска.
+// fn возвращает пустую строку — запрос идёт напрямую.
+func (s *Scraper) UseDynamicProxy(fn func() string) {
+	if fn == nil {
+		return
+	}
+	s.GetProxyURL = fn
+	tr := &http.Transport{
+		Proxy: func(*http.Request) (*url.URL, error) {
+			raw := strings.TrimSpace(fn())
+			if raw == "" {
+				return nil, nil // без прокси
+			}
+			return url.Parse(raw)
+		},
+	}
+	s.HTTP = &http.Client{Timeout: s.clientTimeout(), Transport: tr}
+}
+
+func (s *Scraper) clientTimeout() time.Duration {
+	if s.HTTP != nil && s.HTTP.Timeout > 0 {
+		return s.HTTP.Timeout
+	}
+	return 60 * time.Second
 }
 
 // deriveRSS возвращает URL ленты-каталога документов для базового URL раздела.

@@ -222,23 +222,55 @@ func (c *Crawler) recordChange(ctx context.Context, page *Page, kind changes.Kin
 }
 
 // fetch выполняет GET с браузерным UA и возвращает тело при статусе 200.
+// Делает до 3 попыток при сетевых ошибках и ответах 5xx/429 (sk.ru за WAF
+// периодически отдаёт 502/503) — иначе единичный сбой обрывал бы весь обход.
 func (c *Crawler) fetch(ctx context.Context, u string) ([]byte, error) {
+	const attempts = 3
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if attempt > 0 {
+			backoff := time.Second * time.Duration(attempt)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		body, retryable, err := c.fetchOnce(ctx, u)
+		if err == nil {
+			return body, nil
+		}
+		lastErr = err
+		if !retryable {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// fetchOnce выполняет один GET. retryable=true для временных сбоев (сеть, 5xx, 429).
+func (c *Crawler) fetchOnce(ctx context.Context, u string) (body []byte, retryable bool, err error) {
 	time.Sleep(c.Delay)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	req.Header.Set("User-Agent", userAgent)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, true, err // сетевая ошибка/таймаут — повторяемо
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("статус %d", resp.StatusCode)
+		retryable = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
+		return nil, retryable, fmt.Errorf("статус %d", resp.StatusCode)
 	}
 	// Ограничиваем размер тела (страницы, не файлы) — 4 МБ достаточно.
-	return io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, true, err
+	}
+	return data, false, nil
 }
 
 // parse извлекает из HTML страницу (title, summary, section, hash) и список ссылок.

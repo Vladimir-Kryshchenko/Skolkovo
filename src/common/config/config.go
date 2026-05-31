@@ -62,6 +62,9 @@ type Config struct {
 	TelegramChannels  string // comma-separated список каналов
 	TelegramRssHubURL string // URL RSSHub-инстанса для Telegram
 
+	// Telegram-бот для клиентов резидентства
+	TelegramBotUsername string // @username бота, например @SkolkovoAssistantBot
+
 	// Портал клиента
 	PortalEnabled bool
 	PortalAddr    string
@@ -174,6 +177,9 @@ func Load() Config {
 		// Telegram-каналы
 		TelegramChannels:  env("TELEGRAM_CHANNELS", ""),
 		TelegramRssHubURL: env("TELEGRAM_RSS_HUB_URL", "https://rsshub.rssforever.com/telegram/channel/"),
+
+		// Telegram-бот для клиентов резидентства
+		TelegramBotUsername: env("TELEGRAM_BOT_USERNAME", ""),
 
 		// Портал клиента
 		PortalEnabled: envBool("PORTAL_ENABLED", false),

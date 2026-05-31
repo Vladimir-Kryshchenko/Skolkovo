@@ -818,3 +818,51 @@ func nullStrPtr(s string) *string {
 	}
 	return &s
 }
+
+// ============================================================================
+// SubscriptionStore
+// ============================================================================
+
+func (s *PostgresClientStore) GetSubscriptions(ctx context.Context, clientID string) ([]string, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT category FROM client_subscriptions WHERE client_id = $1 ORDER BY category`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cats = append(cats, c)
+	}
+	return cats, rows.Err()
+}
+
+func (s *PostgresClientStore) SetSubscriptions(ctx context.Context, clientID string, categories []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM client_subscriptions WHERE client_id = $1`, clientID); err != nil {
+		return err
+	}
+
+	for _, cat := range categories {
+		if cat == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO client_subscriptions (client_id, category) VALUES ($1, $2)
+			 ON CONFLICT (client_id, category) DO NOTHING`, clientID, cat); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

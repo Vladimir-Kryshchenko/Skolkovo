@@ -23,7 +23,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -37,7 +36,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -1121,10 +1119,11 @@ func cmdServe(cfg config.Config) error {
 	if cfg.PortalEnabled {
 		go func() {
 			portalCfg := portal.PortalConfig{
-				Addr:      cfg.PortalAddr,
-				BaseURL:   "http://localhost" + cfg.PortalAddr,
-				MCPURL:    "http://localhost" + cfg.MCPAddr,
-				MCPAPIKey: cfg.MCPAPIKey,
+				Addr:                cfg.PortalAddr,
+				BaseURL:             "http://localhost" + cfg.PortalAddr,
+				MCPURL:              "http://localhost" + cfg.MCPAddr,
+				MCPAPIKey:           cfg.MCPAPIKey,
+				TelegramBotUsername: cfg.TelegramBotUsername,
 			}
 			stores := buildResidencyStores(st)
 			gen := newGenerator(cfg, st)
@@ -1146,8 +1145,10 @@ func cmdServe(cfg config.Config) error {
 				Mailer:         mlr,
 			}
 			if pgs, ok := st.(*store.PostgresStore); ok {
+				pcs := store.NewPostgresClientStore(pgs.Pool())
 				portalStores.NotifStore = store.NewPostgresNotificationStore(pgs.Pool())
-				portalStores.DocStore = store.NewPostgresClientStore(pgs.Pool())
+				portalStores.DocStore = pcs
+				portalStores.SubscriptionStore = pcs
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -1632,224 +1633,44 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 	pool := ps.Pool()
 	pcs := store.NewPostgresClientStore(pool)
 
-	// Создаём агентов. Консультанту даём доступ к LLM-конфигу (агент Consultant)
-	// для синтеза связного ответа; без настроенной модели работает на чистом RAG.
 	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey).
 		WithLLM(aimodels.NewStore(pool)).
 		WithNavigation(navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
 	validator := agents.NewValidatorAgent(ragSvc, pcs)
-	monitorStores := agents.MonitorStores{
+	monitor := agents.NewMonitorAgent(agents.MonitorStores{
 		DocStore:      st,
 		EventStore:    store.NewPostgresSourceStore(pool),
 		ContestStore:  store.NewPostgresSourceStore(pool),
 		ClientStore:   pcs,
 		DeadlineStore: pcs,
-	}
-	monitor := agents.NewMonitorAgent(monitorStores)
-	coordStores := agents.CoordinatorStores{
+	})
+	coordinator := agents.NewCoordinatorAgent(agents.CoordinatorStores{
 		ClientStore:    pcs,
 		ChecklistStore: pcs,
 		DeadlineStore:  pcs,
 		TemplateStore:  pcs,
-	}
-	coordinator := agents.NewCoordinatorAgent(coordStores)
-
-	// ask_consultant — вопрос к консультанту.
-	mcpSrv.AddTool(
-		mcp.NewTool("ask_consultant",
-			mcp.WithDescription("Задать вопрос ИИ-консультанту по базе документов Сколково. Возвращает ответ с источниками."),
-			mcp.WithString("question", mcp.Required(), mcp.Description("Текст вопроса")),
-			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			question := req.GetString("question", "")
-			clientID := req.GetString("client_id", "")
-			resp, err := consultant.Ask(ctx, question, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка консультанта: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(formatConsultantAnswer(resp)), nil
-		},
-	)
-
-	// validate_document — валидация документа по чек-листу.
-	mcpSrv.AddTool(
-		mcp.NewTool("validate_document",
-			mcp.WithDescription("Проверить документ по чек-листу процедуры. Возвращает отчёт с проблемами и оценкой."),
-			mcp.WithString("document_text", mcp.Required(), mcp.Description("Полный текст документа")),
-			mcp.WithString("procedure_type", mcp.Required(), mcp.Description("Тип процедуры: entry, reporting, extension, exit")),
-			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			docText := req.GetString("document_text", "")
-			procType := req.GetString("procedure_type", "")
-			clientID := req.GetString("client_id", "")
-			report, err := validator.ValidateDocument(ctx, docText, procType, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка валидации: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(report)), nil
-		},
-	)
-
-	// get_next_steps — рекомендации следующих шагов для клиента.
-	mcpSrv.AddTool(
-		mcp.NewTool("get_next_steps",
-			mcp.WithDescription("Получить рекомендации следующих шагов для клиента по чек-листу."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			clientID := req.GetString("client_id", "")
-			steps, err := coordinator.GetNextSteps(ctx, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка координатора: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(steps)), nil
-		},
-	)
-
-	// subscribe_to_changes — подписка на изменения документов.
-	mcpSrv.AddTool(
-		mcp.NewTool("subscribe_to_changes",
-			mcp.WithDescription("Подписать клиента на уведомления об изменениях в указанных категориях документов."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-			mcp.WithString("categories", mcp.Required(), mcp.Description("Категории через запятую: regulations, events, contests, reporting")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			clientID := req.GetString("client_id", "")
-			catsStr := req.GetString("categories", "")
-			cats := strings.Split(catsStr, ",")
-			for i := range cats {
-				cats[i] = strings.TrimSpace(cats[i])
-			}
-			if err := monitor.Subscribe(ctx, clientID, cats); err != nil {
-				return mcp.NewToolResultError("ошибка подписки: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(fmt.Sprintf("Клиент %s подписан на: %s", clientID, catsStr)), nil
-		},
-	)
-
-	// draft_document — подготовка черновика документа для клиента.
-	draftingStores := agents.DraftingStores{
+	})
+	drafter := agents.NewDocumentDraftingAgent(agents.DraftingStores{
 		ClientStore:    pcs,
 		TemplateStore:  pcs,
 		ChecklistStore: pcs,
+	}, ragSvc)
+
+	deps := mcpserver.AgentToolDeps{
+		Consultant:  consultant,
+		Validator:   validator,
+		Monitor:     monitor,
+		Coordinator: coordinator,
+		Drafter:     drafter,
+		Store:       st,
+		Config:      cfg,
 	}
-	drafter := agents.NewDocumentDraftingAgent(draftingStores, ragSvc)
-
-	mcpSrv.AddTool(
-		mcp.NewTool("draft_document",
-			mcp.WithDescription("Подготовить черновик документа для клиента (заявка, описание проекта, отчёт, продление, выход). Возвращает заполненный текст в Markdown."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-			mcp.WithString("document_type", mcp.Required(), mcp.Description("Тип документа: application, project_description, report, extension_request, exit_notice, ird_description")),
-			mcp.WithString("extra_context", mcp.Description("Дополнительный контекст от консультанта")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			draftReq := agents.DraftRequest{
-				ClientID:     req.GetString("client_id", ""),
-				DocumentType: req.GetString("document_type", ""),
-				ExtraContext: req.GetString("extra_context", ""),
-			}
-			result, err := drafter.Draft(ctx, draftReq)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка подготовки документа: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
-	)
-
-	// check_eligibility — проверка компании по ИНН.
 	if cfg.EligibilityEnabled {
-		eligChecker := eligibility.NewChecker(eligibility.Config{
-			DadataAPIKey: cfg.DadataAPIKey,
-		})
-		mcpSrv.AddTool(
-			mcp.NewTool("check_eligibility",
-				mcp.WithDescription("Проверить, может ли компания стать резидентом Сколково. Принимает ИНН, возвращает отчёт с оценкой, проблемами и рекомендациями."),
-				mcp.WithString("inn", mcp.Required(), mcp.Description("ИНН компании (10 или 12 цифр)")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				inn := req.GetString("inn", "")
-				report, err := eligChecker.CheckByINN(ctx, inn)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка проверки: " + err.Error()), nil
-				}
-				return mcp.NewToolResultText(toJSON(report)), nil
-			},
-		)
+		deps.Eligibility = eligibility.NewChecker(eligibility.Config{DadataAPIKey: cfg.DadataAPIKey})
 	}
+	deps.Generator = newGenerator(cfg, st)
 
-	// generate_document — сгенерировать готовый файл документа (PDF/DOCX) для клиента.
-	if gen := newGenerator(cfg, st); gen != nil {
-		mcpSrv.AddTool(
-			mcp.NewTool("generate_document",
-				mcp.WithDescription("Сгенерировать готовый файл документа (PDF/DOCX) для клиента из шаблона. Возвращает путь к файлу; при inline=true также base64-содержимое для скачивания. Список шаблонов: list_document_templates."),
-				mcp.WithString("template_id", mcp.Required(), mcp.Description("Идентификатор шаблона (имя файла, напр. Заявление_на_резидентство.go.tpl)")),
-				mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-				mcp.WithString("variables", mcp.Description("Доп. переменные в формате key=value через запятую (опционально)")),
-				mcp.WithBoolean("inline", mcp.Description("Вернуть содержимое файла в base64 (для скачивания удалённым клиентом)")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				templateID := req.GetString("template_id", "")
-				clientID := req.GetString("client_id", "")
-				vars := map[string]string{}
-				if raw := req.GetString("variables", ""); raw != "" {
-					for _, kv := range strings.Split(raw, ",") {
-						if i := strings.IndexByte(kv, '='); i > 0 {
-							vars[strings.TrimSpace(kv[:i])] = strings.TrimSpace(kv[i+1:])
-						}
-					}
-				}
-				out, err := gen.RenderTemplate(ctx, templateID, clientID, vars)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка генерации: " + err.Error()), nil
-				}
-				result := map[string]any{
-					"path":     out,
-					"filename": filepath.Base(out),
-				}
-				if req.GetBool("inline", false) {
-					data, rerr := os.ReadFile(out)
-					if rerr != nil {
-						return mcp.NewToolResultError("файл сгенерирован, но не читается: " + rerr.Error()), nil
-					}
-					result["content_base64"] = base64.StdEncoding.EncodeToString(data)
-					result["size_bytes"] = len(data)
-				}
-				return mcp.NewToolResultText(toJSON(result)), nil
-			},
-		)
-
-		// list_document_templates — список доступных шаблонов.
-		mcpSrv.AddTool(
-			mcp.NewTool("list_document_templates",
-				mcp.WithDescription("Список доступных шаблонов документов для генерации (generate_document)."),
-				mcp.WithReadOnlyHintAnnotation(true),
-			),
-			func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				names, err := gen.ListAvailableTemplates(ctx)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка списка шаблонов: " + err.Error()), nil
-				}
-				return mcp.NewToolResultText(toJSON(names)), nil
-			},
-		)
-	}
-
-	// get_coverage_audit — полнота охвата источников Сколково.
-	mcpSrv.AddTool(
-		mcp.NewTool("get_coverage_audit",
-			mcp.WithDescription("Отчёт о полноте охвата источников Сколково: какие источники (документы, новости, мероприятия, конкурсы, FAQ, льготы, НПА, Telegram, резиденты) покрыты, а какие не настроены/устарели/без данных."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			rep := buildCoverageReport(ctx, cfg, st)
-			return mcp.NewToolResultText(toJSON(rep)), nil
-		},
-	)
-
-	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes, draft_document, check_eligibility, generate_document, list_document_templates, get_coverage_audit")
+	mcpserver.RegisterAgentTools(mcpSrv, deps)
 }
 
 // buildResidencyStores собирает Stores для админки резидентства.
@@ -2012,84 +1833,6 @@ func cmdEligibility(cfg config.Config, args []string) error {
 	return nil
 }
 
-// buildCoverageReport собирает отчёт о полноте охвата источников из конфигурации,
-// мониторинга свежести и фактических счётчиков в хранилищах.
-func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store) audit.Report {
-	// Состояние свежести по имени источника.
-	healthByName := map[string]string{}
-	itemsLastRun := map[string]int{}
-	if ps, ok := st.(*store.PostgresStore); ok {
-		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
-			if sources, err := hs.List(ctx); err == nil {
-				now := time.Now()
-				for _, s := range sources {
-					healthByName[s.Name] = string(s.State(24*time.Hour, now))
-					itemsLastRun[s.Name] = s.ItemsLastRun
-				}
-			}
-		}
-	}
-
-	// Счётчики документов по категориям.
-	var docsTotal, newsN, prefN, npaN, fetchedN = -1, -1, -1, -1, -1
-	if docs, err := st.List(ctx, store.Filter{}); err == nil {
-		docsTotal, newsN, prefN, npaN, fetchedN = 0, 0, 0, 0, 0
-		for _, d := range docs {
-			switch d.Category {
-			case "Новости":
-				newsN++
-			case "Льготы":
-				prefN++
-			case "НПА":
-				npaN++
-			default:
-				docsTotal++
-			}
-			if strings.TrimSpace(d.LocalPath) != "" {
-				fetchedN++
-			}
-		}
-	}
-
-	// Счётчики расширенных источников.
-	eventsN, contestsN, faqN, tgN, residentsN := -1, -1, -1, -1, -1
-	if ps, ok := st.(*store.PostgresStore); ok {
-		pss := store.NewPostgresSourceStore(ps.Pool())
-		if n, err := pss.CountEvents(ctx); err == nil {
-			eventsN = n
-		}
-		if n, err := pss.CountActiveContests(ctx); err == nil {
-			contestsN = n
-		}
-		if n, err := pss.CountFAQItems(ctx); err == nil {
-			faqN = n
-		}
-		if n, err := pss.CountPosts(ctx, ""); err == nil {
-			tgN = n
-		}
-		if n, err := pss.CountResidents(ctx); err == nil {
-			residentsN = n
-		}
-	}
-
-	cov := []audit.Coverage{
-		{Key: "documents", Name: "Документы dochub.sk.ru", URL: cfg.SourceURL, Enabled: cfg.SourceURL != "", HealthState: healthByName["documents"], ItemsLastRun: itemsLastRun["documents"], Items: docsTotal},
-		{Key: "fetch", Name: "Тела файлов документов (обход WAF)", URL: cfg.SourceURL, Enabled: true, HealthState: healthByName["fetch"], ItemsLastRun: itemsLastRun["fetch"], Items: fetchedN},
-		{Key: "news", Name: "Новости sk.ru", URL: cfg.NewsRSSURL, Enabled: cfg.NewsRSSURL != "", HealthState: healthByName["news"], ItemsLastRun: itemsLastRun["news"], Items: newsN},
-		{Key: "events", Name: "Мероприятия", URL: cfg.EventsSourceURL, Enabled: cfg.EventsSourceURL != "", HealthState: healthByName["events"], ItemsLastRun: itemsLastRun["events"], Items: eventsN},
-		{Key: "contests", Name: "Конкурсы и гранты", URL: cfg.ContestsURL, Enabled: cfg.ContestsURL != "", HealthState: healthByName["contests"], ItemsLastRun: itemsLastRun["contests"], Items: contestsN},
-		{Key: "faq", Name: "FAQ", URL: cfg.FAQURL, Enabled: cfg.FAQURL != "", HealthState: healthByName["faq"], ItemsLastRun: itemsLastRun["faq"], Items: faqN},
-		{Key: "preferences", Name: "Льготы резидентов", URL: cfg.PreferencesURL, Enabled: cfg.PreferencesEnabled, HealthState: healthByName["preferences"], ItemsLastRun: itemsLastRun["preferences"], Items: prefN},
-		{Key: "regulations", Name: "НПА (244-ФЗ и поправки)", URL: cfg.RegulationsSearchURL, Enabled: cfg.RegulationsEnabled, HealthState: healthByName["regulations"], ItemsLastRun: itemsLastRun["regulations"], Items: npaN},
-		{Key: "telegram", Name: "Telegram-каналы", URL: cfg.TelegramRssHubURL, Enabled: cfg.TelegramChannels != "", HealthState: healthByName["telegram"], ItemsLastRun: itemsLastRun["telegram"], Items: tgN},
-		{Key: "residents", Name: "Реестр резидентов", URL: cfg.ResidentsURL, Enabled: cfg.ResidentsEnabled, HealthState: healthByName["residents"], ItemsLastRun: itemsLastRun["residents"], Items: residentsN},
-	}
-
-	rep := audit.Build(cov)
-	rep.GeneratedAt = time.Now()
-	return rep
-}
-
 // cmdAudit строит отчёт о полноте охвата источников и сохраняет его в ReportDir.
 func cmdAudit(cfg config.Config) error {
 	ctx := context.Background()
@@ -2099,7 +1842,7 @@ func cmdAudit(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	rep := buildCoverageReport(ctx, cfg, st)
+	rep := audit.BuildCoverageReport(ctx, cfg, st)
 	md := audit.ToMarkdown(rep)
 
 	if err := os.MkdirAll(cfg.ReportDir, 0o755); err != nil {

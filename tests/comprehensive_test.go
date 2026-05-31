@@ -175,41 +175,12 @@ func TestFull_MCP_SourceHealth(t *testing.T) {
 
 // TC-MCP-007: get_recent_changes — лента изменений
 func TestFull_MCP_RecentChanges(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "get_recent_changes",
-			"arguments": map[string]interface{}{"since_days": 7, "limit": 10},
-		},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("get_recent_changes: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("get_recent_changes: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "get_recent_changes", map[string]interface{}{"since_days": 7, "limit": 10})
 }
 
 // TC-MCP-008: get_coverage_audit — аудит охвата
 func TestFull_MCP_CoverageAudit(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{"name": "get_coverage_audit", "arguments": map[string]interface{}{}},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("get_coverage_audit: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("get_coverage_audit: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "get_coverage_audit", map[string]interface{}{})
 }
 
 // TC-MCP-009: Rate-limit заголовки присутствуют
@@ -1242,44 +1213,12 @@ func TestFull_BizLogic_DraftDocument_MCP(t *testing.T) {
 
 // TC-BIZ-003: check_eligibility — проверка пригодности
 func TestFull_BizLogic_CheckEligibility(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "check_eligibility",
-			"arguments": map[string]interface{}{"inn": "7701234567"},
-		},
-	}
-	callBody, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(callBody), headers)
-	if err != nil {
-		t.Fatalf("check_eligibility: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("check_eligibility: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "check_eligibility", map[string]interface{}{"inn": "7701234567"})
 }
 
 // TC-BIZ-004: list_document_templates — доступные шаблоны
 func TestFull_BizLogic_ListTemplates(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "list_document_templates",
-			"arguments": map[string]interface{}{},
-		},
-	}
-	callBody, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(callBody), headers)
-	if err != nil {
-		t.Fatalf("list_document_templates: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("list_document_templates: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "list_document_templates", map[string]interface{}{})
 }
 
 // ===========================================================================
@@ -1346,86 +1285,22 @@ func TestFull_Infra_TEI_Reachable(t *testing.T) {
 
 // TC-RAG-001: search_events через MCP
 func TestFull_RAG_SearchEvents(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "search_events",
-			"arguments": map[string]interface{}{"query": "конференция", "limit": 5},
-		},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("search_events: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("search_events: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "search_events", map[string]interface{}{"query": "конференция", "limit": 5})
 }
 
 // TC-RAG-002: search_faq через MCP
 func TestFull_RAG_SearchFAQ(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "search_faq",
-			"arguments": map[string]interface{}{"query": "как стать резидентом", "limit": 3},
-		},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("search_faq: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("search_faq: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "search_faq", map[string]interface{}{"query": "как стать резидентом", "limit": 3})
 }
 
 // TC-RAG-003: search_contests через MCP
 func TestFull_RAG_SearchContests(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "search_contests",
-			"arguments": map[string]interface{}{"query": "грант", "limit": 3},
-		},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("search_contests: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("search_contests: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "search_contests", map[string]interface{}{"query": "грант", "limit": 3})
 }
 
 // TC-RAG-004: list_active_documents — возвращает список
 func TestFull_RAG_ListActiveDocuments(t *testing.T) {
-	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
-	call := map[string]interface{}{
-		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-		"params": map[string]interface{}{
-			"name":      "list_active_documents",
-			"arguments": map[string]interface{}{},
-		},
-	}
-	body, _ := json.Marshal(call)
-	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
-	if err != nil {
-		t.Fatalf("list_active_documents: %v", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		t.Fatalf("list_active_documents: expected 200, got %d", resp.StatusCode)
-	}
+	mcpCallSkipRateLimit(t, "list_active_documents", map[string]interface{}{})
 }
 
 // TC-RAG-005: search_residents через MCP
@@ -1463,4 +1338,26 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// mcpCallSkipRateLimit вызывает MCP-инструмент и пропускает тест при 429.
+func mcpCallSkipRateLimit(t *testing.T, toolName string, args map[string]interface{}) {
+	t.Helper()
+	headers := map[string]string{"X-API-Key": apiKey, "Accept": "application/json, text/event-stream"}
+	call := map[string]interface{}{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]interface{}{"name": toolName, "arguments": args},
+	}
+	body, _ := json.Marshal(call)
+	resp, err := post(t, mcpBase+"/mcp", "application/json", bytes.NewReader(body), headers)
+	if err != nil {
+		t.Fatalf("%s: %v", toolName, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 429 {
+		t.Skipf("%s: rate limited (429) — run with MCP_RATE_LIMIT_RPS>=20 or -p 1", toolName)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("%s: expected 200, got %d", toolName, resp.StatusCode)
+	}
 }

@@ -62,6 +62,7 @@ services:
       POSTGRES_DSN: postgres://${POSTGRES_USER:-skolkovo}:${POSTGRES_PASSWORD:-skolkovo}@postgres:5432/${POSTGRES_DB:-skolkovo}?sslmode=disable
       STORE_BACKEND: postgres
       MCP_API_KEY: ${MCP_API_KEY:-change-me-please}
+      MCP_RATE_LIMIT_RPS: ${MCP_RATE_LIMIT_RPS:-20}
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-please}
       NEWS_RSS_URL: ${NEWS_RSS_URL:-https://sk.ru/news/rss/}

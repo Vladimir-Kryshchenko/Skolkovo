@@ -362,8 +362,13 @@ func TestResidency_ContestsPage(t *testing.T) {
 // Consultant Dashboard (:8094)
 // ===========================================================================
 
+func consultantHeader() string {
+	cred := base64.StdEncoding.EncodeToString([]byte("consultant:change-me-please"))
+	return "Basic " + cred
+}
+
 func TestConsultant_Dashboard(t *testing.T) {
-	resp, err := get(t, consultantBase+"/consultant/dashboard", map[string]string{"Authorization": authHeader()})
+	resp, err := get(t, consultantBase+"/consultant/dashboard", map[string]string{"Authorization": consultantHeader()})
 	if err != nil {
 		t.Fatalf("Consultant /dashboard failed: %v", err)
 	}

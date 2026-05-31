@@ -69,6 +69,7 @@ import (
 	"baza-skolkovo/src/preferences"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/regulations"
+	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/residents"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/telegram"
@@ -175,25 +176,47 @@ func newPipeline(cfg config.Config, st store.Store, svc *rag.Service) *pipeline.
 		ReportDir: cfg.ReportDir,
 	}
 
-	// Лента изменений и мониторинг свежести доступны только на Postgres-бэкенде.
+	// Telegram-алерты консультанту об изменениях (no-op, если токен/чат не заданы).
+	p.TG = notify.NewTelegramNotifier(os.Getenv("TELEGRAM_BOT_TOKEN"), cfg.ConsultantTelegramChatID)
+
+	// Лента изменений, мониторинг свежести и трек «Актуальность изменений»
+	// доступны только на Postgres-бэкенде.
 	if ps, ok := st.(*store.PostgresStore); ok {
 		ctx := context.Background()
-		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err != nil {
+		pool := ps.Pool()
+		if cs, err := changes.NewPostgresStore(ctx, pool); err != nil {
 			log.Printf("[pipeline] лента изменений недоступна: %v", err)
 		} else {
 			sc.Changes = cs
 			newsMon.Changes = cs
 			p.Changes = cs
 		}
-		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err != nil {
+		if hs, err := health.NewPostgresStore(ctx, pool); err != nil {
 			log.Printf("[pipeline] мониторинг свежести недоступен: %v", err)
 		} else {
 			p.Health = hs
 		}
+
+		// Трек «Актуальность изменений»: версии документов, анализатор важности
+		// (LLM с эвристическим фоллбэком) и адресная рассылка уведомлений.
+		versionStore := store.NewPostgresVersionStore(pool)
+		sc.Versions = versionStore
+		p.Analyzer = relevance.NewAnalyzer(versionStore, aimodels.NewStore(pool))
+		mlr := mailer.New(mailer.Config{
+			Host:     cfg.SMTPHost,
+			Port:     cfg.SMTPPort,
+			Username: cfg.SMTPUser,
+			Password: cfg.SMTPPassword,
+			From:     cfg.SMTPFrom,
+		})
+		p.Dispatcher = relevance.NewDispatcher(
+			store.NewPostgresClientStore(pool),
+			store.NewPostgresNotificationStore(pool),
+			mlr,
+			p.TG,
+		)
 	}
 
-	// Telegram-алерты консультанту об изменениях (no-op, если токен/чат не заданы).
-	p.TG = notify.NewTelegramNotifier(os.Getenv("TELEGRAM_BOT_TOKEN"), cfg.ConsultantTelegramChatID)
 	return p
 }
 
@@ -1006,6 +1029,9 @@ func cmdServe(cfg config.Config) error {
 				Generator:      gen,
 				Mailer:         mlr,
 			}
+			if pgs, ok := st.(*store.PostgresStore); ok {
+				portalStores.NotifStore = store.NewPostgresNotificationStore(pgs.Pool())
+			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
 			if err := ps.Start(ctx); err != nil {
@@ -1057,6 +1083,9 @@ func cmdServe(cfg config.Config) error {
 				consultantStores.ClientStore = pcs
 				consultantStores.DeadlineStore = pcs
 				consultantStores.ChecklistStore = pcs
+				if cs, err := changes.NewPostgresStore(context.Background(), ps.Pool()); err == nil {
+					consultantStores.ChangesStore = cs
+				}
 			}
 			if consultantStores.ClientStore != nil {
 				mux := admin.RegisterConsultantRoutes(nil, consultantStores)

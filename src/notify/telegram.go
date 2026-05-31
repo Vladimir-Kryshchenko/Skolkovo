@@ -15,12 +15,12 @@ import (
 
 // TelegramAlert — уведомление в Telegram.
 type TelegramAlert struct {
-	Type     string    // "doc_changed" | "deadline" | "escalation" | "new_npa" | "new_contest"
-	Severity string    // "info" | "warning" | "critical"
+	Type     string // "doc_changed" | "deadline" | "escalation" | "new_npa" | "new_contest"
+	Severity string // "info" | "warning" | "critical"
 	Title    string
 	Body     string
-	ClientID string    // если относится к конкретному клиенту
-	URL      string    // ссылка для перехода
+	ClientID string // если относится к конкретному клиенту
+	URL      string // ссылка для перехода
 	At       time.Time
 }
 
@@ -82,6 +82,36 @@ func (t *TelegramNotifier) SendDocumentChanged(ctx context.Context, docTitle, ca
 		changeType,
 		time.Now().Format("02.01.2006 15:04"),
 	)
+	return t.sendMessage(ctx, text)
+}
+
+// SendDocumentChangeAlert уведомляет консультанта о проанализированном изменении
+// документа: важность, суть «что изменилось» и сколько резидентов затронуто.
+func (t *TelegramNotifier) SendDocumentChangeAlert(ctx context.Context, title, category, severity string, affected int, summary, url string) error {
+	if !t.enabled {
+		return nil
+	}
+	emoji := "🟡"
+	label := "Важное изменение"
+	if severity == "critical" {
+		emoji, label = "🔴", "КРИТИЧНОЕ изменение"
+	}
+
+	text := fmt.Sprintf("%s *%s*\n\n"+
+		"*Документ:* %s\n"+
+		"*Категория:* %s\n"+
+		"*Суть:* %s\n"+
+		"*Затронуто резидентов:* %d",
+		emoji, label,
+		escapeMarkdown(title),
+		escapeMarkdown(category),
+		escapeMarkdown(summary),
+		affected,
+	)
+	if url != "" {
+		text += "\n*Источник:* " + escapeMarkdown(url)
+	}
+	text += "\n*Время:* " + time.Now().Format("02.01.2006 15:04")
 	return t.sendMessage(ctx, text)
 }
 

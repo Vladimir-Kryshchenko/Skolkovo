@@ -42,6 +42,15 @@ func Notify(ctx context.Context, recs []Recorder, ev Event) {
 	}
 }
 
+// Severity — важность изменения для резидентов.
+type Severity string
+
+const (
+	SeverityInfo     Severity = "info"     // информационное, реакция не требуется
+	SeverityWarning  Severity = "warning"  // стоит ознакомиться
+	SeverityCritical Severity = "critical" // требует действий (изменились требования/сроки)
+)
+
 // Event — единичное зафиксированное изменение.
 type Event struct {
 	ID         string    `json:"id"`
@@ -54,14 +63,37 @@ type Event struct {
 	Summary    string    `json:"summary,omitempty"` // краткое человекочитаемое описание изменения
 	DetectedAt time.Time `json:"detected_at"`
 	Notified   bool      `json:"notified"`
+
+	// Поля обогащения анализатором актуальности (трек «Актуальность изменений»).
+	Severity        Severity `json:"severity,omitempty"`         // важность (info|warning|critical)
+	AnalysisSummary string   `json:"analysis_summary,omitempty"` // «что изменилось по сути»
+	AffectedStages  []string `json:"affected_stages,omitempty"`  // стадии резидентства, которых касается
+	DiffAdded       int      `json:"diff_added,omitempty"`       // добавлено строк
+	DiffRemoved     int      `json:"diff_removed,omitempty"`     // удалено строк
+	Analyzed        bool     `json:"analyzed"`                   // обработано анализатором
 }
 
 // Filter ограничивает выборку ленты изменений. Нулевые поля — без ограничения.
 type Filter struct {
-	Since      time.Time
-	EntityType string
-	Category   string
-	Limit      int
+	Since       time.Time
+	EntityType  string
+	Category    string
+	MinSeverity Severity // минимальная важность (info<warning<critical); пусто — без фильтра
+	Limit       int
+}
+
+// SeverityRank возвращает порядковый ранг важности для сравнения (info<warning<critical).
+func SeverityRank(s Severity) int {
+	switch s {
+	case SeverityCritical:
+		return 3
+	case SeverityWarning:
+		return 2
+	case SeverityInfo:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // Recorder фиксирует изменение. Реализуется Store и передаётся в парсеры,
@@ -69,6 +101,15 @@ type Filter struct {
 // Recorder и пропускают вызов, если оно nil.
 type Recorder interface {
 	Record(ctx context.Context, ev Event) error
+}
+
+// Enrichment — результат анализа изменения (важность, суть, затронутые стадии).
+type Enrichment struct {
+	Severity        Severity
+	AnalysisSummary string
+	AffectedStages  []string
+	DiffAdded       int
+	DiffRemoved     int
 }
 
 // Store — хранилище ленты изменений.
@@ -80,4 +121,9 @@ type Store interface {
 	Unnotified(ctx context.Context, limit int) ([]Event, error)
 	// MarkNotified помечает изменения как отправленные.
 	MarkNotified(ctx context.Context, ids []string) error
+	// Unanalyzed возвращает события указанного типа, ещё не обработанные
+	// анализатором актуальности. entityType пустой — без фильтра по типу.
+	Unanalyzed(ctx context.Context, entityType string, limit int) ([]Event, error)
+	// Enrich записывает результат анализа и помечает событие обработанным.
+	Enrich(ctx context.Context, id string, e Enrichment) error
 }

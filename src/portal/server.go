@@ -28,6 +28,14 @@ type PortalConfig struct {
 	MCPAPIKey string // API-ключ для MCP
 }
 
+// NotificationReader — доступ к персональным уведомлениям клиента (inbox).
+// Реализуется *store.PostgresNotificationStore.
+type NotificationReader interface {
+	ListForClient(ctx context.Context, clientID string, limit int) ([]*model.ClientNotification, error)
+	CountUnread(ctx context.Context, clientID string) (int, error)
+	MarkRead(ctx context.Context, id, clientID string) error
+}
+
 // PortalStores — все хранилища, необходимые порталу.
 type PortalStores struct {
 	ClientStore    store.ClientStore
@@ -37,6 +45,7 @@ type PortalStores struct {
 	DocStore       store.ClientDocumentStore
 	DocumentStore  store.Store                  // реестр документов (для скачивания)
 	ChangeStore    changes.Store                // лента изменений; может быть nil
+	NotifStore     NotificationReader           // inbox уведомлений клиента; может быть nil
 	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
 	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
@@ -90,12 +99,15 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /generate", ps.requireAuth(ps.handleGenerate))
 	mux.HandleFunc("POST /generate", ps.requireAuth(ps.handleGenerateSubmit))
 	mux.HandleFunc("GET /download", ps.requireAuth(ps.handleDownload))
+	mux.HandleFunc("GET /notifications", ps.requireAuth(ps.handleNotifications))
+	mux.HandleFunc("POST /notifications/read", ps.requireAuth(ps.handleNotificationRead))
 
 	// JSON API
 	mux.HandleFunc("GET /api/me", ps.requireAuthJSON(ps.apiMe))
 	mux.HandleFunc("GET /api/checklists", ps.requireAuthJSON(ps.apiChecklists))
 	mux.HandleFunc("GET /api/deadlines", ps.requireAuthJSON(ps.apiDeadlines))
 	mux.HandleFunc("GET /api/documents", ps.requireAuthJSON(ps.apiDocuments))
+	mux.HandleFunc("GET /api/notifications", ps.requireAuthJSON(ps.apiNotifications))
 
 	log.Printf("[portal] портал клиента слушает %s", ps.config.Addr)
 

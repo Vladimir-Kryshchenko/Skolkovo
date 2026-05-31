@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 )
@@ -22,6 +23,7 @@ type ConsultantDashboardStores struct {
 	ClientStore    store.ClientStore
 	DeadlineStore  store.DeadlineStore
 	ChecklistStore store.ChecklistStore
+	ChangesStore   changes.Store // лента изменений (опц.): блок «Важные изменения»
 }
 
 // ClientRow — строка в таблице дашборда.
@@ -52,8 +54,18 @@ func ConsultantDashboardHandler(stores ConsultantDashboardStores) http.HandlerFu
 			return urgencyOrder(rows[i].Urgency) < urgencyOrder(rows[j].Urgency)
 		})
 
+		// Важные изменения документации за 30 дней (warning + critical).
+		var recentChanges []changes.Event
+		if stores.ChangesStore != nil {
+			recentChanges, _ = stores.ChangesStore.Recent(ctx, changes.Filter{
+				Since:       time.Now().AddDate(0, 0, -30),
+				MinSeverity: changes.SeverityWarning,
+				Limit:       15,
+			})
+		}
+
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprint(w, renderDashboard(rows))
+		fmt.Fprint(w, renderDashboard(rows, recentChanges))
 	}
 }
 
@@ -212,7 +224,7 @@ func RegisterConsultantRoutes(mux *http.ServeMux, stores ConsultantDashboardStor
 // HTML-рендеринг
 // ---------------------------------------------------------------------------
 
-func renderDashboard(rows []ClientRow) string {
+func renderDashboard(rows []ClientRow, recentChanges []changes.Event) string {
 	now := time.Now()
 
 	// Счётчики для summary.
@@ -587,6 +599,36 @@ a.client-link:hover { text-decoration: underline; }
 </div>
 `, overdue, critical, warning, okCount, len(rows)))
 
+	// Блок «Важные изменения документации».
+	if len(recentChanges) > 0 {
+		sb.WriteString(`<div class="table-wrap"><div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px">
+<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px">⚠️ Важные изменения документации (30 дней)</div>`)
+		for _, ev := range recentChanges {
+			badgeClass, badgeText := severityBadge(ev.Severity)
+			summary := ev.AnalysisSummary
+			if summary == "" {
+				summary = ev.Summary
+			}
+			stages := ""
+			if len(ev.AffectedStages) > 0 {
+				stages = fmt.Sprintf(`<div style="font-size:12px;color:var(--text-muted);margin-top:2px">Стадии: %s</div>`,
+					html.EscapeString(strings.Join(ev.AffectedStages, ", ")))
+			}
+			title := html.EscapeString(ev.Title)
+			if ev.SourceURL != "" {
+				title = fmt.Sprintf(`<a class="client-link" href="%s" target="_blank" rel="noopener">%s</a>`,
+					html.EscapeString(ev.SourceURL), title)
+			}
+			sb.WriteString(fmt.Sprintf(`<div style="padding:10px 0;border-bottom:1px solid var(--border)">
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="badge %s">%s</span><span style="font-weight:500">%s</span><span style="font-size:12px;color:var(--text-muted)">%s</span></div>
+  <div style="font-size:13px;margin-top:4px">%s</div>%s
+</div>`, badgeClass, badgeText, title,
+				ev.DetectedAt.Format("02.01.2006"),
+				html.EscapeString(summary), stages))
+		}
+		sb.WriteString(`</div></div>`)
+	}
+
 	sb.WriteString(`<div class="table-wrap"><table>
 <thead><tr>
   <th data-tooltip="Название компании и ИНН клиента">Клиент / ИНН</th>
@@ -701,6 +743,18 @@ func stageInitial(stage string) string {
 	}
 	// Возвращаем первый символ (кириллица поддерживается).
 	return strings.ToUpper(string([]rune(stage)[0]))
+}
+
+// severityBadge возвращает CSS-класс и подпись для важности изменения.
+func severityBadge(s changes.Severity) (class, text string) {
+	switch s {
+	case changes.SeverityCritical:
+		return "badge-critical", "Критично"
+	case changes.SeverityWarning:
+		return "badge-warning", "Важно"
+	default:
+		return "badge-ok", "Инфо"
+	}
 }
 
 func urgencyBadge(u string) (class, text string) {

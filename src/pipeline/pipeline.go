@@ -17,19 +17,24 @@ import (
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/scraper"
 )
 
 // Pipeline объединяет подсистемы одного цикла актуализации.
 type Pipeline struct {
-	Scraper   *scraper.Scraper
-	Rag       *rag.Service             // может быть nil — тогда без индексации
-	News      *news.Monitor            // может быть nil — тогда без новостей
-	Notifier  *notify.Notifier         // webhook; может быть nil
-	Changes   changes.Store            // лента изменений; может быть nil
-	TG        *notify.TelegramNotifier // Telegram-алерты консультанту; может быть nil
-	Health    health.Store             // мониторинг свежести источников; может быть nil
-	ReportDir string
+	Scraper  *scraper.Scraper
+	Rag      *rag.Service             // может быть nil — тогда без индексации
+	News     *news.Monitor            // может быть nil — тогда без новостей
+	Notifier *notify.Notifier         // webhook; может быть nil
+	Changes  changes.Store            // лента изменений; может быть nil
+	TG       *notify.TelegramNotifier // Telegram-алерты консультанту; может быть nil
+	Health   health.Store             // мониторинг свежести источников; может быть nil
+	// Analyzer/Dispatcher — трек «Актуальность изменений». Если Analyzer задан,
+	// изменения документов проходят классификацию важности и адресную рассылку.
+	Analyzer   *relevance.Analyzer
+	Dispatcher *relevance.Dispatcher
+	ReportDir  string
 }
 
 // RunOnce выполняет один полный цикл актуализации.
@@ -70,8 +75,55 @@ func (p *Pipeline) RunOnce(ctx context.Context) error {
 	}
 
 	p.maybeNotify(ctx, rep, newsRes)
+	p.processRelevance(ctx)
 	p.notifyChanges(ctx)
 	return nil
+}
+
+// processRelevance обрабатывает необработанные изменения документов: считает дифф,
+// классифицирует важность (LLM/эвристика), определяет затронутые стадии и рассылает
+// адресные уведомления. Обработанные события помечаются notified, поэтому generic
+// notifyChanges их не дублирует. Если анализатор не подключён — шаг пропускается,
+// и документы уходят в notifyChanges как раньше.
+func (p *Pipeline) processRelevance(ctx context.Context) {
+	if p.Changes == nil || p.Analyzer == nil {
+		return
+	}
+	evs, err := p.Changes.Unanalyzed(ctx, changes.EntityDocument, 50)
+	if err != nil {
+		log.Printf("[pipeline] актуальность: чтение очереди: %v", err)
+		return
+	}
+	if len(evs) == 0 {
+		return
+	}
+	var done []string
+	var alerts int
+	for _, ev := range evs {
+		res, err := p.Analyzer.Analyze(ctx, ev)
+		if err != nil {
+			log.Printf("[pipeline] актуальность: анализ %s: %v", ev.ID, err)
+			continue // оставляем необработанным — повторим в следующем цикле
+		}
+		if err := p.Changes.Enrich(ctx, ev.ID, res.ToEnrichment()); err != nil {
+			log.Printf("[pipeline] актуальность: запись %s: %v", ev.ID, err)
+			continue
+		}
+		if p.Dispatcher != nil {
+			if n, err := p.Dispatcher.Dispatch(ctx, ev, res); err != nil {
+				log.Printf("[pipeline] актуальность: рассылка %s: %v", ev.ID, err)
+			} else {
+				alerts += n
+			}
+		}
+		done = append(done, ev.ID)
+	}
+	if len(done) > 0 {
+		if err := p.Changes.MarkNotified(ctx, done); err != nil {
+			log.Printf("[pipeline] актуальность: пометка notified: %v", err)
+		}
+		log.Printf("[pipeline] актуальность: обработано изменений %d, адресных уведомлений %d", len(done), alerts)
+	}
 }
 
 // notifyChanges рассылает Telegram-алерты по неотправленным изменениям ленты

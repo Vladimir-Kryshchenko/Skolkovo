@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,10 +21,19 @@ import (
 	"golang.org/x/net/html"
 
 	"baza-skolkovo/src/changes"
+	"baza-skolkovo/src/common/extract"
 	"baza-skolkovo/src/common/feed"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 )
+
+// VersionArchiver сохраняет снимок версии документа (извлечённый текст редакции)
+// для последующего семантического диффа. Реализуется store.PostgresVersionStore.
+// Опционален: если nil — история версий не ведётся.
+type VersionArchiver interface {
+	SaveVersion(ctx context.Context, v *model.DocVersion) (int, error)
+	CountVersions(ctx context.Context, documentID string) (int, error)
+}
 
 // userAgent — браузерный UA: часть страниц Telligent отдаётся только «браузерам».
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
@@ -58,6 +68,9 @@ type Scraper struct {
 	// Changes — необязательная лента изменений. Если задана, скрейпер фиксирует
 	// каждое новое/обновлённое/устаревшее изменение документа.
 	Changes changes.Recorder
+	// Versions — необязательное хранилище версий документов. Если задано,
+	// скрейпер сохраняет снимок текста каждой редакции (для диффа «что изменилось»).
+	Versions VersionArchiver
 }
 
 // recordChange фиксирует изменение документа в ленте (если она подключена).
@@ -316,6 +329,9 @@ func (s *Scraper) download(ctx context.Context, fileURL, title, category string,
 			return nil
 		}
 		rep.Updated++
+		// Документ обновился: сохраняем снимок ПРЕДЫДУЩЕЙ редакции до перезаписи
+		// файла, иначе старый текст будет потерян и дифф станет невозможен.
+		s.archiveOldVersion(ctx, existing)
 	} else {
 		rep.Downloaded++
 		isNew = true
@@ -362,7 +378,83 @@ func (s *Scraper) download(ctx context.Context, fileURL, title, category string,
 		summary = "Тело файла изменилось (новый хэш)"
 	}
 	s.recordChange(ctx, doc, isNew, summary)
+	s.saveNewVersion(ctx, doc)
 	return nil
+}
+
+// archiveOldVersion сохраняет снимок предыдущей редакции документа до перезаписи
+// файла: копирует старый файл в Архив/versions/{id}/ и, если история версий для
+// документа ещё пуста, заводит запись о старой редакции. Best-effort (ошибки логируются).
+func (s *Scraper) archiveOldVersion(ctx context.Context, existing model.Document) {
+	if s.Versions == nil || existing.LocalPath == "" {
+		return
+	}
+	oldText, err := extract.Text(existing.LocalPath)
+	if err != nil {
+		// Текст извлечь не удалось — снимок всё равно полезен для пометки факта.
+		oldText = ""
+	}
+	archived := s.archiveFile(existing.ID, existing.FileHash, existing.LocalPath)
+
+	// Если истории ещё нет (документ заведён до появления версионирования),
+	// фиксируем старую редакцию первой версией, чтобы диффу было с чем сравнивать.
+	if n, err := s.Versions.CountVersions(ctx, existing.ID); err == nil && n == 0 {
+		if _, err := s.Versions.SaveVersion(ctx, &model.DocVersion{
+			DocumentID:    existing.ID,
+			FileHash:      existing.FileHash,
+			ExtractedText: oldText,
+			ArchivedPath:  archived,
+		}); err != nil {
+			log.Printf("[scraper] версия (старая) %s: %v", existing.ID, err)
+		}
+	}
+}
+
+// saveNewVersion фиксирует снимок только что скачанной редакции документа.
+func (s *Scraper) saveNewVersion(ctx context.Context, doc model.Document) {
+	if s.Versions == nil || doc.LocalPath == "" {
+		return
+	}
+	text, err := extract.Text(doc.LocalPath)
+	if err != nil {
+		text = ""
+	}
+	if _, err := s.Versions.SaveVersion(ctx, &model.DocVersion{
+		DocumentID:    doc.ID,
+		FileHash:      doc.FileHash,
+		ExtractedText: text,
+		ArchivedPath:  doc.LocalPath,
+	}); err != nil {
+		log.Printf("[scraper] версия (новая) %s: %v", doc.ID, err)
+	}
+}
+
+// archiveFile копирует файл редакции в Архив/versions/{docID}/{hash}{ext}.
+// Возвращает путь к копии или "" при неудаче.
+func (s *Scraper) archiveFile(docID, hash, srcPath string) string {
+	if hash == "" {
+		return ""
+	}
+	dir := filepath.Join(s.OutDir, "Архив", "versions", safeSegment(docID))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	dst := filepath.Join(dir, hash+filepath.Ext(srcPath))
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return ""
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return ""
+	}
+	return dst
+}
+
+// safeSegment делает строку безопасной для использования как имя папки.
+func safeSegment(s string) string {
+	r := strings.NewReplacer("/", "_", "\\", "_", ":", "_", "*", "_", "?", "_",
+		"\"", "_", "<", "_", ">", "_", "|", "_")
+	return r.Replace(s)
 }
 
 type link struct {

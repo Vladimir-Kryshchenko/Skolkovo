@@ -6,8 +6,19 @@ import (
 	"strings"
 	"time"
 
+	"baza-skolkovo/src/aimodels"
 	rag "baza-skolkovo/src/rag_service"
 )
+
+// LLMProvider отдаёт конфигурацию агентов и моделей (реализуется *aimodels.Store).
+// Может быть nil — тогда консультант формирует ответ из RAG-фрагментов без LLM.
+type LLMProvider interface {
+	ListAgents(ctx context.Context) ([]aimodels.Agent, error)
+	GetModel(ctx context.Context, id string) (aimodels.Model, error)
+}
+
+// chatFunc — вызов LLM (по умолчанию aimodels.ChatWithAgent; переопределяется в тестах).
+type chatFunc func(ctx context.Context, m aimodels.Model, a aimodels.Agent, userMessage string) (string, int, error)
 
 // ConsultantResponse — ответ агента-консультанта.
 type ConsultantResponse struct {
@@ -49,6 +60,8 @@ type ConsultantAgent struct {
 	mcpURL     string
 	mcpAPIKey  string
 	logger     QueryLogger
+	ai         LLMProvider // опционально: LLM-синтез ответа
+	chat       chatFunc
 }
 
 // NewConsultantAgent создаёт агента-консультанта.
@@ -57,7 +70,15 @@ func NewConsultantAgent(ragSvc *rag.Service, mcpURL, mcpAPIKey string) *Consulta
 		ragService: ragSvc,
 		mcpURL:     mcpURL,
 		mcpAPIKey:  mcpAPIKey,
+		chat:       aimodels.ChatWithAgent,
 	}
+}
+
+// WithLLM включает синтез ответа языковой моделью (агент типа Consultant).
+// Без него консультант возвращает найденные RAG-фрагменты как есть.
+func (a *ConsultantAgent) WithLLM(ai LLMProvider) *ConsultantAgent {
+	a.ai = ai
+	return a
 }
 
 // SetLogger устанавливает логгер для запросов консультанта.
@@ -68,9 +89,9 @@ func (a *ConsultantAgent) SetLogger(logger QueryLogger) {
 // Ask отвечает на вопрос, используя RAG-поиск по нормативным документам.
 //
 // Цепочка обработки:
-//   1. RAG-поиск (top 5 результатов).
-//   2. Формирование ответа из найденных чанков (MVP: без LLM).
-//   3. Добавление ссылок на источники.
+//  1. RAG-поиск (top 5 результатов).
+//  2. Формирование ответа из найденных чанков (MVP: без LLM).
+//  3. Добавление ссылок на источники.
 //
 // Параметры:
 //   - ctx — контекст с возможностью отмены.
@@ -97,15 +118,17 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 		return resp, nil
 	}
 
-	// Шаг 2: Формирование ответа из найденных чанков.
-	var parts []string
-	for i, r := range results {
-		part := fmt.Sprintf("[%d] %s\n%s", i+1, r.Title, r.Text)
-		parts = append(parts, part)
+	// Шаг 2: Синтез ответа. Если подключён LLM — генерируем связный ответ с
+	// опорой на найденные фрагменты; иначе отдаём сами фрагменты.
+	answer, usedLLM := a.synthesize(ctx, question, results)
+	if !usedLLM {
+		var parts []string
+		for i, r := range results {
+			parts = append(parts, fmt.Sprintf("[%d] %s\n%s", i+1, r.Title, r.Text))
+		}
+		answer = fmt.Sprintf("По вашему запросу найдено %d релевантных фрагментов:\n\n%s",
+			len(results), strings.Join(parts, "\n\n---\n\n"))
 	}
-
-	answer := strings.Join(parts, "\n\n---\n\n")
-	answer = fmt.Sprintf("По вашему запросу найдено %d релевантных фрагментов:\n\n%s", len(results), answer)
 
 	// Шаг 3: Ссылки на источники.
 	sources := make([]DocumentReference, 0, len(results))
@@ -129,6 +152,58 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 
 	a.logQuery(ctx, question, resp, clientID)
 	return resp, nil
+}
+
+// synthesize формирует связный ответ языковой моделью на основе найденных
+// фрагментов. Возвращает ok=false, если LLM не настроен или вызов не удался —
+// тогда вызывающий код отдаёт сами фрагменты.
+func (a *ConsultantAgent) synthesize(ctx context.Context, question string, results []rag.Result) (string, bool) {
+	if a.ai == nil {
+		return "", false
+	}
+	mdl, agent, ok := a.consultantModel(ctx)
+	if !ok {
+		return "", false
+	}
+	chat := a.chat
+	if chat == nil {
+		chat = aimodels.ChatWithAgent
+	}
+
+	var b strings.Builder
+	b.WriteString("Вопрос пользователя: ")
+	b.WriteString(question)
+	b.WriteString("\n\nФрагменты из базы знаний Сколково (используй только их, ссылайся на номер источника [N]):\n\n")
+	for i, r := range results {
+		fmt.Fprintf(&b, "[%d] %s\n%s\n\n", i+1, r.Title, r.Text)
+	}
+	b.WriteString("Дай краткий точный ответ на русском со ссылками на источники [N]. " +
+		"Если фрагменты не содержат ответа — честно сообщи об этом.")
+
+	answer, _, err := chat(ctx, mdl, agent, b.String())
+	if err != nil || strings.TrimSpace(answer) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(answer), true
+}
+
+// consultantModel находит включённого агента-консультанта и его включённую модель.
+func (a *ConsultantAgent) consultantModel(ctx context.Context) (aimodels.Model, aimodels.Agent, bool) {
+	agents, err := a.ai.ListAgents(ctx)
+	if err != nil {
+		return aimodels.Model{}, aimodels.Agent{}, false
+	}
+	for _, ag := range agents {
+		if ag.AgentType != aimodels.AgentConsultant || !ag.Enabled || ag.ModelID == "" {
+			continue
+		}
+		mdl, err := a.ai.GetModel(ctx, ag.ModelID)
+		if err != nil || !mdl.Enabled || strings.TrimSpace(mdl.APIKey) == "" {
+			continue
+		}
+		return mdl, ag, true
+	}
+	return aimodels.Model{}, aimodels.Agent{}, false
 }
 
 // LogQuery вручную логирует запрос к консультанту.

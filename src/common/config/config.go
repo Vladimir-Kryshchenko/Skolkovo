@@ -35,6 +35,13 @@ type Config struct {
 	FetchLimit      int    // сколько документов скачивать за прогон (0 — все)
 	FetchWait       time.Duration
 
+	// Профиль «человеческого» темпа массового скачивания
+	FetchBatchSize    int           // файлов до длинного перерыва (0 — без перерывов)
+	FetchBreakMin     time.Duration // мин. длительность длинного перерыва
+	FetchBreakMax     time.Duration // макс. длительность длинного перерыва
+	FetchLongPausePct int           // вероятность (0-100) длинной паузы между файлами
+	CrawlMaxPages     int           // лимит страниц при полном обходе сайта
+
 	// Мероприятия
 	EventsRSSURL    string
 	EventsSourceURL string
@@ -138,6 +145,12 @@ func Load() Config {
 		ProxyURL:        env("PROXY_URL", ""),
 		FetchLimit:      envInt("FETCH_LIMIT", 0),
 		FetchWait:       envDuration("FETCH_WAIT", 7*time.Second),
+
+		FetchBatchSize:    envInt("FETCH_BATCH_SIZE", 30),
+		FetchBreakMin:     envDuration("FETCH_BREAK_MIN", 60*time.Second),
+		FetchBreakMax:     envDuration("FETCH_BREAK_MAX", 180*time.Second),
+		FetchLongPausePct: envInt("FETCH_LONG_PAUSE_PCT", 15),
+		CrawlMaxPages:     envInt("CRAWL_MAX_PAGES", 800),
 
 		// Мероприятия
 		EventsRSSURL:    env("EVENTS_RSS_URL", ""),

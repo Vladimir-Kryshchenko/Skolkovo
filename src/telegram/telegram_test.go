@@ -126,7 +126,7 @@ func TestFetchChannelPosts_ViaRSS(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	posts, err := FetchChannelPosts(context.Background(), "testchannel", srv.URL, srv.Client())
+	posts, err := FetchChannelPosts(context.Background(), "testchannel", srv.URL+"/telegram/channel/", srv.Client())
 	if err != nil {
 		t.Fatalf("FetchChannelPosts error: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestFetchChannelPosts_ViaRSS(t *testing.T) {
 	}
 }
 
-func TestFetchChannelPosts_FallbackStub(t *testing.T) {
+func TestFetchChannelPosts_NoStubOnFailure(t *testing.T) {
 	// Сервер, который всегда возвращает 404 — RSS недоступен.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -144,18 +144,13 @@ func TestFetchChannelPosts_FallbackStub(t *testing.T) {
 	defer srv.Close()
 
 	posts, err := FetchChannelPosts(context.Background(), "testchannel", srv.URL, srv.Client())
-	if err != nil {
-		t.Fatalf("FetchChannelPosts error: %v", err)
+	// При недоступности RSS возвращаем ошибку и НЕ создаём постов-заглушек,
+	// чтобы не засорять базу знаний плейсхолдерами.
+	if err == nil {
+		t.Fatal("expected error when RSS is unavailable")
 	}
-	// Должен вернуться stub-пост.
-	if len(posts) != 1 {
-		t.Fatalf("expected 1 stub post, got %d", len(posts))
-	}
-	if !strings.Contains(posts[0].Text, "ЗАГЛУШКА") {
-		t.Errorf("expected stub text with 'ЗАГЛУШКА', got: %s", posts[0].Text)
-	}
-	if posts[0].Channel != "@testchannel" {
-		t.Errorf("expected channel '@testchannel', got '%s'", posts[0].Channel)
+	if len(posts) != 0 {
+		t.Fatalf("expected no posts on failure, got %d", len(posts))
 	}
 }
 

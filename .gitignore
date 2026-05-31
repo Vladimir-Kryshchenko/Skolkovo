@@ -36,3 +36,6 @@ Thumbs.db
 # Логи
 *.log
 logs/
+
+# Служебная папка харнесса Claude Code
+.claude/

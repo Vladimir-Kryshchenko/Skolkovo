@@ -438,10 +438,20 @@ func indexFAQToRAG(ctx context.Context, it *model.FAQItem, ragSvc *rag.Service) 
 	b.WriteString("Ответ: " + it.Answer + "\n\n")
 	b.WriteString("Источник: " + it.SourceURL)
 
-	body := b.String()
-	_ = body // хэш можно использовать для дедупликации в RAG
-
-	return nil
+	category := it.Category
+	if category == "" {
+		category = "FAQ"
+	}
+	_, err := ragSvc.IndexEntity(ctx, rag.EntityDoc{
+		ID:         it.ID,
+		EntityType: "faq",
+		Title:      it.Question,
+		SourceURL:  it.SourceURL,
+		Category:   category,
+		Status:     "действует", // у FAQ нет статуса — всегда актуально
+		Text:       b.String(),
+	})
+	return err
 }
 
 // ---------------------------------------------------------------------------

@@ -11,19 +11,26 @@ import (
 // чтобы пакет работал и без отдельного прогона миграций.
 const schema = `
 CREATE TABLE IF NOT EXISTS change_events (
-    id           UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    entity_type  TEXT        NOT NULL,
-    entity_id    TEXT        NOT NULL,
-    title        TEXT        NOT NULL,
-    category     TEXT,
-    kind         TEXT        NOT NULL,
-    source_url   TEXT,
-    summary      TEXT,
-    detected_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    notified     BOOLEAN     NOT NULL DEFAULT FALSE
+    id               UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    entity_type      TEXT        NOT NULL,
+    entity_id        TEXT        NOT NULL,
+    title            TEXT        NOT NULL,
+    category         TEXT,
+    kind             TEXT        NOT NULL,
+    source_url       TEXT,
+    summary          TEXT,
+    detected_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    notified         BOOLEAN     NOT NULL DEFAULT FALSE,
+    severity         TEXT        NOT NULL DEFAULT '',
+    analysis_summary TEXT        NOT NULL DEFAULT '',
+    affected_stages  TEXT[]      NOT NULL DEFAULT '{}',
+    diff_added       INT         NOT NULL DEFAULT 0,
+    diff_removed     INT         NOT NULL DEFAULT 0,
+    analyzed         BOOLEAN     NOT NULL DEFAULT FALSE
 );
 CREATE INDEX IF NOT EXISTS idx_change_events_detected ON change_events (detected_at DESC);
 CREATE INDEX IF NOT EXISTS idx_change_events_unnotified ON change_events (detected_at) WHERE notified = FALSE;
+CREATE INDEX IF NOT EXISTS idx_change_events_unanalyzed ON change_events (detected_at) WHERE analyzed = FALSE;
 CREATE INDEX IF NOT EXISTS idx_change_events_type ON change_events (entity_type);
 `
 
@@ -58,7 +65,8 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
 
 const selectCols = `SELECT id, entity_type, entity_id, title,
        COALESCE(category,''), kind, COALESCE(source_url,''), COALESCE(summary,''),
-       detected_at, notified
+       detected_at, notified,
+       severity, analysis_summary, affected_stages, diff_added, diff_removed, analyzed
 FROM change_events`
 
 // Recent возвращает последние изменения по фильтру.
@@ -80,6 +88,21 @@ func (s *PostgresStore) Recent(ctx context.Context, f Filter) ([]Event, error) {
 		n++
 		q += " AND category = $" + itoa(n)
 		args = append(args, f.Category)
+	}
+	if f.MinSeverity != "" {
+		// Берём только события с важностью не ниже заданной.
+		var in []string
+		switch f.MinSeverity {
+		case SeverityCritical:
+			in = []string{string(SeverityCritical)}
+		case SeverityWarning:
+			in = []string{string(SeverityWarning), string(SeverityCritical)}
+		default:
+			in = []string{string(SeverityInfo), string(SeverityWarning), string(SeverityCritical)}
+		}
+		n++
+		q += " AND severity = ANY($" + itoa(n) + ")"
+		args = append(args, in)
 	}
 	q += " ORDER BY detected_at DESC"
 	limit := f.Limit
@@ -109,6 +132,41 @@ func (s *PostgresStore) MarkNotified(ctx context.Context, ids []string) error {
 	return err
 }
 
+// Unanalyzed возвращает необработанные анализатором события (сначала старые).
+func (s *PostgresStore) Unanalyzed(ctx context.Context, entityType string, limit int) ([]Event, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	q := selectCols + ` WHERE analyzed = FALSE`
+	args := []any{}
+	n := 0
+	if entityType != "" {
+		n++
+		q += " AND entity_type = $" + itoa(n)
+		args = append(args, entityType)
+	}
+	q += " ORDER BY detected_at ASC"
+	n++
+	q += " LIMIT $" + itoa(n)
+	args = append(args, limit)
+	return s.query(ctx, q, args...)
+}
+
+// Enrich записывает результат анализа и помечает событие обработанным.
+func (s *PostgresStore) Enrich(ctx context.Context, id string, e Enrichment) error {
+	stages := e.AffectedStages
+	if stages == nil {
+		stages = []string{}
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE change_events
+   SET severity = $2, analysis_summary = $3, affected_stages = $4,
+       diff_added = $5, diff_removed = $6, analyzed = TRUE
+ WHERE id = $1`,
+		id, string(e.Severity), e.AnalysisSummary, stages, e.DiffAdded, e.DiffRemoved)
+	return err
+}
+
 func (s *PostgresStore) query(ctx context.Context, q string, args ...any) ([]Event, error) {
 	rows, err := s.pool.Query(ctx, q, args...)
 	if err != nil {
@@ -118,12 +176,14 @@ func (s *PostgresStore) query(ctx context.Context, q string, args ...any) ([]Eve
 	var out []Event
 	for rows.Next() {
 		var e Event
-		var kind string
+		var kind, severity string
 		if err := rows.Scan(&e.ID, &e.EntityType, &e.EntityID, &e.Title, &e.Category,
-			&kind, &e.SourceURL, &e.Summary, &e.DetectedAt, &e.Notified); err != nil {
+			&kind, &e.SourceURL, &e.Summary, &e.DetectedAt, &e.Notified,
+			&severity, &e.AnalysisSummary, &e.AffectedStages, &e.DiffAdded, &e.DiffRemoved, &e.Analyzed); err != nil {
 			return nil, err
 		}
 		e.Kind = Kind(kind)
+		e.Severity = Severity(severity)
 		out = append(out, e)
 	}
 	return out, rows.Err()

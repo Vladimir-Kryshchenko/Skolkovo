@@ -31,6 +31,7 @@ import (
 	"baza-skolkovo/src/fetcher"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scheduler"
+	"baza-skolkovo/src/scraper"
 )
 
 // Server — HTTP-админка.
@@ -56,17 +57,30 @@ type Server struct {
 	authStore    *adminAuthStore
 }
 
+// envOrDefault возвращает значение переменной окружения или значение по умолчанию.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
 // New создаёт админку.
 func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 	fetchWait time.Duration, st store.Store, ragSvc *rag.Service) *Server {
 	authStore := newAdminAuthStore()
-	// Добавляем пользователей из ENV
+	// Администратор — обязателен, задаётся через ENV (ADMIN_USER/ADMIN_PASSWORD).
 	if user != "" && pass != "" {
 		authStore.AddUser(user, pass, "Администратор", RoleAdmin)
 	}
-	// Добавляем стандартного пользователя (если задан через доп. переменные)
-	authStore.AddUser("user", "user123", "Пользователь", RoleUser)
-	authStore.AddUser("viewer", "viewer123", "Наблюдатель", RoleViewer)
+	// Доп. учётки (редактор/наблюдатель) создаются ТОЛЬКО если их пароль задан
+	// через ENV. Никаких дефолтных слабых паролей — иначе это дыра в безопасности.
+	if p := os.Getenv("ADMIN_EDITOR_PASSWORD"); p != "" {
+		authStore.AddUser(envOrDefault("ADMIN_EDITOR_USER", "editor"), p, "Редактор", RoleUser)
+	}
+	if p := os.Getenv("ADMIN_VIEWER_PASSWORD"); p != "" {
+		authStore.AddUser(envOrDefault("ADMIN_VIEWER_USER", "viewer"), p, "Наблюдатель", RoleViewer)
+	}
 
 	// Инициализируем менеджер прокси
 	proxyManager := NewProxyManager(filepath.Join(docsDir, ".admin", "proxies.json"))
@@ -188,6 +202,7 @@ func (s *Server) ListenAndServe() error {
 	// Старые API (обратная совместимость)
 	mux.HandleFunc("POST /api/scrape", s.requireAuthJSON(s.handleAPIScrape))
 	mux.HandleFunc("POST /api/fetch", s.requireAuthJSON(s.handleAPIFetch))
+	mux.HandleFunc("POST /api/crawl", s.requireAuthJSON(s.handleAPICrawl))
 	mux.HandleFunc("POST /api/index", s.requireAuthJSON(s.handleAPIIndex))
 	mux.HandleFunc("POST /api/sync", s.requireAuthJSON(s.handleAPISync))
 	mux.HandleFunc("POST /api/seed-local", s.requireAuthJSON(s.handleAPISeedLocal))
@@ -748,6 +763,82 @@ func (s *Server) handleAPIScrape(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, true, "Парсинг RSS запущен в фоне. Обновите страницу через минуту.", "")
 }
 
+// handleAPICrawl запускает полный headless-обход сайта документов (категории +
+// sitemap + внутренние ссылки) через активный прокси и пополняет каталог.
+func (s *Server) handleAPICrawl(w http.ResponseWriter, r *http.Request) {
+	log.Println("[admin/api] запуск полного обхода сайта (crawl)")
+	activeProxyURL := s.proxyManager.GetActiveURL()
+
+	go func() {
+		ctx := context.Background()
+		f, err := fetcher.New(s.chromePath, activeProxyURL, s.fetchWait, s.proxyManager.GetActiveURL)
+		if err != nil {
+			log.Printf("[admin/api] crawl: %v", err)
+			return
+		}
+		// При WAF-бане автоматически переключаемся на рабочий прокси.
+		f.OnWAFBlocked = func() string {
+			s.proxyManager.AutoSwitch()
+			return s.proxyManager.GetActiveURL()
+		}
+
+		cats := make([]fetcher.CategorySpec, 0, len(scraper.CategoryNames))
+		for slug, name := range scraper.CategoryNames {
+			cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})
+		}
+
+		items, err := f.EnumerateSiteAuto(ctx, s.sourceURL, cats, 0)
+		if err != nil {
+			log.Printf("[admin/api] crawl: %v", err)
+			return
+		}
+		added, merged := s.upsertCatalogItems(ctx, items)
+		log.Printf("[admin/api] обход завершён: найдено %d, добавлено %d, дополнено %d", len(items), added, merged)
+	}()
+
+	jsonResp(w, true, "Полный обход сайта запущен в фоне. Используется активный прокси.", "")
+}
+
+// upsertCatalogItems сохраняет найденные при обходе документы в реестр
+// (дедуп по нормализованной ссылке → ID). Возвращает (добавлено, дополнено).
+func (s *Server) upsertCatalogItems(ctx context.Context, items []fetcher.CatalogItem) (int, int) {
+	var added, merged int
+	for _, it := range items {
+		title := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(it.Title), "File:"))
+		if title == "" {
+			continue
+		}
+		id := scraper.DocID(it.Link)
+		if existing, err := s.store.Get(ctx, id); err == nil {
+			if existing.Category == "" && it.Category != "" {
+				existing.Category = it.Category
+				_ = s.store.Upsert(ctx, existing)
+				merged++
+			}
+			continue
+		}
+		status := model.StatusPending
+		if it.Category == scraper.CategoryNames["unactual_documents"] ||
+			strings.Contains(strings.ToUpper(title), "УТРАТИЛ") {
+			status = model.StatusOutdated
+		}
+		doc := model.Document{
+			ID:        id,
+			Title:     title,
+			SourceURL: it.Link,
+			FetchedAt: time.Now(),
+			Status:    status,
+			Category:  it.Category,
+		}
+		if err := s.store.Upsert(ctx, doc); err != nil {
+			log.Printf("[admin/api] upsert %s: %v", id, err)
+			continue
+		}
+		added++
+	}
+	return added, merged
+}
+
 // handleAPIFetch запускает скачивание файлов документов через активный прокси.
 func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 	log.Println("[admin/api] запуск скачивания файлов")
@@ -757,10 +848,15 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 
 	go func() {
 		ctx := context.Background()
-		f, err := fetcher.New(s.chromePath, activeProxyURL, s.fetchWait)
+		f, err := fetcher.New(s.chromePath, activeProxyURL, s.fetchWait, s.proxyManager.GetActiveURL)
 		if err != nil {
 			log.Printf("[admin/api] fetch: %v", err)
 			return
+		}
+		// При WAF-бане автоматически переключаемся на рабочий прокси.
+		f.OnWAFBlocked = func() string {
+			s.proxyManager.AutoSwitch()
+			return s.proxyManager.GetActiveURL()
 		}
 
 		done, errs := f.EnrichMissing(ctx, s.store, s.docsDir, 0, nil)

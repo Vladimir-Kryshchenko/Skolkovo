@@ -28,6 +28,14 @@ type PortalConfig struct {
 	MCPAPIKey string // API-ключ для MCP
 }
 
+// NotificationReader — доступ к персональным уведомлениям клиента (inbox).
+// Реализуется *store.PostgresNotificationStore.
+type NotificationReader interface {
+	ListForClient(ctx context.Context, clientID string, limit int) ([]*model.ClientNotification, error)
+	CountUnread(ctx context.Context, clientID string) (int, error)
+	MarkRead(ctx context.Context, id, clientID string) error
+}
+
 // PortalStores — все хранилища, необходимые порталу.
 type PortalStores struct {
 	ClientStore    store.ClientStore
@@ -37,6 +45,7 @@ type PortalStores struct {
 	DocStore       store.ClientDocumentStore
 	DocumentStore  store.Store                  // реестр документов (для скачивания)
 	ChangeStore    changes.Store                // лента изменений; может быть nil
+	NotifStore     NotificationReader           // inbox уведомлений клиента; может быть nil
 	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
 	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
@@ -90,12 +99,16 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /generate", ps.requireAuth(ps.handleGenerate))
 	mux.HandleFunc("POST /generate", ps.requireAuth(ps.handleGenerateSubmit))
 	mux.HandleFunc("GET /download", ps.requireAuth(ps.handleDownload))
+	mux.HandleFunc("GET /documents/file", ps.requireAuth(ps.handleDocumentFile))
+	mux.HandleFunc("GET /notifications", ps.requireAuth(ps.handleNotifications))
+	mux.HandleFunc("POST /notifications/read", ps.requireAuth(ps.handleNotificationRead))
 
 	// JSON API
 	mux.HandleFunc("GET /api/me", ps.requireAuthJSON(ps.apiMe))
 	mux.HandleFunc("GET /api/checklists", ps.requireAuthJSON(ps.apiChecklists))
 	mux.HandleFunc("GET /api/deadlines", ps.requireAuthJSON(ps.apiDeadlines))
 	mux.HandleFunc("GET /api/documents", ps.requireAuthJSON(ps.apiDocuments))
+	mux.HandleFunc("GET /api/notifications", ps.requireAuthJSON(ps.apiNotifications))
 
 	log.Printf("[portal] портал клиента слушает %s", ps.config.Addr)
 
@@ -246,8 +259,15 @@ func (ps *PortalServer) handleLoginSubmit(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Fallback (dev): показываем ссылку прямо на странице.
-	http.Redirect(w, r, "/login?msg=Ссылка+для+входа:+&link="+url.QueryEscape(link)+"&kind=ok", http.StatusSeeOther)
+	// Без SMTP ссылку показываем на странице ТОЛЬКО в явном dev-режиме
+	// (PORTAL_DEV_LOGIN_LINK=true). Иначе это утечка: любой, кто знает email
+	// клиента, получил бы рабочую ссылку входа прямо на экране.
+	if os.Getenv("PORTAL_DEV_LOGIN_LINK") == "true" {
+		http.Redirect(w, r, "/login?msg=Ссылка+для+входа+(dev):+&link="+url.QueryEscape(link)+"&kind=ok", http.StatusSeeOther)
+		return
+	}
+	log.Printf("[portal] SMTP не настроен — ссылка для %s не отправлена; вход по email недоступен", email)
+	http.Redirect(w, r, "/login?msg=Вход+по+email+временно+недоступен,+обратитесь+к+администратору&kind=err", http.StatusSeeOther)
 }
 
 func (ps *PortalServer) handleVerifyToken(w http.ResponseWriter, r *http.Request) {
@@ -469,6 +489,27 @@ func (ps *PortalServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	http.ServeFile(w, r, full)
+}
+
+// handleDocumentFile отдаёт оригинальный файл документа из реестра по его id.
+// Документы реестра — публичные материалы Сколково; доступ только авторизованному клиенту.
+func (ps *PortalServer) handleDocumentFile(w http.ResponseWriter, r *http.Request) {
+	if ps.stores.DocumentStore == nil {
+		http.Error(w, "реестр документов недоступен", http.StatusNotFound)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "не указан идентификатор документа", http.StatusBadRequest)
+		return
+	}
+	doc, err := ps.stores.DocumentStore.Get(r.Context(), id)
+	if err != nil || doc.LocalPath == "" {
+		http.Error(w, "файл документа не найден", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(doc.LocalPath)+"\"")
+	http.ServeFile(w, r, doc.LocalPath)
 }
 
 // ---------------------------------------------------------------------------

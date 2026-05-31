@@ -28,21 +28,23 @@ func RegisterChangeTools(srv *server.MCPServer, cs changes.Store) {
 	}
 	srv.AddTool(
 		mcp.NewTool("get_recent_changes",
-			mcp.WithDescription("Лента изменений базы знаний Сколково: какие документы, новости, конкурсы, НПА и льготы появились, обновились или устарели за указанный период. Возвращает записи по убыванию времени."),
+			mcp.WithDescription("Лента изменений базы знаний Сколково: какие документы, новости, конкурсы, НПА и льготы появились, обновились или устарели за указанный период. Для изменений документов содержит оценку важности (severity: info/warning/critical), краткую суть изменения (analysis_summary) и затронутые стадии резидентства (affected_stages). Возвращает записи по убыванию времени."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithNumber("since_days", mcp.Description("За сколько последних дней показать изменения (по умолчанию 7)")),
 			mcp.WithString("entity_type", mcp.Description("Тип сущности: document, news, event, contest, npa, preference, faq (опционально)")),
 			mcp.WithString("category", mcp.Description("Категория (опционально)")),
+			mcp.WithString("min_severity", mcp.Description("Минимальная важность: info, warning или critical (опционально; например critical — только критичные изменения)")),
 			mcp.WithNumber("limit", mcp.Description("Максимум записей (по умолчанию 20)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			sinceDays := req.GetInt("since_days", 7)
 			limit := req.GetInt("limit", 20)
 			f := changes.Filter{
-				EntityType: req.GetString("entity_type", ""),
-				Category:   req.GetString("category", ""),
-				Limit:      limit,
+				EntityType:  req.GetString("entity_type", ""),
+				Category:    req.GetString("category", ""),
+				MinSeverity: changes.Severity(req.GetString("min_severity", "")),
+				Limit:       limit,
 			}
 			if sinceDays > 0 {
 				f.Since = time.Now().AddDate(0, 0, -sinceDays)

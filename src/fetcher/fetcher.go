@@ -1,16 +1,20 @@
 // Package fetcher скачивает тела файлов документов через headless-браузер (chromedp).
 //
 // Обход WAF (Variti):
-// - Stealth-скрипты маскируют признаки автоматизации
-// - Симуляция человеческого поведения: случайные задержки, движения мыши, скролл
-// - TLS/HTTP-заголовки имитируют реальный Chrome
-// - Для дата-центровых IP рекомендуется использовать резидентный прокси (PROXY_URL)
+//   - Stealth-скрипты маскируют признаки автоматизации
+//   - Симуляция человеческого поведения: случайные задержки, движения мыши, скролл
+//   - TLS/HTTP-заголовки имитируют реальный Chrome
+//   - Один браузер-сессия переиспользуется на весь прогон (WAF-куки сохраняются),
+//     это и быстрее, и менее заметно, чем перезапуск браузера на каждый файл
+//   - При WAF-бане сессия пересоздаётся, при наличии колбэка — со сменой прокси
+//   - Для дата-центровых IP рекомендуется использовать резидентный прокси (PROXY_URL)
 package fetcher
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -18,12 +22,15 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
 	"baza-skolkovo/src/common/model"
@@ -31,6 +38,16 @@ import (
 )
 
 const userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+
+// Типизированные ошибки скачивания — для умного retry.
+var (
+	// errWAFBlock — доступ заблокирован WAF (403/challenge/HTML вместо файла).
+	// На него реагируем сменой прокси и пересозданием сессии.
+	errWAFBlock = errors.New("WAF заблокировал доступ")
+	// errNoLink — ссылка на файл на странице не найдена (часто — нет тела файла).
+	// Агрессивно ретраить бессмысленно.
+	errNoLink = errors.New("ссылка на файл не найдена")
+)
 
 // stealthJS — расширенная маска автоматизации (anti-detection для Variti).
 const stealthJS = `
@@ -162,66 +179,85 @@ const wafDetector = `(function(){
   return 'ok';
 })()`
 
-// downloadFileViaBrowser — скачивает файл через браузер (сохраняет WAF-куки).
-const downloadFileViaBrowser = `
-(function(url){
-  return new Promise(function(resolve, reject){
-    var a = document.createElement('a');
-    a.href = url;
-    a.download = '';
-    a.style.display = 'none';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    setTimeout(function(){ resolve('download_started'); }, 1000);
-  });
-})
-`
+// jsCollectDocs — собирает ссылки на документы (/m/docs/) с заголовками.
+const jsCollectDocs = `Array.from(document.querySelectorAll('a[href*="/m/docs/"]')).map(function(a){return {h:a.href,t:(a.textContent||'').replace(/\s+/g,' ').trim()};})`
+
+// jsCollectLinks — собирает все ссылки на странице (для обхода сайта).
+const jsCollectLinks = `Array.from(document.querySelectorAll('a[href]')).map(function(a){return a.href;})`
+
+// locRe — извлекает URL из <loc>…</loc> в sitemap.xml.
+var locRe = regexp.MustCompile(`<loc>\s*([^<\s]+)\s*</loc>`)
+
+// catPageRe — выделяет слаг категории из URL вида …/p/{slug}.aspx.
+var catPageRe = regexp.MustCompile(`/p/([a-z0-9_]+)\.aspx`)
 
 // Fetcher скачивает файлы через headless-Chrome с симуляцией человека.
 type Fetcher struct {
 	ChromePath  string
 	ProxyURL    string
-	GetProxyURL func() string // Функция для получения активного прокси (динамическое переключение)
-	Wait        time.Duration
-	Rng         *rand.Rand
-	HTTP        *http.Client
+	GetProxyURL func() string // получить активный прокси (динамическое переключение)
+	// OnWAFBlocked вызывается при WAF-бане: должен переключить прокси и вернуть
+	// новый URL прокси ("" — без прокси). nil — смена прокси отключена.
+	OnWAFBlocked func() string
+
+	Wait time.Duration // базовая пауза между файлами
+
+	// Профиль «человеческого» темпа массового прогона.
+	BatchSize    int           // файлов до длинного перерыва (0 — без перерывов)
+	BreakMin     time.Duration // мин. длительность длинного перерыва
+	BreakMax     time.Duration // макс. длительность длинного перерыва
+	LongPausePct int           // вероятность (0-100) длинной паузы между файлами
+
+	Rng  *rand.Rand
+	HTTP *http.Client
 }
 
 // New создаёт загрузчик. chromePath="" — автоопределение Chrome/Edge.
 // getProxyURL — функция для получения URL активного прокси (может быть nil).
+//
+// Отсутствие Chrome НЕ является ошибкой: HTTP-каталогизация
+// (EnumerateCategoriesHTTP) работает без браузера. Chrome нужен только для
+// headless-операций (скачивание тел файлов за WAF, fallback-обход) — они
+// сами проверят его наличие через requireChrome().
 func New(chromePath, proxyURL string, wait time.Duration, getProxyURL func() string) (*Fetcher, error) {
 	if chromePath == "" {
 		chromePath = detectChrome()
-	}
-	if chromePath == "" {
-		return nil, fmt.Errorf("не найден Chrome; задайте CHROME_PATH")
 	}
 
 	// Определяем начальный прокси
 	currentProxyURL := proxyURL
 	if getProxyURL != nil {
-		if url := getProxyURL(); url != "" {
-			currentProxyURL = url
+		if u := getProxyURL(); u != "" {
+			currentProxyURL = u
 		}
 	}
 
-	tr := &http.Transport{}
-	if currentProxyURL != "" {
-		pu, err := url.Parse(currentProxyURL)
-		if err != nil {
-			return nil, fmt.Errorf("PROXY_URL: %w", err)
-		}
-		tr.Proxy = http.ProxyURL(pu)
-	}
-	return &Fetcher{
+	f := &Fetcher{
 		ChromePath:  chromePath,
 		ProxyURL:    currentProxyURL,
 		GetProxyURL: getProxyURL,
 		Wait:        wait,
-		Rng:         rand.New(rand.NewSource(time.Now().UnixNano())),
-		HTTP:        &http.Client{Timeout: 90 * time.Second, Transport: tr},
-	}, nil
+		// Консервативные дефолты, чтобы без настройки прогон выглядел естественно.
+		BatchSize:    30,
+		BreakMin:     60 * time.Second,
+		BreakMax:     180 * time.Second,
+		LongPausePct: 15,
+		Rng:          rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	f.applyProxy(currentProxyURL)
+	return f, nil
+}
+
+// applyProxy перенастраивает HTTP-клиент (и запоминает URL для следующей сессии).
+func (f *Fetcher) applyProxy(proxyURL string) {
+	f.ProxyURL = proxyURL
+	tr := &http.Transport{}
+	if proxyURL != "" {
+		if pu, err := url.Parse(proxyURL); err == nil {
+			tr.Proxy = http.ProxyURL(pu)
+		}
+	}
+	f.HTTP = &http.Client{Timeout: 90 * time.Second, Transport: tr}
 }
 
 func detectChrome() string {
@@ -272,15 +308,80 @@ func (f *Fetcher) execOpts() []chromedp.ExecAllocatorOption {
 		chromedp.Flag("disable-sync", true),
 	}
 	if f.ProxyURL != "" {
-		opts = append(opts, chromedp.ProxyServer(f.ProxyURL))
+		// Chrome --proxy-server не принимает логин/пароль в URL — передаём чистый
+		// scheme://host:port; авторизация резидентного прокси выполняется через
+		// CDP Fetch.authRequired в OpenSession.
+		clean, _, _ := parseProxy(f.ProxyURL)
+		opts = append(opts, chromedp.ProxyServer(clean))
 	}
 	return opts
 }
 
+// parseProxy разбирает URL прокси на «чистый» URL (без userinfo) и креды.
+func parseProxy(raw string) (clean, user, pass string) {
+	if strings.TrimSpace(raw) == "" {
+		return "", "", ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return raw, "", ""
+	}
+	if u.User != nil {
+		user = u.User.Username()
+		pass, _ = u.User.Password()
+		u.User = nil
+	}
+	return u.String(), user, pass
+}
+
+// setupProxyAuth вешает CDP-обработчик аутентификации на прокси: на запрос
+// учётных данных отвечает логином/паролем, остальные приостановленные запросы
+// пропускает. Нужен для резидентных прокси с авторизацией (user:pass).
+func setupProxyAuth(ctx context.Context, user, pass string) {
+	chromedp.ListenTarget(ctx, func(ev interface{}) {
+		switch e := ev.(type) {
+		case *fetch.EventAuthRequired:
+			go func() {
+				_ = chromedp.Run(ctx, fetch.ContinueWithAuth(e.RequestID, &fetch.AuthChallengeResponse{
+					Response: fetch.AuthChallengeResponseResponseProvideCredentials,
+					Username: user,
+					Password: pass,
+				}))
+			}()
+		case *fetch.EventRequestPaused:
+			go func() {
+				_ = chromedp.Run(ctx, fetch.ContinueRequest(e.RequestID))
+			}()
+		}
+	})
+}
+
 // humanDelay — случайная задержка в диапазоне [minMs, maxMs].
 func (f *Fetcher) humanDelay(minMs, maxMs int) time.Duration {
+	if maxMs <= minMs {
+		return time.Duration(minMs) * time.Millisecond
+	}
 	d := f.Rng.Intn(maxMs-minMs) + minMs
 	return time.Duration(d) * time.Millisecond
+}
+
+// betweenFilesDelay — реалистичная пауза между скачиваниями файлов.
+// В основном короткая (база ±50%), изредка — длинная (человек отвлёкся).
+func (f *Fetcher) betweenFilesDelay() time.Duration {
+	base := f.Wait
+	if base <= 0 {
+		base = 5 * time.Second
+	}
+	// джиттер ±50% от базы
+	jitter := time.Duration(f.Rng.Int63n(int64(base))) - base/2
+	d := base + jitter
+	if f.LongPausePct > 0 && f.Rng.Intn(100) < f.LongPausePct {
+		d += time.Duration(20+f.Rng.Intn(40)) * time.Second
+	}
+	if d < time.Second {
+		d = time.Second
+	}
+	return d
 }
 
 // humanMouseMove — эмулирует плавное движение мыши к координатам.
@@ -339,6 +440,16 @@ func (f *Fetcher) simulateHuman() chromedp.Tasks {
 	}
 }
 
+// simulateHumanLight — облегчённая симуляция (сессия уже «прогрета»).
+func (f *Fetcher) simulateHumanLight() chromedp.Tasks {
+	return chromedp.Tasks{
+		chromedp.Sleep(f.humanDelay(800, 1800)),
+		humanScroll(),
+		chromedp.Evaluate(humanBehaviorJS, nil),
+		chromedp.Sleep(f.humanDelay(500, 1200)),
+	}
+}
+
 // checkWAF — проверяет, не заблокировал ли WAF доступ.
 func checkWAF(ctx context.Context) (string, error) {
 	var status string
@@ -361,75 +472,112 @@ func (f *Fetcher) waitForWAF(ctx context.Context) error {
 			return nil
 		}
 		if status == "forbidden" {
-			return fmt.Errorf("WAF заблокировал доступ (403 Forbidden)")
+			return fmt.Errorf("%w (403 Forbidden)", errWAFBlock)
 		}
 		// challenge — ждём
 		time.Sleep(f.humanDelay(2000, 4000))
 	}
-	return fmt.Errorf("WAF challenge не пройден за 30 секунд")
+	return fmt.Errorf("%w: challenge не пройден за 30 секунд", errWAFBlock)
 }
 
-// FetchToDir открывает страницу-просмотрщик в браузере, находит ссылку на файл
-// и скачивает его (с куками, выставленными WAF) в outDir. Возвращает путь и хэш.
-func (f *Fetcher) FetchToDir(ctx context.Context, viewerURL, outDir string) (string, string, error) {
-	// Retry logic: до 3 попыток с экспоненциальным backoff
-	for attempt := 1; attempt <= 3; attempt++ {
-		localPath, hash, err := f.tryFetch(ctx, viewerURL, outDir)
-		if err == nil {
-			return localPath, hash, nil
-		}
-		if attempt < 3 {
-			backoff := time.Duration(attempt*attempt) * time.Second
-			time.Sleep(backoff)
+// Session — переиспользуемая браузер-сессия (один Chrome на весь прогон).
+// WAF-куки сохраняются в контексте chromedp, пока сессия открыта.
+type Session struct {
+	f       *Fetcher
+	bctx    context.Context
+	cancelA context.CancelFunc
+	cancelB context.CancelFunc
+}
+
+// requireChrome возвращает ошибку, если путь к Chrome не задан/не найден.
+// Вызывается headless-операциями (HTTP-методам Chrome не нужен).
+func (f *Fetcher) requireChrome() error {
+	if f.ChromePath == "" {
+		return fmt.Errorf("не найден Chrome; задайте CHROME_PATH (нужен для headless-операций)")
+	}
+	return nil
+}
+
+// OpenSession запускает браузер, ставит stealth на все страницы и «прогревается»
+// на главной dochub.sk.ru (как реальный пользователь перед навигацией).
+func (f *Fetcher) OpenSession(ctx context.Context) (*Session, error) {
+	if err := f.requireChrome(); err != nil {
+		return nil, err
+	}
+	allocCtx, cancelA := chromedp.NewExecAllocator(ctx, f.execOpts()...)
+	bctx, cancelB := chromedp.NewContext(allocCtx)
+	s := &Session{f: f, bctx: bctx, cancelA: cancelA, cancelB: cancelB}
+
+	// Аутентификация на резидентном прокси (если задан user:pass): вешаем
+	// обработчик до Enable и до навигации, иначе прокси вернёт 407.
+	if _, user, pass := parseProxy(f.ProxyURL); user != "" {
+		setupProxyAuth(bctx, user, pass)
+		if err := chromedp.Run(bctx, fetch.Enable().WithHandleAuthRequests(true)); err != nil {
+			s.Close()
+			return nil, fmt.Errorf("включение прокси-аутентификации: %w", err)
 		}
 	}
-	return "", "", fmt.Errorf("все 3 попытки скачивания失敗")
+
+	// Stealth на каждую новую страницу.
+	if err := chromedp.Run(bctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		_, err := page.AddScriptToEvaluateOnNewDocument(stealthJS).Do(ctx)
+		return err
+	})); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("старт браузера: %w", err)
+	}
+
+	// Прогрев: заходим на главную как человек.
+	_ = chromedp.Run(bctx,
+		chromedp.Navigate("https://dochub.sk.ru/"),
+		chromedp.Sleep(f.humanDelay(2000, 4000)),
+		humanScroll(),
+		chromedp.Sleep(f.humanDelay(1000, 2000)),
+	)
+	return s, nil
 }
 
-func (f *Fetcher) tryFetch(ctx context.Context, viewerURL, outDir string) (string, string, error) {
-	allocCtx, cancelA := chromedp.NewExecAllocator(ctx, f.execOpts()...)
-	defer cancelA()
-	bctx, cancelB := chromedp.NewContext(allocCtx)
-	defer cancelB()
+// Close завершает браузер-сессию.
+func (s *Session) Close() {
+	if s.cancelB != nil {
+		s.cancelB()
+	}
+	if s.cancelA != nil {
+		s.cancelA()
+	}
+}
 
+// fetchOne открывает страницу-просмотрщик в текущей сессии, находит ссылку на файл
+// и скачивает его (с куками, выставленными WAF) в outDir. Возвращает путь и хэш.
+func (s *Session) fetchOne(ctx context.Context, viewerURL, outDir string) (string, string, error) {
+	f := s.f
 	var fileURL string
 	var cookies []*network.Cookie
 
 	tasks := chromedp.Tasks{
-		// Stealth на каждую страницу
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			_, err := page.AddScriptToEvaluateOnNewDocument(stealthJS).Do(ctx)
-			return err
-		}),
-		// Навигация
 		chromedp.Navigate(viewerURL),
-		// Ждём пока WAF разрешит доступ
-		chromedp.ActionFunc(func(ctx context.Context) error {
-			return f.waitForWAF(ctx)
-		}),
-		// Симуляция человека
-		f.simulateHuman(),
-		// Поиск ссылки на файл
+		chromedp.ActionFunc(func(ctx context.Context) error { return f.waitForWAF(ctx) }),
+		f.simulateHumanLight(),
 		chromedp.Evaluate(jsFindFile, &fileURL),
-		// Забираем cookies от WAF
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			var err error
 			cookies, err = network.GetCookies().Do(ctx)
 			return err
 		}),
 	}
-
-	err := chromedp.Run(bctx, tasks)
-	if err != nil {
-		return "", "", fmt.Errorf("браузер: %w", err)
+	if err := chromedp.Run(s.bctx, tasks); err != nil {
+		return "", "", classifyRunErr(err)
 	}
 	if strings.TrimSpace(fileURL) == "" {
-		return "", "", fmt.Errorf("ссылка на файл не найдена (возможно, страница заблокирована WAF)")
+		return "", "", errNoLink
 	}
 
 	// Скачиваем файл через HTTP с WAF-куками
 	data, err := f.download(ctx, fileURL, viewerURL, cookies)
 	if err != nil {
+		return "", "", err
+	}
+	if err := validateFileBytes(data, fileURL); err != nil {
 		return "", "", err
 	}
 
@@ -443,6 +591,54 @@ func (f *Fetcher) tryFetch(ctx context.Context, viewerURL, outDir string) (strin
 	}
 	sum := sha256.Sum256(data)
 	return localPath, hex.EncodeToString(sum[:]), nil
+}
+
+// classifyRunErr приводит ошибку chromedp.Run к нашим типам (WAF/нет ссылки/иное).
+func classifyRunErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errWAFBlock) || errors.Is(err, errNoLink) {
+		return err
+	}
+	// Сетевые/навигационные ошибки считаем временными — обернём как есть.
+	return fmt.Errorf("браузер: %w", err)
+}
+
+// validateFileBytes проверяет, что скачано тело файла, а не HTML-челлендж WAF.
+func validateFileBytes(data []byte, fileURL string) error {
+	if len(data) < 100 {
+		return fmt.Errorf("%w: подозрительно маленький ответ (%d байт)", errWAFBlock, len(data))
+	}
+	head := strings.ToLower(string(data[:min(512, len(data))]))
+	if strings.Contains(head, "<!doctype html") || strings.Contains(head, "<html") ||
+		strings.Contains(head, "variti") || strings.Contains(head, "ddos") ||
+		strings.Contains(head, "проверка") {
+		return fmt.Errorf("%w: получен HTML вместо файла", errWAFBlock)
+	}
+
+	ext := strings.ToLower(path.Ext(safeName(fileURL)))
+	hasPrefix := func(sig string) bool { return strings.HasPrefix(string(data), sig) }
+	switch ext {
+	case ".pdf":
+		if !hasPrefix("%PDF") {
+			return fmt.Errorf("%w: не похоже на PDF", errWAFBlock)
+		}
+	case ".docx", ".xlsx", ".pptx", ".zip":
+		if !hasPrefix("PK\x03\x04") && !hasPrefix("PK\x05\x06") {
+			return fmt.Errorf("%w: не похоже на ZIP-контейнер (%s)", errWAFBlock, ext)
+		}
+	case ".doc", ".xls", ".ppt":
+		if !hasPrefix("\xD0\xCF\x11\xE0") {
+			return fmt.Errorf("%w: не похоже на OLE-документ (%s)", errWAFBlock, ext)
+		}
+	case ".rtf":
+		if !hasPrefix("{\\rtf") {
+			return fmt.Errorf("%w: не похоже на RTF", errWAFBlock)
+		}
+	}
+	// Неизвестное/прочее расширение — HTML-проверка выше уже отсекла мусор.
+	return nil
 }
 
 func (f *Fetcher) download(ctx context.Context, fileURL, referer string, cookies []*network.Cookie) ([]byte, error) {
@@ -462,6 +658,9 @@ func (f *Fetcher) download(ctx context.Context, fileURL, referer string, cookies
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
+		return nil, fmt.Errorf("%w: HTTP %d", errWAFBlock, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("скачивание файла: статус %d", resp.StatusCode)
 	}
@@ -483,39 +682,53 @@ type CategorySpec struct {
 	Name string
 }
 
-// CatalogItem — документ, найденный при перечислении категории.
+// CatalogItem — документ, найденный при перечислении категории/обходе сайта.
 type CatalogItem struct {
 	Title    string
 	Link     string
 	Category string
 }
 
-// EnumerateCategories рендерит страницы категорий в браузере (виджет superlist
-// подгружает полный список JS-ом) и возвращает все ссылки на документы.
-//
-// Полная симуляция человеческого поведения для обхода WAF.
-func (f *Fetcher) EnumerateCategories(ctx context.Context, baseURL string, cats []CategorySpec) ([]CatalogItem, error) {
-	allocCtx, cancelA := chromedp.NewExecAllocator(ctx, f.execOpts()...)
-	defer cancelA()
-	bctx, cancelB := chromedp.NewContext(allocCtx)
-	defer cancelB()
+// rawLink — ссылка с заголовком, собранная со страницы.
+type rawLink struct {
+	H string `json:"h"`
+	T string `json:"t"`
+}
 
-	// «Прогрев» браузера + stealth на все документы.
-	if err := chromedp.Run(bctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		_, err := page.AddScriptToEvaluateOnNewDocument(stealthJS).Do(ctx)
-		return err
-	})); err != nil {
-		return nil, fmt.Errorf("старт браузера: %w", err)
-	}
-
-	// Прогревочная страница (заходим на главную dochub как человек)
-	fmt.Println("  [browser] прогрев: заходим на dochub.sk.ru...")
-	chromedp.Run(bctx,
-		chromedp.Navigate("https://dochub.sk.ru/"),
+// crawlPage навигирует на страницу, проходит WAF, прокручивает (lazy-load) и
+// собирает ссылки на документы (/m/docs/) и все внутренние ссылки для очереди.
+func (s *Session) crawlPage(ctx context.Context, pageURL string) ([]rawLink, []string, error) {
+	f := s.f
+	var docs []rawLink
+	var navs []string
+	tasks := chromedp.Tasks{
+		chromedp.Navigate(pageURL),
+		chromedp.ActionFunc(func(ctx context.Context) error { return f.waitForWAF(ctx) }),
+		f.simulateHuman(),
+		// Ждём пока superlist подгрузит элементы
 		chromedp.Sleep(f.humanDelay(2000, 4000)),
-		humanScroll(),
-		chromedp.Sleep(f.humanDelay(1000, 2000)),
-	)
+		// Скроллим до конца (trigger lazy load)
+		chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight);`, nil),
+		chromedp.Sleep(f.humanDelay(2000, 3000)),
+		chromedp.Evaluate(`window.scrollTo(0, 0);`, nil),
+		chromedp.Sleep(f.humanDelay(500, 1000)),
+		chromedp.Evaluate(jsCollectDocs, &docs),
+		chromedp.Evaluate(jsCollectLinks, &navs),
+	}
+	if err := chromedp.Run(s.bctx, tasks); err != nil {
+		return nil, nil, classifyRunErr(err)
+	}
+	return docs, navs, nil
+}
+
+// EnumerateCategories обходит страницы 8 категорий и возвращает ссылки на документы.
+// Полная симуляция человека, один браузер на весь обход.
+func (f *Fetcher) EnumerateCategories(ctx context.Context, baseURL string, cats []CategorySpec) ([]CatalogItem, error) {
+	sess, err := f.OpenSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
 
 	base := strings.TrimSuffix(baseURL, "/")
 	var out []CatalogItem
@@ -525,47 +738,20 @@ func (f *Fetcher) EnumerateCategories(ctx context.Context, baseURL string, cats 
 		pageURL := base + "/p/" + c.Slug + ".aspx"
 		fmt.Printf("  [browser] категория %d/%d: %s\n", i+1, len(cats), c.Name)
 
-		var raw []struct {
-			H string `json:"h"`
-			T string `json:"t"`
-		}
-
-		tasks := chromedp.Tasks{
-			chromedp.Navigate(pageURL),
-			// Ждём WAF
-			chromedp.ActionFunc(func(ctx context.Context) error {
-				return f.waitForWAF(ctx)
-			}),
-			// Симуляция человека на странице категории
-			f.simulateHuman(),
-			// Ждём пока superlist подгрузит все элементы
-			chromedp.Sleep(f.humanDelay(2000, 4000)),
-			// Скроллим до конца списка (trigger lazy load)
-			chromedp.Evaluate(`window.scrollTo(0, document.body.scrollHeight);`, nil),
-			chromedp.Sleep(f.humanDelay(2000, 3000)),
-			// Скроллим обратно
-			chromedp.Evaluate(`window.scrollTo(0, 0);`, nil),
-			chromedp.Sleep(f.humanDelay(500, 1000)),
-			// Собираем все ссылки
-			chromedp.Evaluate(`Array.from(document.querySelectorAll('a[href*="/m/docs/"]')).map(function(a){return {h:a.href,t:(a.textContent||'').replace(/\s+/g,' ').trim()};})`, &raw),
-		}
-
-		err := chromedp.Run(bctx, tasks)
+		docs, _, err := sess.crawlPage(ctx, pageURL)
 		if err != nil {
 			fmt.Printf("  ! категория %s: %v\n", c.Slug, err)
 			continue
 		}
-
-		for _, r := range raw {
+		for _, r := range docs {
 			if r.H == "" || seen[r.H] {
 				continue
 			}
 			seen[r.H] = true
 			out = append(out, CatalogItem{Title: r.T, Link: r.H, Category: c.Name})
 		}
-		fmt.Printf("    найдено: %d документов (всего: %d)\n", len(raw), len(out))
+		fmt.Printf("    найдено: %d документов (всего: %d)\n", len(docs), len(out))
 
-		// Пауза между категориями (как человек — отдохнул, перешёл дальше)
 		if i < len(cats)-1 {
 			pause := f.humanDelay(3000, 7000)
 			fmt.Printf("    пауза %v...\n", pause)
@@ -575,26 +761,165 @@ func (f *Fetcher) EnumerateCategories(ctx context.Context, baseURL string, cats 
 	return out, nil
 }
 
-// EnrichMissing скачивает файлы для документов без локального файла.
-// Если документ «действует» и задан ragSvc — сразу индексирует.
+// EnumerateSite рекурсивно обходит весь раздел документов сайта (BFS через браузер,
+// чтобы не ловить 403 на WAF). Стартует с базовой страницы, страниц категорий и
+// URL из sitemap.xml; идёт по внутренним ссылкам в пределах /foundation/documents/.
+// maxPages<=0 — взять разумный дефолт.
+func (f *Fetcher) EnumerateSite(ctx context.Context, baseURL string, cats []CategorySpec, maxPages int) ([]CatalogItem, error) {
+	if maxPages <= 0 {
+		maxPages = 800
+	}
+	sess, err := f.OpenSession(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer sess.Close()
+
+	base, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("базовый URL: %w", err)
+	}
+	slugName := map[string]string{}
+	for _, c := range cats {
+		slugName[c.Slug] = c.Name
+	}
+
+	seenPage := map[string]bool{}
+	seenDoc := map[string]bool{}
+	var out []CatalogItem
+
+	// Сид-очередь: база + страницы категорий + sitemap.
+	root := strings.TrimSuffix(baseURL, "/")
+	queue := []string{root}
+	for _, c := range cats {
+		queue = append(queue, root+"/p/"+c.Slug+".aspx")
+	}
+	queue = append(queue, sess.fetchSitemapURLs(ctx, base)...)
+
+	for len(queue) > 0 && len(seenPage) < maxPages {
+		pageURL := queue[0]
+		queue = queue[1:]
+		if seenPage[pageURL] {
+			continue
+		}
+		seenPage[pageURL] = true
+
+		pageCat := categoryFromURL(pageURL, slugName)
+		docs, navs, err := sess.crawlPage(ctx, pageURL)
+		if err != nil {
+			fmt.Printf("  ! %s: %v\n", pageURL, err)
+			continue
+		}
+		for _, r := range docs {
+			if r.H == "" || seenDoc[r.H] {
+				continue
+			}
+			seenDoc[r.H] = true
+			out = append(out, CatalogItem{Title: r.T, Link: r.H, Category: pageCat})
+		}
+		// Внутренние ссылки раздела документов → в очередь.
+		for _, l := range navs {
+			u, err := url.Parse(l)
+			if err != nil || u.Host != base.Host {
+				continue
+			}
+			if !strings.Contains(u.Path, "/foundation/documents/") {
+				continue
+			}
+			clean := u.Scheme + "://" + u.Host + u.Path
+			if !seenPage[clean] {
+				queue = append(queue, clean)
+			}
+		}
+		fmt.Printf("  [crawl] страниц %d/%d, документов: %d\n", len(seenPage), maxPages, len(out))
+		time.Sleep(f.humanDelay(2000, 5000))
+	}
+	return out, nil
+}
+
+// fetchSitemapURLs скачивает sitemap.xml через браузер (same-origin fetch несёт
+// WAF-куки) и возвращает URL страниц раздела документов.
+func (s *Session) fetchSitemapURLs(ctx context.Context, base *url.URL) []string {
+	sitemapURL := base.Scheme + "://" + base.Host + "/sitemap.xml"
+	js := `(async()=>{try{const r=await fetch(` + jsString(sitemapURL) + `);if(!r.ok)return "";return await r.text();}catch(e){return "";}})()`
+	var body string
+	err := chromedp.Run(s.bctx,
+		chromedp.Evaluate(js, &body, func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
+			return p.WithAwaitPromise(true)
+		}),
+	)
+	if err != nil || body == "" {
+		return nil
+	}
+	var urls []string
+	for _, m := range locRe.FindAllStringSubmatch(body, -1) {
+		u, err := url.Parse(strings.TrimSpace(m[1]))
+		if err != nil || u.Host != base.Host {
+			continue
+		}
+		if strings.Contains(u.Path, "/foundation/documents/") {
+			urls = append(urls, u.Scheme+"://"+u.Host+u.Path)
+		}
+	}
+	return urls
+}
+
+// categoryFromURL определяет читаемое имя категории по URL вида …/p/{slug}.aspx.
+func categoryFromURL(pageURL string, slugName map[string]string) string {
+	m := catPageRe.FindStringSubmatch(pageURL)
+	if m == nil {
+		return ""
+	}
+	return slugName[m[1]]
+}
+
+// jsString безопасно оборачивает строку в JS-литерал.
+func jsString(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return `"` + s + `"`
+}
+
+// EnrichMissing скачивает файлы для документов без локального файла в ОДНОЙ
+// браузер-сессии (переиспользуя WAF-куки). Если документ «действует» и задан
+// index — сразу индексирует. При WAF-бане пытается сменить прокси и пересоздать
+// сессию. Между файлами — «человеческие» паузы, периодически длинный перерыв.
 func (f *Fetcher) EnrichMissing(ctx context.Context, st store.Store, outRoot string, limit int, index func(ctx context.Context, id string) error) (int, []string) {
 	docs, err := st.List(ctx, store.Filter{})
 	if err != nil {
 		return 0, []string{err.Error()}
 	}
-	var done int
-	var errs []string
+
+	// Отбираем документы без локального файла.
+	var pending []model.Document
 	for _, d := range docs {
 		if d.LocalPath != "" || d.Status == model.StatusArchived || d.Status == model.StatusRejected {
 			continue
 		}
+		pending = append(pending, d)
+	}
+	// Перемешиваем — порядок не должен быть предсказуемым паттерном.
+	f.Rng.Shuffle(len(pending), func(i, j int) { pending[i], pending[j] = pending[j], pending[i] })
+
+	sess, err := f.OpenSession(ctx)
+	if err != nil {
+		return 0, []string{fmt.Sprintf("старт браузера: %v", err)}
+	}
+	defer func() { sess.Close() }()
+
+	var done int
+	var errs []string
+	sinceBreak := 0
+
+	for _, d := range pending {
 		if limit > 0 && done >= limit {
 			break
 		}
 		outDir := filepath.Join(outRoot, "На_проверке", "Загружено")
-		localPath, hash, err := f.FetchToDir(ctx, d.SourceURL, outDir)
-		if err != nil {
-			errs = append(errs, fmt.Sprintf("%s: %v", d.ID, err))
+
+		localPath, hash, ferr := f.fetchWithRetry(ctx, &sess, d.SourceURL, outDir)
+		if ferr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", d.ID, ferr))
 			continue
 		}
 		d.LocalPath = localPath
@@ -604,15 +929,106 @@ func (f *Fetcher) EnrichMissing(ctx context.Context, st store.Store, outRoot str
 			continue
 		}
 		done++
+		sinceBreak++
 		if d.Status == model.StatusActive && index != nil {
 			if err := index(ctx, d.ID); err != nil {
 				errs = append(errs, fmt.Sprintf("%s: индексация: %v", d.ID, err))
 			}
 		}
-		// Пауза между скачиваниями (человек не качает пачками)
-		time.Sleep(f.humanDelay(2000, 5000))
+
+		// Темп: длинный перерыв каждые BatchSize файлов, иначе обычная пауза.
+		if f.BatchSize > 0 && sinceBreak >= f.BatchSize {
+			sinceBreak = 0
+			f.longBreak(ctx, sess)
+		} else {
+			select {
+			case <-time.After(f.betweenFilesDelay()):
+			case <-ctx.Done():
+				return done, errs
+			}
+		}
 	}
 	return done, errs
+}
+
+// fetchWithRetry скачивает один файл с умным retry: временные ошибки — backoff;
+// WAF-бан — смена прокси и пересоздание сессии; «нет ссылки» — 1 ретрай и выход.
+// sess может быть пересоздана, поэтому передаётся по указателю.
+func (f *Fetcher) fetchWithRetry(ctx context.Context, sess **Session, viewerURL, outDir string) (string, string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		localPath, hash, err := (*sess).fetchOne(ctx, viewerURL, outDir)
+		if err == nil {
+			return localPath, hash, nil
+		}
+		lastErr = err
+
+		switch {
+		case errors.Is(err, errNoLink):
+			if attempt >= 2 {
+				return "", "", err
+			}
+			time.Sleep(f.humanDelay(1000, 2500))
+
+		case errors.Is(err, errWAFBlock):
+			// Пытаемся сменить прокси и пересоздать сессию.
+			if f.OnWAFBlocked != nil {
+				newURL := f.OnWAFBlocked()
+				f.applyProxy(newURL)
+				fmt.Printf("  [fetch] WAF-бан, смена прокси → %q\n", maskProxy(newURL))
+			} else {
+				fmt.Printf("  [fetch] WAF-бан (без смены прокси), пересоздаю сессию\n")
+			}
+			(*sess).Close()
+			ns, oerr := f.OpenSession(ctx)
+			if oerr != nil {
+				return "", "", fmt.Errorf("пересоздание сессии: %w", oerr)
+			}
+			*sess = ns
+			time.Sleep(time.Duration(attempt*attempt) * time.Second)
+
+		default:
+			// Временная ошибка — backoff и повтор в той же сессии.
+			time.Sleep(time.Duration(attempt*attempt) * time.Second)
+		}
+	}
+	return "", "", lastErr
+}
+
+// longBreak — длинный «человеческий» перерыв с лёгкой активностью на главной.
+func (f *Fetcher) longBreak(ctx context.Context, sess *Session) {
+	minD, maxD := f.BreakMin, f.BreakMax
+	if maxD <= minD {
+		maxD = minD + 60*time.Second
+	}
+	d := minD + time.Duration(f.Rng.Int63n(int64(maxD-minD)))
+	fmt.Printf("  [fetch] длинный перерыв %v...\n", d.Round(time.Second))
+
+	// Имитируем, что пользователь «жив»: зашёл на главную, поскроллил.
+	_ = chromedp.Run(sess.bctx,
+		chromedp.Navigate("https://dochub.sk.ru/"),
+		chromedp.Sleep(f.humanDelay(1500, 3000)),
+		humanScroll(),
+	)
+	select {
+	case <-time.After(d):
+	case <-ctx.Done():
+	}
+}
+
+// maskProxy скрывает учётные данные прокси в логах.
+func maskProxy(proxyURL string) string {
+	if proxyURL == "" {
+		return "(прямое соединение)"
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return "(proxy)"
+	}
+	if u.User != nil {
+		u.User = url.User("***")
+	}
+	return u.String()
 }
 
 func cookieHeader(cookies []*network.Cookie) string {

@@ -223,10 +223,39 @@ h2 { font-size: 16px; font-weight: 700; color: var(--text); }
   </div>
 </header>
 <main>
+  <!-- Автопоиск российского прокси -->
+  <div class="card" style="border-left:4px solid #e63946;margin-bottom:16px">
+    <div class="card-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+      <h2>Российский прокси (для dochub.sk.ru)</h2>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:16px">
+      Файлы на dochub.sk.ru доступны только с российских IP. Введите API-ключ
+      <a href="https://proxy6.net" target="_blank" rel="noopener" style="color:var(--primary)">proxy6.net</a>
+      (от ~0.5$/IP/мес) или нажмите «Найти бесплатный» — система протестирует
+      открытые российские прокси против dochub.sk.ru.
+    </p>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+      <div class="form-group" style="flex:1;min-width:260px;margin:0">
+        <label for="proxy6key" style="font-size:12px;font-weight:600;color:var(--text-secondary)">API-ключ proxy6.net (необязательно)</label>
+        <input type="text" id="proxy6key" placeholder="ВАШИ_КЛЮЧ_proxy6.net"
+               style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)"
+               data-tooltip="Получить на proxy6.net → Профиль → API. Если пусто — используются бесплатные прокси.">
+      </div>
+      <button onclick="findRussianProxy(this)" class="btn btn-primary"
+              style="background:#e63946;white-space:nowrap"
+              data-tooltip="Автоматически найти и активировать рабочий российский прокси">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Найти российский прокси
+      </button>
+    </div>
+    <div id="findResult" style="margin-top:12px;font-size:13px;display:none"></div>
+  </div>
+
   <div class="card">
     <div class="card-head">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      <h2>Добавить прокси или VPN</h2>
+      <h2>Добавить прокси или VPN вручную</h2>
     </div>
     <form id="addForm" onsubmit="addProxy(event)">
       <div class="form-group">
@@ -439,6 +468,41 @@ async function autoSwitch(btn) {
     else { toast('Не найдено рабочих прокси', 'err'); btn.innerHTML = orig; btn.disabled = false; }
   } catch (err) {
     toast('Ошибка сети: ' + err.message, 'err');
+    btn.innerHTML = orig;
+    btn.disabled = false;
+  }
+}
+
+async function findRussianProxy(btn) {
+  const key = document.getElementById('proxy6key').value.trim();
+  const orig = btn.innerHTML;
+  btn.innerHTML = '<span class="spinner"></span> Ищу российский прокси…';
+  btn.disabled = true;
+  const result = document.getElementById('findResult');
+  result.style.display = 'block';
+  result.style.color = 'var(--text-secondary)';
+  result.innerHTML = '⏳ Проверяю прокси против dochub.sk.ru… (может занять 30–60 сек)';
+  try {
+    const body = key ? JSON.stringify({proxy6_key: key}) : '{}';
+    const res = await fetch('/api/proxy/find-russian', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: body
+    });
+    const data = await res.json();
+    if (data.ok) {
+      result.style.color = 'var(--success, #00875a)';
+      result.innerHTML = '✅ ' + (data.msg || 'Прокси найден и активирован!');
+      setTimeout(function() { location.reload(); }, 1500);
+    } else {
+      result.style.color = 'var(--danger, #de350b)';
+      result.innerHTML = '❌ ' + (data.error || 'Не удалось найти рабочий прокси');
+      btn.innerHTML = orig;
+      btn.disabled = false;
+    }
+  } catch (err) {
+    result.style.color = 'var(--danger, #de350b)';
+    result.innerHTML = '❌ Ошибка сети: ' + err.message;
     btn.innerHTML = orig;
     btn.disabled = false;
   }

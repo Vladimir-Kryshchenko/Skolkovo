@@ -48,6 +48,7 @@ type Server struct {
 	aiStore      *aimodels.Store    // ИИ-модели и агенты (опционально, требует Postgres)
 	navIndexer   *navindex.Indexer  // Переиндексация навигации по сайту (опционально)
 	proxyManager *ProxyManager      // Управление прокси
+	proxy6APIKey string             // API-ключ proxy6.net для автопоиска российских прокси
 	addr         string
 	user         string
 	pass         string
@@ -128,6 +129,12 @@ func (s *Server) WithNavIndexer(ix *navindex.Indexer) *Server {
 // WithProxyManager устанавливает менеджер прокси.
 func (s *Server) WithProxyManager(pm *ProxyManager) *Server {
 	s.proxyManager = pm
+	return s
+}
+
+// WithProxy6APIKey устанавливает API-ключ proxy6.net для автопоиска российских прокси.
+func (s *Server) WithProxy6APIKey(key string) *Server {
+	s.proxy6APIKey = key
 	return s
 }
 
@@ -295,6 +302,7 @@ func (s *Server) ListenAndServe() error {
 		id := s.proxyManager.AutoSwitch()
 		json.NewEncoder(w).Encode(map[string]string{"active_id": id})
 	}))
+	mux.HandleFunc("POST /api/proxy/find-russian", s.requireAuthJSON(s.handleAPIFindRussianProxy))
 	mux.HandleFunc("GET /proxy", s.requireAuth(s.handleProxyPage)) // UI страница
 
 	// ИИ Конфигурация — модели и агенты
@@ -922,6 +930,24 @@ func (s *Server) handleAPIApproveAll(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	jsonResp(w, true, fmt.Sprintf("Одобрено %d документов, индексация запущена в фоне.", approved), "")
+}
+
+// handleAPIFindRussianProxy ищет работающий российский прокси и добавляет его в ProxyManager.
+func (s *Server) handleAPIFindRussianProxy(w http.ResponseWriter, r *http.Request) {
+	if s.proxyManager == nil {
+		jsonResp(w, false, "", "ProxyManager не подключён")
+		return
+	}
+	finder := &fetcher.RussianProxyFinder{Proxy6APIKey: s.proxy6APIKey}
+	ctx := r.Context()
+	proxyURL, err := finder.Find(ctx)
+	if err != nil {
+		jsonResp(w, false, "", fmt.Sprintf("Не найден рабочий российский прокси: %v", err))
+		return
+	}
+	id := s.proxyManager.AddProxy("auto-ru", "http", proxyURL)
+	s.proxyManager.ActivateProxy(id)
+	jsonResp(w, true, fmt.Sprintf("Найден и активирован российский прокси (ID %s).", id), "")
 }
 
 // handleAPIIndex запускает индексацию всех «действует» документов.

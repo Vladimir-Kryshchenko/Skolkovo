@@ -65,6 +65,9 @@ type Config struct {
 	// Telegram-бот для клиентов резидентства
 	TelegramBotUsername string // @username бота, например @SkolkovoAssistantBot
 
+	// Российский прокси для обхода WAF dochub.sk.ru
+	Proxy6APIKey string // API-ключ proxy6.net для автоматической покупки/ротации прокси
+
 	// Портал клиента
 	PortalEnabled bool
 	PortalAddr    string
@@ -180,6 +183,9 @@ func Load() Config {
 
 		// Telegram-бот для клиентов резидентства
 		TelegramBotUsername: env("TELEGRAM_BOT_USERNAME", ""),
+
+		// Российский прокси
+		Proxy6APIKey: env("PROXY6_API_KEY", ""),
 
 		// Портал клиента
 		PortalEnabled: envBool("PORTAL_ENABLED", false),

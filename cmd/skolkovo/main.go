@@ -915,7 +915,7 @@ func cmdSync(cfg config.Config) error {
 
 	svc := newRAG(cfg, st, nil)
 	// Headless-обход сайта + скачивание тел файлов (обход WAF) до прочего цикла.
-	if found, fetched, herr := headlessCollect(ctx, cfg, st, svc, nil); herr != nil {
+	if found, fetched, herr := headlessCollect(ctx, cfg, st, svc, nil /*pm unavailable in cmdSync*/); herr != nil {
 		fmt.Printf("Sync: headless-сбор пропущен: %v\n", herr)
 	} else {
 		fmt.Printf("Sync: headless — найдено %d, скачано %d\n", found, fetched)
@@ -1085,7 +1085,7 @@ func cmdServe(cfg config.Config) error {
 
 	// Подключаем менеджер прокси к админке.
 	pm := admin.NewProxyManager(filepath.Join(cfg.DocsDir, ".admin", "proxies.json"))
-	adminSrv.WithProxyManager(pm)
+	adminSrv.WithProxyManager(pm).WithProxy6APIKey(cfg.Proxy6APIKey)
 
 	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -1226,7 +1226,7 @@ func cmdServe(cfg config.Config) error {
 	}
 
 	// --- Планировщик для новых модулей ---
-	go scheduleNewModules(ctx, cfg, st, svc)
+	go scheduleNewModules(ctx, cfg, st, svc, pm)
 
 	// --- Ежедневная сводка консультанту ---
 	if tgNotifier.Enabled() {
@@ -1406,7 +1406,7 @@ func sendDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg
 
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
 // FAQ, Telegram-каналов, льгот и НПА.
-func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service) {
+func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager) {
 	ticker := time.NewTicker(cfg.ScrapeInterval)
 	defer ticker.Stop()
 
@@ -1449,7 +1449,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			return
 		case <-ticker.C:
 			// Полный headless-цикл: обход сайта (обход WAF) + скачивание тел файлов.
-			runScheduledCollect(ctx, cfg, st, svc, recordHealth)
+			runScheduledCollect(ctx, cfg, st, svc, pm, recordHealth)
 
 			// Мероприятия
 			if cfg.EventsSourceURL != "" && eventStore != nil {

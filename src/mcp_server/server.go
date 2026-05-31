@@ -10,10 +10,13 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -55,7 +58,7 @@ func (s *Server) buildMCP() *server.MCPServer {
 
 	m.AddTool(
 		mcp.NewTool("search_documents",
-			mcp.WithDescription("Семантический поиск по действующим документам Фонда «Сколково». Возвращает релевантные фрагменты с источником."),
+			mcp.WithDescription("Семантический поиск по действующей базе знаний Фонда «Сколково»: документы, мероприятия, конкурсы, FAQ и новости. Возвращает релевантные фрагменты с источником и типом сущности (entity_type)."),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Поисковый запрос на естественном языке")),
@@ -82,6 +85,16 @@ func (s *Server) buildMCP() *server.MCPServer {
 			mcp.WithString("category", mcp.Description("Категория (необязательно)")),
 		),
 		s.handleList,
+	)
+
+	m.AddTool(
+		mcp.NewTool("get_document_file",
+			mcp.WithDescription("Скачать файл документа по идентификатору: возвращает имя файла, MIME-тип, размер и содержимое в base64 (для файлов до 8 МБ). Используйте, чтобы получить сам документ, а не только метаданные."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithOpenWorldHintAnnotation(false),
+			mcp.WithString("id", mcp.Required(), mcp.Description("Идентификатор документа")),
+		),
+		s.handleGetFile,
 	)
 
 	s.mcpSrv = m
@@ -116,6 +129,69 @@ func (s *Server) handleGet(ctx context.Context, req mcp.CallToolRequest) (*mcp.C
 		return mcp.NewToolResultError("документ не найден"), nil
 	}
 	return mcp.NewToolResultText(toJSON(doc)), nil
+}
+
+// maxFileBytes — предел размера файла для отдачи через MCP (base64). Большие
+// файлы лучше скачивать по source_url; через MCP отдаём только метаданные.
+const maxFileBytes = 8 << 20 // 8 МБ
+
+func (s *Server) handleGetFile(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	id, err := req.RequireString("id")
+	if err != nil {
+		return mcp.NewToolResultError("параметр id обязателен"), nil
+	}
+	doc, err := s.store.Get(ctx, id)
+	if err != nil {
+		return mcp.NewToolResultError("документ не найден"), nil
+	}
+	type fileResult struct {
+		ID        string `json:"id"`
+		Title     string `json:"title"`
+		Filename  string `json:"filename"`
+		MIME      string `json:"mime"`
+		Size      int    `json:"size_bytes"`
+		SourceURL string `json:"source_url,omitempty"`
+		Base64    string `json:"base64,omitempty"`
+		Note      string `json:"note,omitempty"`
+	}
+	res := fileResult{ID: doc.ID, Title: doc.Title, SourceURL: doc.SourceURL}
+	if doc.LocalPath == "" {
+		res.Note = "У документа нет локального файла; используйте source_url."
+		return mcp.NewToolResultText(toJSON(res)), nil
+	}
+	data, err := os.ReadFile(doc.LocalPath)
+	if err != nil {
+		return mcp.NewToolResultError("файл недоступен: " + err.Error()), nil
+	}
+	res.Filename = filepath.Base(doc.LocalPath)
+	res.MIME = mimeByExt(res.Filename)
+	res.Size = len(data)
+	if len(data) > maxFileBytes {
+		res.Note = "Файл слишком большой для передачи через MCP; скачайте по source_url."
+		return mcp.NewToolResultText(toJSON(res)), nil
+	}
+	res.Base64 = base64.StdEncoding.EncodeToString(data)
+	return mcp.NewToolResultText(toJSON(res)), nil
+}
+
+// mimeByExt возвращает MIME-тип по расширению файла документа.
+func mimeByExt(name string) string {
+	switch strings.ToLower(filepath.Ext(name)) {
+	case ".pdf":
+		return "application/pdf"
+	case ".docx":
+		return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	case ".doc":
+		return "application/msword"
+	case ".txt":
+		return "text/plain"
+	case ".md":
+		return "text/markdown"
+	case ".html", ".htm":
+		return "text/html"
+	default:
+		return "application/octet-stream"
+	}
 }
 
 func (s *Server) handleList(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {

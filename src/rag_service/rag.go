@@ -113,6 +113,7 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 					"source_url":  doc.SourceURL,
 					"category":    doc.Category,
 					"status":      string(doc.Status),
+					"entity_type": "document",
 					"chunk_index": start + i,
 					"text":        batch[i],
 				},
@@ -125,6 +126,65 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 	}
 	if err := s.Store.SetIndexed(ctx, docID, true); err != nil {
 		return 0, err
+	}
+	return len(points), nil
+}
+
+// EntityDoc — произвольная сущность (мероприятие, конкурс, FAQ и т.п.) для
+// индексации в общий векторный индекс наряду с документами. Status должен быть
+// «действует», чтобы сущность попадала в поиск (FilterActive).
+type EntityDoc struct {
+	ID         string // уникальный идентификатор группы точек (например, event.ID)
+	EntityType string // document | event | contest | faq | news | preference | npa
+	Title      string
+	SourceURL  string
+	Category   string
+	Status     string // «действует» — попадает в поиск; иное — отфильтровывается
+	Text       string // полный текст для чанкинга
+}
+
+// IndexEntity индексирует произвольную сущность в общий векторный индекс: чанкинг,
+// эмбеддинги, перезапись точек (по ID). Позволяет находить мероприятия, конкурсы,
+// FAQ и т.п. семантическим поиском наравне с документами. Возвращает число чанков.
+func (s *Service) IndexEntity(ctx context.Context, e EntityDoc) (int, error) {
+	chunks := chunkText(e.Text, chunkSize, chunkOverlap)
+	if len(chunks) == 0 {
+		return 0, nil
+	}
+	if err := s.Qdr.DeleteByDocument(ctx, e.ID); err != nil {
+		return 0, fmt.Errorf("очистка старых точек: %w", err)
+	}
+	var points []qdrant.Point
+	for start := 0; start < len(chunks); start += embedBatch {
+		end := min(start+embedBatch, len(chunks))
+		batch := chunks[start:end]
+		inputs := make([]string, len(batch))
+		for i, c := range batch {
+			inputs[i] = embed.PrefixPassage + c
+		}
+		vecs, err := s.Emb.Embed(ctx, inputs)
+		if err != nil {
+			return 0, fmt.Errorf("эмбеддинги: %w", err)
+		}
+		for i, v := range vecs {
+			points = append(points, qdrant.Point{
+				ID:     uuid.NewString(),
+				Vector: v,
+				Payload: map[string]any{
+					"document_id": e.ID,
+					"title":       e.Title,
+					"source_url":  e.SourceURL,
+					"category":    e.Category,
+					"status":      e.Status,
+					"entity_type": e.EntityType,
+					"chunk_index": start + i,
+					"text":        batch[i],
+				},
+			})
+		}
+	}
+	if err := s.Qdr.Upsert(ctx, points); err != nil {
+		return 0, fmt.Errorf("upsert в Qdrant: %w", err)
 	}
 	return len(points), nil
 }
@@ -173,6 +233,7 @@ type Result struct {
 	Title      string  `json:"title"`
 	SourceURL  string  `json:"source_url"`
 	Category   string  `json:"category"`
+	EntityType string  `json:"entity_type,omitempty"`
 	ChunkIndex int     `json:"chunk_index"`
 	Text       string  `json:"text"`
 	Score      float32 `json:"score"`
@@ -201,6 +262,7 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]Result
 			Title:      asString(h.Payload["title"]),
 			SourceURL:  asString(h.Payload["source_url"]),
 			Category:   asString(h.Payload["category"]),
+			EntityType: asString(h.Payload["entity_type"]),
 			ChunkIndex: asInt(h.Payload["chunk_index"]),
 			Text:       asString(h.Payload["text"]),
 			Score:      h.Score,

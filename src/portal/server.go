@@ -99,6 +99,7 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /generate", ps.requireAuth(ps.handleGenerate))
 	mux.HandleFunc("POST /generate", ps.requireAuth(ps.handleGenerateSubmit))
 	mux.HandleFunc("GET /download", ps.requireAuth(ps.handleDownload))
+	mux.HandleFunc("GET /documents/file", ps.requireAuth(ps.handleDocumentFile))
 	mux.HandleFunc("GET /notifications", ps.requireAuth(ps.handleNotifications))
 	mux.HandleFunc("POST /notifications/read", ps.requireAuth(ps.handleNotificationRead))
 
@@ -481,6 +482,27 @@ func (ps *PortalServer) handleDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
 	http.ServeFile(w, r, full)
+}
+
+// handleDocumentFile отдаёт оригинальный файл документа из реестра по его id.
+// Документы реестра — публичные материалы Сколково; доступ только авторизованному клиенту.
+func (ps *PortalServer) handleDocumentFile(w http.ResponseWriter, r *http.Request) {
+	if ps.stores.DocumentStore == nil {
+		http.Error(w, "реестр документов недоступен", http.StatusNotFound)
+		return
+	}
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		http.Error(w, "не указан идентификатор документа", http.StatusBadRequest)
+		return
+	}
+	doc, err := ps.stores.DocumentStore.Get(r.Context(), id)
+	if err != nil || doc.LocalPath == "" {
+		http.Error(w, "файл документа не найден", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+filepath.Base(doc.LocalPath)+"\"")
+	http.ServeFile(w, r, doc.LocalPath)
 }
 
 // ---------------------------------------------------------------------------

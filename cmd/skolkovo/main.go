@@ -1031,6 +1031,7 @@ func cmdServe(cfg config.Config) error {
 			}
 			if pgs, ok := st.(*store.PostgresStore); ok {
 				portalStores.NotifStore = store.NewPostgresNotificationStore(pgs.Pool())
+				portalStores.DocStore = store.NewPostgresClientStore(pgs.Pool())
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -1453,7 +1454,7 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 	pss := store.NewPostgresSourceStore(pool)
 
 	// Регистрируем инструменты резидентства.
-	mcpserver.RegisterResidencyTools(mcpSrv, pcs, pcs, pcs, pcs)
+	mcpserver.RegisterResidencyTools(mcpSrv, pcs, pcs, pcs, pcs, pcs)
 
 	// Регистрируем инструменты источников (включая реестр резидентов).
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
@@ -1474,6 +1475,23 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 	}
 }
 
+// formatConsultantAnswer добавляет к ответу консультанта список источников,
+// чтобы пользователь (виджет/бот/агент) видел, на чём основан ответ.
+func formatConsultantAnswer(resp agents.ConsultantResponse) string {
+	out := resp.Answer
+	if len(resp.Sources) > 0 {
+		out += "\n\n📚 Источники:"
+		for _, s := range resp.Sources {
+			line := "\n• " + s.Title
+			if s.SourceURL != "" {
+				line += " — " + s.SourceURL
+			}
+			out += line
+		}
+	}
+	return out
+}
+
 // registerAgentMCPTools создаёт ИИ-агентов и регистрирует их MCP-инструменты.
 func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag.Service, cfg config.Config) {
 	ps, ok := st.(*store.PostgresStore)
@@ -1484,8 +1502,10 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 	pool := ps.Pool()
 	pcs := store.NewPostgresClientStore(pool)
 
-	// Создаём агентов.
-	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
+	// Создаём агентов. Консультанту даём доступ к LLM-конфигу (агент Consultant)
+	// для синтеза связного ответа; без настроенной модели работает на чистом RAG.
+	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey).
+		WithLLM(aimodels.NewStore(pool))
 	validator := agents.NewValidatorAgent(ragSvc, pcs)
 	monitorStores := agents.MonitorStores{
 		DocStore:      st,
@@ -1517,7 +1537,7 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 			if err != nil {
 				return mcp.NewToolResultError("ошибка консультанта: " + err.Error()), nil
 			}
-			return mcp.NewToolResultText(resp.Answer), nil
+			return mcp.NewToolResultText(formatConsultantAnswer(resp)), nil
 		},
 	)
 
@@ -1743,8 +1763,11 @@ func runTelegramBot(ctx context.Context, cfg config.Config, st store.Store) {
 		MCPAPIKey: cfg.MCPAPIKey,
 	}
 
-	// Создаём консультанта для бота
-	consultant := agents.NewConsultantAgent(nil, "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
+	// Создаём консультанта для бота: реальный RAG + LLM-синтез (если настроен).
+	consultant := agents.NewConsultantAgent(newRAG(cfg, st, nil), "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
+	if ps, ok := st.(*store.PostgresStore); ok {
+		consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool()))
+	}
 
 	bot, err := tgbot.NewBot(botCfg, botStores, consultant)
 	if err != nil {

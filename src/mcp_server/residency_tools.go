@@ -24,14 +24,16 @@ import (
 )
 
 // RegisterResidencyTools регистрирует инструменты управления резидентством на MCP-сервере.
+// clientDocStore может быть nil — тогда get_client_documents вернёт понятную ошибку.
 func RegisterResidencyTools(
 	srv *server.MCPServer,
 	st store.ClientStore,
 	checklistStore store.ChecklistStore,
 	deadlineStore store.DeadlineStore,
 	templateStore store.TemplateStore,
+	clientDocStore store.ClientDocumentStore,
 ) {
-	registerResidencyTools(srv, st, checklistStore, deadlineStore, templateStore)
+	registerResidencyTools(srv, st, checklistStore, deadlineStore, templateStore, clientDocStore)
 }
 
 // registerResidencyTools регистрирует инструменты управления резидентством на MCP-сервере.
@@ -41,6 +43,7 @@ func registerResidencyTools(
 	checklistStore store.ChecklistStore,
 	deadlineStore store.DeadlineStore,
 	templateStore store.TemplateStore,
+	clientDocStore store.ClientDocumentStore,
 ) {
 	// --- get_client_status ---
 	srv.AddTool(
@@ -92,7 +95,18 @@ func registerResidencyTools(
 			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			return mcp.NewToolResultError("инструмент get_client_documents требует ClientDocumentStore, который не передан в registerResidencyTools"), nil
+			if clientDocStore == nil {
+				return mcp.NewToolResultError("хранилище документов клиента не настроено"), nil
+			}
+			clientID, err := req.RequireString("client_id")
+			if err != nil {
+				return mcp.NewToolResultError("параметр client_id обязателен"), nil
+			}
+			docs, err := clientDocStore.ListClientDocuments(ctx, clientID)
+			if err != nil {
+				return mcp.NewToolResultError("ошибка получения документов клиента: " + err.Error()), nil
+			}
+			return mcp.NewToolResultText(toJSON(docs)), nil
 		},
 	)
 

@@ -5,7 +5,6 @@ package contests
 import (
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -691,13 +690,25 @@ func indexContestToRAG(ctx context.Context, c *model.Contest, ragSvc *rag.Servic
 	}
 	b.WriteString("Источник: " + c.SourceURL)
 
-	body := b.String()
-	sum := sha256.Sum256([]byte(body))
-	hash := hex.EncodeToString(sum[:])
-
-	_ = hash // хэш может использоваться для未来的去重
-
-	return nil
+	category := c.Category
+	if category == "" {
+		category = "Конкурсы"
+	}
+	// Только действующие конкурсы попадают в поиск; закрытые отфильтровываются.
+	status := "действует"
+	if string(c.Status) != "active" {
+		status = "устарел"
+	}
+	_, err := ragSvc.IndexEntity(ctx, rag.EntityDoc{
+		ID:         c.ID,
+		EntityType: "contest",
+		Title:      c.Title,
+		SourceURL:  c.SourceURL,
+		Category:   category,
+		Status:     status,
+		Text:       b.String(),
+	})
+	return err
 }
 
 // ---------------------------------------------------------------------------

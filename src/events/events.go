@@ -5,7 +5,6 @@ package events
 import (
 	"context"
 	"crypto/sha1"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -657,16 +656,26 @@ func indexEventToRAG(ctx context.Context, ev *model.Event, ragSvc *rag.Service) 
 	}
 	b.WriteString("Источник: " + ev.SourceURL)
 
-	body := b.String()
-	sum := sha256.Sum256([]byte(body))
-	hash := hex.EncodeToString(sum[:])
-
-	// RAG работает с Documents из store, поэтому мероприятия не индексируются напрямую.
-	// Вместо этого RAG может индексировать текстовые файлы мероприятий, если они сохранены.
-	// Этот вызов — заглушка для будущей интеграции.
-	_ = hash // хэш可以用于将来的去重
-
-	return nil
+	category := ev.Category
+	if category == "" {
+		category = "Мероприятия"
+	}
+	// В поиск попадают только активные мероприятия; прошедшие/отменённые
+	// помечаем «устарел», чтобы они отфильтровывались (FilterActive).
+	status := "действует"
+	if string(ev.Status) != "active" {
+		status = "устарел"
+	}
+	_, err := ragSvc.IndexEntity(ctx, rag.EntityDoc{
+		ID:         ev.ID,
+		EntityType: "event",
+		Title:      ev.Title,
+		SourceURL:  ev.SourceURL,
+		Category:   category,
+		Status:     status,
+		Text:       b.String(),
+	})
+	return err
 }
 
 // ---------------------------------------------------------------------------

@@ -110,6 +110,25 @@ func New(baseURL, outDir string, st store.Store) *Scraper {
 	}
 }
 
+// UseProxy направляет каталожные HTTP-запросы (RSS + страницы документов) через
+// прокси. Нужно, когда сервер не имеет прямого доступа к dochub.sk.ru (например,
+// зарубежный дата-центр за гео/WAF-блокировкой). Пустой proxyURL — без изменений.
+func (s *Scraper) UseProxy(proxyURL string) {
+	if strings.TrimSpace(proxyURL) == "" {
+		return
+	}
+	pu, err := url.Parse(proxyURL)
+	if err != nil {
+		log.Printf("[scraper] некорректный PROXY_URL %q: %v — прокси не применён", proxyURL, err)
+		return
+	}
+	timeout := 60 * time.Second
+	if s.HTTP != nil && s.HTTP.Timeout > 0 {
+		timeout = s.HTTP.Timeout
+	}
+	s.HTTP = &http.Client{Timeout: timeout, Transport: &http.Transport{Proxy: http.ProxyURL(pu)}}
+}
+
 // deriveRSS возвращает URL ленты-каталога документов для базового URL раздела.
 func deriveRSS(baseURL string) string {
 	u, err := url.Parse(baseURL)

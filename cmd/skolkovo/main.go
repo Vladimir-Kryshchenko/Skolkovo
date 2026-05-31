@@ -162,6 +162,8 @@ func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
 	sc := scraper.New(cfg.SourceURL, cfg.DocsDir, st)
 	sc.MaxPages = cfg.ScrapeMaxPages
 	sc.Delay = cfg.ScrapeDelay
+	// На серверах без прямого доступа к dochub.sk.ru (гео/WAF) каталог ходит через прокси.
+	sc.UseProxy(cfg.ProxyURL)
 	return sc
 }
 

@@ -462,8 +462,34 @@ func resolve(base *url.URL, pageURL, href string) string {
 }
 
 func docID(fileURL string) string {
-	sum := sha1.Sum([]byte(fileURL))
+	return DocID(fileURL)
+}
+
+// DocID детерминированно генерирует ID документа из URL, предварительно
+// нормализуя его. Нормализация снижает дубли одного документа, пришедшего
+// из разных источников (RSS, каталог по категориям, полный обход сайта)
+// под слегка различающимися URL.
+func DocID(rawURL string) string {
+	sum := sha1.Sum([]byte(normalizeURL(rawURL)))
 	return hex.EncodeToString(sum[:])
+}
+
+// normalizeURL приводит URL к каноничному виду для дедупликации:
+// схема/хост в нижний регистр, отбрасываются query, фрагмент и хвостовой «/».
+// При ошибке разбора возвращает исходную строку без изменений.
+func normalizeURL(rawURL string) string {
+	u, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || u.Host == "" {
+		return rawURL
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	u.RawQuery = ""
+	u.Fragment = ""
+	if len(u.Path) > 1 {
+		u.Path = strings.TrimRight(u.Path, "/")
+	}
+	return u.String()
 }
 
 func safeFileName(fileURL string) string {

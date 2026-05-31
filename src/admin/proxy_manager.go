@@ -44,14 +44,15 @@ func NewProxyManager(path string) *ProxyManager {
 }
 
 func (pm *ProxyManager) load() {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
 	data, err := os.ReadFile(pm.Path)
 	if err != nil {
+		// Файл не существует — создаём пустой
+		pm.Proxies = []ProxyConfig{}
 		pm.save()
 		return
 	}
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	json.Unmarshal(data, &pm.Proxies)
 
 	for _, p := range pm.Proxies {

@@ -22,9 +22,7 @@ package main
 
 import (
 	"context"
-	"crypto/sha1"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -95,6 +93,8 @@ func main() {
 		mustRun(cmdIndex(cfg, args))
 	case "catalog":
 		mustRun(cmdCatalog(cfg))
+	case "crawl":
+		mustRun(cmdCrawl(cfg))
 	case "fetch":
 		mustRun(cmdFetch(cfg))
 	case "news":
@@ -248,45 +248,37 @@ func cmdIndex(cfg config.Config, args []string) error {
 
 // cmdCatalog выполняет полное перечисление каталога по категориям через
 // headless-браузер (виджет superlist подгружает весь список JS-ом).
-func cmdCatalog(cfg config.Config) error {
-	ctx := context.Background()
-	st, err := openStore(ctx, cfg)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
+// applyFetchProfile проставляет фетчеру «человеческий» темп прогона из конфига.
+func applyFetchProfile(f *fetcher.Fetcher, cfg config.Config) {
+	f.BatchSize = cfg.FetchBatchSize
+	f.BreakMin = cfg.FetchBreakMin
+	f.BreakMax = cfg.FetchBreakMax
+	f.LongPausePct = cfg.FetchLongPausePct
+}
 
-	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait)
-	if err != nil {
-		return err
-	}
-
+// catalogSpecs возвращает 8 канонических категорий документов.
+func catalogSpecs() []fetcher.CategorySpec {
 	cats := make([]fetcher.CategorySpec, 0, len(scraper.CategoryNames))
 	for slug, name := range scraper.CategoryNames {
 		cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})
 	}
+	return cats
+}
 
-	items, err := f.EnumerateCategories(ctx, cfg.SourceURL, cats)
-	if err != nil {
-		return err
-	}
-
+// upsertCatalogItems сохраняет найденные документы в реестр (дедуп по ссылке→ID).
+// Возвращает (добавлено, дополнено категорией).
+func upsertCatalogItems(ctx context.Context, st store.Store, items []fetcher.CatalogItem) (int, int) {
 	var added, merged int
 	for _, it := range items {
 		title := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(it.Title), "File:"))
 		if title == "" {
 			continue
 		}
-		sum := sha1.Sum([]byte(it.Link))
-		id := hex.EncodeToString(sum[:])
+		id := scraper.DocID(it.Link)
 
 		if existing, err := st.Get(ctx, id); err == nil {
-			changed := false
 			if existing.Category == "" && it.Category != "" {
 				existing.Category = it.Category
-				changed = true
-			}
-			if changed {
 				_ = st.Upsert(ctx, existing)
 				merged++
 			}
@@ -312,7 +304,55 @@ func cmdCatalog(cfg config.Config) error {
 		}
 		added++
 	}
-	fmt.Printf("Каталог (headless): найдено %d, добавлено %d, дополнено %d\n", len(items), added, merged)
+	return added, merged
+}
+
+func cmdCatalog(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
+	if err != nil {
+		return err
+	}
+	applyFetchProfile(f, cfg)
+
+	cats := catalogSpecs()
+
+	items, err := f.EnumerateCategoriesAuto(ctx, cfg.SourceURL, cats)
+	if err != nil {
+		return err
+	}
+	added, merged := upsertCatalogItems(ctx, st, items)
+	fmt.Printf("Каталог: найдено %d, добавлено %d, дополнено %d\n", len(items), added, merged)
+	return nil
+}
+
+// cmdCrawl — полный обход всего сайта документов (категории + sitemap + ссылки).
+func cmdCrawl(cfg config.Config) error {
+	ctx := context.Background()
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
+	if err != nil {
+		return err
+	}
+	applyFetchProfile(f, cfg)
+
+	items, err := f.EnumerateSiteAuto(ctx, cfg.SourceURL, catalogSpecs(), cfg.CrawlMaxPages)
+	if err != nil {
+		return err
+	}
+	added, merged := upsertCatalogItems(ctx, st, items)
+	fmt.Printf("Обход сайта: найдено %d, добавлено %d, дополнено %d\n", len(items), added, merged)
 	return nil
 }
 
@@ -324,10 +364,11 @@ func cmdFetch(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait)
+	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
 	if err != nil {
 		return err
 	}
+	applyFetchProfile(f, cfg)
 
 	svc := newRAG(cfg, st, nil)
 	indexFn := func(ctx context.Context, id string) error {
@@ -344,39 +385,6 @@ func cmdFetch(cfg config.Config) error {
 		fmt.Println("  ! ", e)
 	}
 	return nil
-}
-
-// runScheduledFetch выполняет один прогон скачивания недостающих тел файлов через
-// headless-браузер (обход WAF) и фиксирует результат в мониторинге свежести.
-// Вызывается планировщиком регулярно, чтобы файлы были выкачаны до того, как их
-// запросят через MCP/бота. No-op при недоступном Chrome.
-func runScheduledFetch(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, recordHealth func(string, int, error)) {
-	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait)
-	if err != nil {
-		log.Printf("[serve:fetch] headless-браузер недоступен: %v", err)
-		recordHealth("fetch", 0, err)
-		return
-	}
-	log.Printf("[serve:fetch] скачивание недостающих тел файлов (обход WAF)")
-
-	indexFn := func(ctx context.Context, id string) error {
-		if svc == nil {
-			return nil
-		}
-		if err := svc.Init(ctx); err != nil {
-			return err
-		}
-		_, err := svc.IndexDocument(ctx, id)
-		return err
-	}
-
-	done, errs := f.EnrichMissing(ctx, st, cfg.DocsDir, cfg.FetchLimit, indexFn)
-	log.Printf("[serve:fetch] скачано %d, ошибок %d", done, len(errs))
-	if len(errs) > 0 {
-		recordHealth("fetch", done, fmt.Errorf("ошибок загрузки: %d", len(errs)))
-	} else {
-		recordHealth("fetch", done, nil)
-	}
 }
 
 func cmdNews(cfg config.Config) error {
@@ -788,7 +796,15 @@ func cmdSync(cfg config.Config) error {
 		return err
 	}
 	defer st.Close()
-	return newPipeline(cfg, st, newRAG(cfg, st, nil)).RunOnce(ctx)
+
+	svc := newRAG(cfg, st, nil)
+	// Headless-обход сайта + скачивание тел файлов (обход WAF) до прочего цикла.
+	if found, fetched, herr := headlessCollect(ctx, cfg, st, svc, nil); herr != nil {
+		fmt.Printf("Sync: headless-сбор пропущен: %v\n", herr)
+	} else {
+		fmt.Printf("Sync: headless — найдено %d, скачано %d\n", found, fetched)
+	}
+	return newPipeline(cfg, st, svc).RunOnce(ctx)
 }
 
 func cmdMCP(cfg config.Config) error {
@@ -981,13 +997,6 @@ func cmdServe(cfg config.Config) error {
 				Password: cfg.SMTPPassword,
 				From:     cfg.SMTPFrom,
 			})
-			// Хранилище ленты изменений для портала
-			var portalChangeStore changes.Store
-			if ps, ok := st.(*store.PostgresStore); ok {
-				if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
-					portalChangeStore = cs
-				}
-			}
 			portalStores := portal.PortalStores{
 				ClientStore:    stores.ClientStore,
 				ChecklistStore: stores.ChecklistStore,
@@ -1284,8 +1293,8 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			// Скачивание тел файлов через headless-браузер (обход WAF).
-			runScheduledFetch(ctx, cfg, st, svc, recordHealth)
+			// Полный headless-цикл: обход сайта (обход WAF) + скачивание тел файлов.
+			runScheduledCollect(ctx, cfg, st, svc, recordHealth)
 
 			// Мероприятия
 			if cfg.EventsSourceURL != "" && eventStore != nil {
@@ -1370,12 +1379,11 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			if cfg.PreferencesEnabled {
 				log.Printf("[serve:preferences] синхронизация льгот")
 				prefCfg := preferences.PreferencesConfig{
-					SourceURLs: []string{cfg.PreferencesURL},
-					Category:   "Льготы",
+					SourceURL: cfg.PreferencesURL,
+					Category:  "Льготы",
 				}
-				mon := preferences.NewMonitor(prefCfg, st, nil)
-				mon.Changes = changeStore
-				if res, err := mon.Run(ctx); err != nil {
+				mon := preferences.New(prefCfg, st)
+				if res, err := mon.Run(ctx, changeStore); err != nil {
 					log.Printf("[serve:preferences] ошибка: %v", err)
 					recordHealth("preferences", 0, err)
 				} else {
@@ -1388,12 +1396,11 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 			if cfg.RegulationsEnabled {
 				log.Printf("[serve:regulations] синхронизация НПА")
 				regCfg := regulations.RegulationsConfig{
-					SearchURL: cfg.RegulationsSearchURL,
+					SourceURL: cfg.RegulationsSearchURL,
 					Category:  "НПА",
 				}
-				mon := regulations.NewMonitor(regCfg, st, nil)
-				mon.Changes = changeStore
-				if res, err := mon.Run(ctx); err != nil {
+				mon := regulations.New(regCfg, st)
+				if res, err := mon.Run(ctx, changeStore); err != nil {
 					log.Printf("[serve:regulations] ошибка: %v", err)
 					recordHealth("regulations", 0, err)
 				} else {
@@ -2066,7 +2073,8 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Сбор данных:")
 	fmt.Fprintln(os.Stderr, "  scrape        — каталог документов из RSS+HTML dochub.sk.ru")
-	fmt.Fprintln(os.Stderr, "  catalog       — полное перечисление каталога (headless browser)")
+	fmt.Fprintln(os.Stderr, "  catalog       — полное перечисление каталога по категориям (headless browser)")
+	fmt.Fprintln(os.Stderr, "  crawl         — полный обход всего сайта документов (категории + sitemap + ссылки)")
 	fmt.Fprintln(os.Stderr, "  fetch         — скачать тела файлов (обход WAF, chromedp)")
 	fmt.Fprintln(os.Stderr, "  news          — синхронизировать новости из RSS")
 	fmt.Fprintln(os.Stderr, "  events        — парсинг мероприятий")

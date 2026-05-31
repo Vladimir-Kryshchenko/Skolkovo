@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 
@@ -54,25 +55,41 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 	if err != nil {
 		return 0, err
 	}
-	if doc.LocalPath == "" {
-		return 0, fmt.Errorf("у документа %s нет локального файла", docID)
+	// Если локальный файл есть — индексируем по содержимому.
+	// Если файла нет — формируем текст из метаданных документа, чтобы он
+	// участвовал в семантическом поиске хотя бы по названию и категории.
+	var chunks []string
+	if doc.LocalPath != "" && extract.IsSupported(doc.LocalPath) {
+		text, err := extract.Text(doc.LocalPath)
+		if err != nil {
+			log.Printf("[rag] %s: ошибка чтения файла, индексируем по метаданным: %v", docID, err)
+		} else {
+			chunks = chunkText(text, chunkSize, chunkOverlap)
+		}
 	}
-	if !extract.IsSupported(doc.LocalPath) {
-		return 0, fmt.Errorf("формат не поддерживается для индексации: %s", doc.LocalPath)
-	}
-
-	text, err := extract.Text(doc.LocalPath)
-	if err != nil {
-		return 0, fmt.Errorf("извлечение текста: %w", err)
-	}
-	chunks := chunkText(text, chunkSize, chunkOverlap)
 	if len(chunks) == 0 {
-		return 0, fmt.Errorf("пустой текст после извлечения")
+		// Fallback: индексируем по метаданным (название + категория + URL).
+		meta := strings.TrimSpace(doc.Title)
+		if doc.Category != "" {
+			meta += " | " + doc.Category
+		}
+		if doc.SourceURL != "" {
+			meta += " | " + doc.SourceURL
+		}
+		if meta == "" {
+			return 0, fmt.Errorf("документ %s без файла и без метаданных, пропускаем", docID)
+		}
+		chunks = chunkText(meta, chunkSize, chunkOverlap)
 	}
 
 	// Классификация документа после chunking (если классификатор включён).
+	// Передаём первый чанк как текст для классификации.
+	classifyText := ""
+	if len(chunks) > 0 {
+		classifyText = chunks[0]
+	}
 	if s.Classifier != nil && doc.Category == "" {
-		result, err := s.Classifier.Classify(ctx, text, doc.Title)
+		result, err := s.Classifier.Classify(ctx, classifyText, doc.Title)
 		if err != nil {
 			log.Printf("[rag:classifier] ошибка классификации документа %s: %v", docID, err)
 		} else if result.Category != "" {

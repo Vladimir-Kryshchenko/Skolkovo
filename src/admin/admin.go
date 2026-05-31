@@ -157,6 +157,7 @@ type pageData struct {
 	Validation   *model.ValidationReport
 	NextRunStr   string
 	CurrentUser  *AdminSession
+	PendingCount int // количество документов «на проверке» для кнопки «Одобрить все»
 }
 
 // loginPageData — данные для страницы входа.
@@ -207,6 +208,9 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /documents/{id}/view-processed", s.requireAuth(s.handleViewProcessed))
 	mux.HandleFunc("GET /documents/{id}/download", s.requireAuth(s.handleDownload))
 	mux.HandleFunc("POST /documents/{id}/deindex", s.requireAuth(s.handleDeindex))
+
+	// Массовое одобрение документов
+	mux.HandleFunc("POST /api/approve-all", s.requireAuthJSON(s.handleAPIApproveAll))
 
 	// Старые API (обратная совместимость)
 	mux.HandleFunc("POST /api/scrape", s.requireAuthJSON(s.handleAPIScrape))
@@ -546,6 +550,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Validation:   valRep,
 		NextRunStr:   nextRunStr,
 		CurrentUser:  sessionFromContext(r),
+		PendingCount: st.Pending,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -877,6 +882,46 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	jsonResp(w, true, "Скачивание файлов запущено в фоне. Используйте активный прокси.", "")
+}
+
+// handleAPIApproveAll переводит все «на_проверке» документы в «действует»
+// и запускает их индексацию в RAG.
+func (s *Server) handleAPIApproveAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	docs, err := s.store.List(ctx, store.Filter{Status: model.StatusPending})
+	if err != nil {
+		jsonResp(w, false, "", "Ошибка получения документов: "+err.Error())
+		return
+	}
+	if len(docs) == 0 {
+		jsonResp(w, true, "Нет документов «на проверке».", "")
+		return
+	}
+	approved := 0
+	for _, d := range docs {
+		if err := s.store.SetStatus(ctx, d.ID, model.StatusActive); err != nil {
+			log.Printf("[admin] approve-all: SetStatus %s: %v", d.ID, err)
+			continue
+		}
+		approved++
+	}
+	// Запускаем индексацию одобренных документов в фоне.
+	if s.rag != nil {
+		go func() {
+			bgCtx := context.Background()
+			indexed := 0
+			for _, d := range docs {
+				n, err := s.rag.IndexDocument(bgCtx, d.ID)
+				if err != nil {
+					log.Printf("[admin] approve-all: indexing %s: %v", d.ID, err)
+				} else {
+					indexed += n
+				}
+			}
+			log.Printf("[admin] approve-all: одобрено %d, проиндексировано %d фрагментов", approved, indexed)
+		}()
+	}
+	jsonResp(w, true, fmt.Sprintf("Одобрено %d документов, индексация запущена в фоне.", approved), "")
 }
 
 // handleAPIIndex запускает индексацию всех «действует» документов.

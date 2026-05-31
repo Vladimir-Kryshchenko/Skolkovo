@@ -445,6 +445,7 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
     <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы) для получения новых документов (~20 документов)">Парсинг RSS (каналы)</button>
     <button onclick="runAction('index', this)" data-tooltip="Проиндексировать все документы со статусом «действует» в векторном поиске (RAG (поиск по векторам))">Индексация</button>
     <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: загрузка документов, новостей и последующая индексация">Полный синк</button>
+    <button onclick="runAction('approve-all', this)" style="background:#00875a;color:#fff" data-tooltip="Одобрить все документы «на проверке» и запустить их индексацию в RAG — документы с метаданными попадут в поиск даже без локального файла">✓ Одобрить все ({{.PendingCount}})</button>
     <button onclick="runAction('seed-local', this)" data-tooltip="Зарегистрировать и проиндексировать все .md-файлы из папки документов">Индекс структуры</button>
     <button onclick="runAction('navindex', this)" data-tooltip="Пересобрать навигацию по сайту для чат-бота (коллекция skolkovo_navigation, инструмент get_navigation)">Навигация бота</button>
     <div class="header-divider"></div>

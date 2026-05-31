@@ -436,6 +436,7 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
   <div class="header-actions">
     <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
     <a href="/changes" data-tooltip="История изменений: что нового появилось в базе">Изменения</a>
+    <a href="/sitepages" data-tooltip="Страницы публичного сайта Сколково: просмотр и переход на сайт">Страницы сайта</a>
     <a href="/diff" data-tooltip="Сравнение версий документов">Сравнение</a>
     <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
     <a href="/graph" data-tooltip="Граф связей между документами">Граф</a>
@@ -633,7 +634,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <div class="doc-title">{{.Title}}</div>
       <div class="doc-meta">
-        <a href="{{.SourceURL}}" target="_blank" rel="noopener" data-tooltip="Открыть источник в новой вкладке">источник</a>
+        {{if .SourceLinkURL}}<a href="{{.SourceLinkURL}}" target="_blank" rel="noopener" data-tooltip="Открыть источник документа">{{.SourceLinkText}}</a>{{end}}
         <span class="id-code">{{.ID}}</span>
         {{if .PublishedAt}}<span>{{.PublishedAt.Format "02.01.2006"}}</span>{{end}}
         {{if .Supersedes}}<span>заменяет {{.Supersedes}}</span>{{end}}
@@ -1238,6 +1239,29 @@ tbody tr:hover { background: var(--surface-alt); }
 /* Entity type tag */
 .entity-tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; background: var(--purple-bg); color: var(--purple); border: 1px solid var(--purple-border); font-family: 'SF Mono', 'Fira Code', monospace; }
 
+/* Tag cloud / chips */
+.tag-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+.tag-bar-label { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-right: 4px; }
+.tag-chip { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 16px; font-size: 12px; font-weight: 500; text-decoration: none; background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); transition: all .12s; }
+.tag-chip:hover { border-color: var(--primary); color: var(--primary); }
+.tag-chip.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+.tag-chip .tag-count { font-size: 10px; font-weight: 700; opacity: .7; }
+.tag-chip.tag-reset { background: var(--red-bg); color: var(--red); border-color: var(--red-border); }
+.tag-chip.mini { padding: 1px 8px; font-size: 11px; }
+.row-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+
+/* Source freshness panel */
+.health-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+.health-title { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
+.health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
+.health-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); }
+.health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--gray); }
+.health-ok .health-dot { background: var(--green); }
+.health-stale .health-dot { background: var(--yellow); }
+.health-failing .health-dot { background: var(--red); }
+.health-name { font-size: 13px; font-weight: 600; }
+.health-meta { font-size: 11px; color: var(--text-secondary); }
+
 /* Empty */
 .empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
 .empty-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--gray-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
@@ -1278,6 +1302,7 @@ tbody tr:hover { background: var(--surface-alt); }
   <div class="header-actions">
     <a href="/">Документы</a>
     <a href="/changes" class="active-link">Изменения</a>
+    <a href="/sitepages">Страницы сайта</a>
     <a href="/diff">Сравнение</a>
     <a href="/analytics">Аналитика</a>
     <a href="/graph">Граф</a>
@@ -1361,6 +1386,7 @@ document.addEventListener('DOMContentLoaded', function() {
           <option value="preference"{{if eq .EntityType "preference"}} selected{{end}}>Льгота</option>
           <option value="faq"{{if eq .EntityType "faq"}} selected{{end}}>FAQ (частые вопросы)</option>
           <option value="telegram"{{if eq .EntityType "telegram"}} selected{{end}}>Telegram</option>
+          <option value="sitepage"{{if eq .EntityType "sitepage"}} selected{{end}}>Страница сайта</option>
         </select>
       </div>
       <div class="filter-group">
@@ -1379,8 +1405,37 @@ document.addEventListener('DOMContentLoaded', function() {
   </form>
 </div>
 
+{{/* Tag cloud (auto-derived) */}}
+{{if .AllTags}}
+<div class="tag-bar">
+  <span class="tag-bar-label">Теги:</span>
+  {{if .Tag}}<a class="tag-chip tag-reset" href="/changes{{if .BaseQS}}?{{.BaseQS}}{{end}}" data-tooltip="Сбросить фильтр по тегу">× {{.Tag}}</a>{{end}}
+  {{range .AllTags}}
+    <a class="tag-chip{{if eq .Name $.Tag}} active{{end}}" href="/changes?tag={{.Enc}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" data-tooltip="Фильтровать по тегу «{{.Name}}»">{{.Name}}<span class="tag-count">{{.Count}}</span></a>
+  {{end}}
+</div>
+{{end}}
+
+{{/* Source freshness panel — когда какой источник обновлялся */}}
+{{if .Health}}
+<div class="health-panel">
+  <div class="health-title">Свежесть источников</div>
+  <div class="health-grid">
+    {{range .Health}}
+    <div class="health-card health-{{.State}}" data-tooltip="Последнее успешное обновление: {{.LastSuccess}}">
+      <div class="health-dot"></div>
+      <div class="health-body">
+        <div class="health-name">{{.Label}}</div>
+        <div class="health-meta">{{.StateLabel}} · {{.LastSuccess}}</div>
+      </div>
+    </div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
 {{/* Events table */}}
-{{if .Events}}
+{{if .Rows}}
 <div class="table-wrap">
 <div class="table-scroll">
 <table>
@@ -1395,30 +1450,32 @@ document.addEventListener('DOMContentLoaded', function() {
     </tr>
   </thead>
   <tbody>
-  {{range .Events}}
+  {{range .Rows}}
   <tr>
-    <td style="white-space:nowrap;font-size:12px" data-tooltip="{{.DetectedAt.Format "02.01.2006 15:04:05"}}">
-      {{.DetectedAt.Format "02.01 15:04"}}
+    <td style="white-space:nowrap;font-size:12px" data-tooltip="{{.Event.DetectedAt.Format "02.01.2006 15:04:05"}}">
+      {{.Event.DetectedAt.Format "02.01 15:04"}}
     </td>
     <td>
-      <span class="kind-badge kind-{{.Kind}}" data-tooltip="
-        {{if eq .Kind "new"}}Сущность впервые появилась в базе
-        {{else if eq .Kind "updated"}}Содержимое или метаданные изменились
-        {{else if eq .Kind "outdated"}}Сущность переведена в статус «устарела»
-        {{else if eq .Kind "removed"}}Сущность удалена из источника{{end}}
+      <span class="kind-badge kind-{{.Event.Kind}}" data-tooltip="
+        {{if eq .Event.Kind "new"}}Сущность впервые появилась в базе
+        {{else if eq .Event.Kind "updated"}}Содержимое или метаданные изменились
+        {{else if eq .Event.Kind "outdated"}}Сущность переведена в статус «устарела»
+        {{else if eq .Event.Kind "removed"}}Сущность удалена из источника{{end}}
       ">
-        {{if eq .Kind "new"}}<span class="kind-dot kind-new"></span> Новая{{else if eq .Kind "updated"}}<span class="kind-dot kind-updated"></span> Обновлена{{else if eq .Kind "outdated"}}<span class="kind-dot kind-outdated"></span> Устарела{{else if eq .Kind "removed"}}<span class="kind-dot kind-removed"></span> Удалена{{end}}
+        {{if eq .Event.Kind "new"}}<span class="kind-dot kind-new"></span> Новая{{else if eq .Event.Kind "updated"}}<span class="kind-dot kind-updated"></span> Обновлена{{else if eq .Event.Kind "outdated"}}<span class="kind-dot kind-outdated"></span> Устарела{{else if eq .Event.Kind "removed"}}<span class="kind-dot kind-removed"></span> Удалена{{end}}
       </span>
     </td>
-    <td><span class="entity-tag">{{.EntityType}}</span></td>
+    <td><span class="entity-tag">{{.Event.EntityType}}</span></td>
     <td>
-      <div style="font-weight:600;font-size:13px">{{.Title}}</div>
-      {{if .Summary}}<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">{{.Summary}}</div>{{end}}
-      <div style="font-size:10px;color:var(--text-secondary);margin-top:2px;font-family:monospace">{{.EntityID}}</div>
+      <div style="font-weight:600;font-size:13px">{{.Event.Title}}</div>
+      {{if .Event.Summary}}<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">{{.Event.Summary}}</div>{{end}}
+      {{if .Tags}}<div class="row-tags">{{range .Tags}}<a class="tag-chip mini{{if eq . $.Tag}} active{{end}}" href="/changes?tag={{. | urlquery}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" data-tooltip="Фильтровать по тегу «{{.}}»">{{.}}</a>{{end}}</div>{{end}}
+      <div style="font-size:10px;color:var(--text-secondary);margin-top:2px;font-family:monospace">{{.Event.EntityID}}</div>
     </td>
-    <td style="font-size:12px">{{if .Category}}{{.Category}}{{else}}—{{end}}</td>
+    <td style="font-size:12px">{{if .Event.Category}}{{.Event.Category}}{{else}}—{{end}}</td>
     <td>
-      {{if .SourceURL}}<a href="{{.SourceURL}}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть источник">источник ↗</a>{{else}}—{{end}}
+      {{if eq .Event.EntityType "sitepage"}}<a href="/sitepages/{{.Event.EntityID}}" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть страницу в просмотрщике">просмотр</a><br>{{end}}
+      {{if .Event.SourceURL}}<a href="{{.Event.SourceURL}}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть источник">источник ↗</a>{{else}}—{{end}}
     </td>
   </tr>
   {{end}}
@@ -1435,6 +1492,264 @@ document.addEventListener('DOMContentLoaded', function() {
   <p>За указанный период изменений не найдено.<br>
   Попробуйте расширить диапазон дат или сбросить фильтры.</p>
 </div>
+{{end}}
+{{end}}
+
+{{/* ===================== СТРАНИЦЫ ПУБЛИЧНОГО САЙТА ===================== */}}
+
+{{/* Общий стиль для страниц раздела «Страницы сайта» */}}
+{{define "sp-style"}}<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #f6f7fb; --surface: #fff; --surface-alt: #f0f2f5; --primary: #0073ea; --primary-hover: #005bb5;
+  --primary-light: #e5f0fc; --text: #323338; --text-secondary: #676879;
+  --border: #c3c6d4; --radius: 8px;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.06);
+  --green: #008653; --green-bg: #f4f9f4; --green-border: #b7e4c7;
+  --red: #7a0606; --red-bg: #fdf3f3; --red-border: #f5c6c6;
+  --gray: #676879; --gray-bg: #f0f2f5;
+  --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+  --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6; --border: #3b3f54;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
+  --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+  --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d; --gray: #9698a6; --gray-bg: #2a2f45;
+} }
+:root[data-theme="dark"] {
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --primary: #579dff; --primary-hover: #7db3ff;
+  --primary-light: #1e3050; --text: #d0d1d8; --text-secondary: #9698a6; --border: #3b3f54;
+  --shadow-sm: 0 1px 4px rgba(0,0,0,.3);
+  --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+  --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d; --gray: #9698a6; --gray-bg: #2a2f45;
+}
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; }
+a { color: var(--primary); text-decoration: none; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0 28px; display: flex; align-items: center; justify-content: space-between; height: 56px; box-shadow: var(--shadow-sm); position: sticky; top: 0; z-index: 100; }
+.logo-wrap { display: flex; align-items: center; gap: 10px; }
+.logo-icon { width: 32px; height: 32px; background: var(--primary); border-radius: 8px; display: flex; align-items: center; justify-content: center; }
+.logo-icon svg { width: 20px; height: 20px; fill: #fff; }
+header h1 { font-size: 16px; font-weight: 700; color: var(--text); }
+.header-actions { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.header-actions a, .header-actions button { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s; text-decoration: none; font-family: var(--font); display: inline-flex; align-items: center; gap: 5px; }
+.header-actions a:hover { background: var(--surface-alt); color: var(--text); }
+.header-actions a.active-link { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
+.header-divider { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+.theme-btn { width: 36px !important; height: 36px !important; padding: 0 !important; display: flex !important; align-items: center; justify-content: center; }
+.theme-btn svg { width: 18px; height: 18px; }
+main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+.parse-info { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; }
+.parse-info .label { font-weight: 600; color: var(--primary); }
+.parse-info .time { color: var(--text); font-weight: 500; }
+.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+.filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.filter-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+.filter-group label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
+.filter-group input, .filter-group select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: var(--font); background: var(--surface); color: var(--text); }
+.filter-actions { display: flex; gap: 8px; align-items: flex-end; }
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 18px; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all .15s; font-family: var(--font); text-decoration: none; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--surface-alt); }
+.table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 760px; }
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); }
+tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+tbody tr:hover { background: var(--surface-alt); }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+.badge-active { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.badge-gone { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
+.empty-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--gray-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
+.empty-icon svg { width: 24px; height: 24px; stroke: var(--text-secondary); fill: none; stroke-width: 2; }
+.act-link { font-size: 12px; color: var(--primary); margin-right: 12px; }
+.breadcrumb { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
+.page-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); margin: 12px 0 20px; }
+.page-meta b { color: var(--text); font-weight: 600; }
+.open-site { display: inline-flex; align-items: center; gap: 8px; background: var(--primary); color: #fff; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; text-decoration: none; }
+.open-site:hover { background: var(--primary-hover); color: #fff; }
+.text-pane { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px 24px; box-shadow: var(--shadow-sm); white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.7; max-height: 70vh; overflow-y: auto; }
+.text-empty { color: var(--text-secondary); font-style: italic; }
+.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+.card-head h2 { font-size: 22px; font-weight: 700; color: var(--text); }
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none; }
+@media (max-width: 768px) { header { padding: 0 16px; } main { padding: 16px; } .filter-row { flex-direction: column; } .filter-group { min-width: 100%; } table { font-size: 12px; } }
+</style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>{{end}}
+
+{{/* Шапка раздела «Страницы сайта» (общая для списка и просмотрщика) */}}
+{{define "sp-header"}}<header>
+  <div class="logo-wrap">
+    <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg></div>
+    <h1>База Сколково</h1>
+  </div>
+  <div class="header-actions">
+    <a href="/">Документы</a>
+    <a href="/changes">Изменения</a>
+    <a href="/sitepages" class="active-link">Страницы сайта</a>
+    <a href="/diff">Сравнение</a>
+    <a href="/analytics">Аналитика</a>
+    <a href="/graph">Граф</a>
+    <a href="/clients">Клиенты</a>
+    <div class="header-divider"></div>
+    <a href="/logout" style="padding:5px 10px">Выход</a>
+    <button class="theme-btn header-actions-btn" onclick="spToggleTheme()" data-tooltip="Переключить тему">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    </button>
+  </div>
+</header>{{end}}
+
+{{define "sp-theme-script"}}<script>
+function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);}
+</script>{{end}}
+
+{{/* ===== СПИСОК СТРАНИЦ САЙТА ===== */}}
+{{define "sitepages-layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Страницы сайта — База Сколково</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+{{template "sp-style"}}
+</head>
+<body>
+{{template "sp-header" .}}
+<main>{{template "sitepages-content" .}}</main>
+{{template "sp-theme-script"}}
+</body>
+</html>{{end}}
+
+{{define "sitepages-content"}}
+<div class="parse-info">
+  <div>
+    <span class="label">Последний обход сайта:</span>
+    {{if .LastCrawl.IsZero}}<span class="time">ещё не выполнялся</span>{{else}}<span class="time" data-tooltip="Когда краулер последний раз успешно прошёл по сайту">{{.LastCrawl.Format "02.01.2006 15:04"}}</span>{{end}}
+  </div>
+  <div style="font-size:12px;color:var(--text-secondary)">Показано страниц: <strong>{{.Total}}</strong></div>
+</div>
+
+{{if not .HasStore}}
+<div class="empty">
+  <p><strong>Хранилище страниц сайта не подключено</strong></p>
+  <p>Запустите обход командой <code>sitepages crawl</code> или дождитесь планового обхода.</p>
+</div>
+{{else}}
+<div class="filter-bar">
+  <form method="get" action="/sitepages">
+    <div class="filter-row">
+      <div class="filter-group" style="min-width:220px">
+        <label for="q">Поиск</label>
+        <input type="text" id="q" name="q" value="{{.Query}}" placeholder="По заголовку, URL, разделу…">
+      </div>
+      <div class="filter-group">
+        <label for="section">Раздел</label>
+        <select id="section" name="section">
+          <option value="">Все разделы</option>
+          {{range .Sections}}<option value="{{.}}"{{if eq . $.Section}} selected{{end}}>{{.}}</option>{{end}}
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="status">Статус</label>
+        <select id="status" name="status">
+          <option value="">Все</option>
+          <option value="active"{{if eq .Status "active"}} selected{{end}}>Доступна</option>
+          <option value="gone"{{if eq .Status "gone"}} selected{{end}}>Недоступна</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label for="date_from">Изменено от</label>
+        <input type="date" id="date_from" name="date_from" value="{{.DateFrom}}">
+      </div>
+      <div class="filter-group">
+        <label for="date_to">Изменено до</label>
+        <input type="date" id="date_to" name="date_to" value="{{.DateTo}}">
+      </div>
+      <div class="filter-actions">
+        <button type="submit" class="btn btn-primary">Применить</button>
+        <a href="/sitepages" class="btn btn-ghost">Сбросить</a>
+      </div>
+    </div>
+  </form>
+</div>
+
+{{if .Rows}}
+<div class="table-wrap"><div class="table-scroll">
+<table>
+  <thead><tr>
+    <th style="width:180px">Раздел</th>
+    <th>Заголовок</th>
+    <th style="width:120px">Статус</th>
+    <th style="width:130px">Обновлено</th>
+    <th style="width:200px">Действия</th>
+  </tr></thead>
+  <tbody>
+  {{range .Rows}}
+  <tr>
+    <td style="font-size:12px;color:var(--text-secondary)">{{if .Section}}{{.Section}}{{else}}—{{end}}</td>
+    <td>
+      <div style="font-weight:600"><a href="/sitepages/{{.ID}}" data-tooltip="Открыть в просмотрщике">{{.Title}}</a></div>
+      <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">{{.URL}}</div>
+    </td>
+    <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
+    <td style="font-size:12px;white-space:nowrap" data-tooltip="{{.LastChanged.Format "02.01.2006 15:04:05"}}">{{.LastChanged.Format "02.01.2006"}}</td>
+    <td>
+      <a class="act-link" href="/sitepages/{{.ID}}" data-tooltip="Прочитать сохранённую информацию">Просмотр</a>
+      <a class="act-link" href="{{.URL}}" target="_blank" rel="noopener" data-tooltip="Открыть страницу на сайте Сколково">На сайте ↗</a>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div></div>
+{{else}}
+<div class="empty">
+  <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>
+  <p><strong>Страниц не найдено</strong></p>
+  <p>Измените фильтры или запустите обход сайта.</p>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{/* ===== ПРОСМОТРЩИК ОДНОЙ СТРАНИЦЫ ===== */}}
+{{define "sitepage-view-layout"}}<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Страница сайта</title>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
+{{template "sp-style"}}
+</head>
+<body>
+{{template "sp-header" .}}
+<main>{{template "sitepage-view-content" .}}</main>
+{{template "sp-theme-script"}}
+</body>
+</html>{{end}}
+
+{{define "sitepage-view-content"}}
+<div style="margin-bottom:16px"><a href="/sitepages" class="btn btn-ghost" data-tooltip="Вернуться к списку страниц">← К списку страниц</a></div>
+<div class="breadcrumb">{{if .Section}}{{.Section}}{{else}}Главная{{end}}</div>
+<div class="card-head">
+  <h2>{{.Title}}</h2>
+  <a class="open-site" href="{{.URL}}" target="_blank" rel="noopener" data-tooltip="Открыть оригинал на сайте Сколково и прочитать всё там">Открыть на сайте Сколково ↗</a>
+</div>
+<div class="page-meta">
+  <span>Статус: <b>{{.StatusLabel}}</b></span>
+  <span>Изменено: <b>{{.LastChanged.Format "02.01.2006 15:04"}}</b></span>
+  <span>Найдено: <b>{{.FirstSeen.Format "02.01.2006"}}</b></span>
+  <span>URL: <a href="{{.URL}}" target="_blank" rel="noopener" style="font-family:monospace;word-break:break-all">{{.URL}}</a></span>
+</div>
+{{if .HasText}}
+<div class="text-pane">{{.Text}}</div>
+{{else}}
+<div class="text-pane text-empty">Текст страницы не сохранён. Откройте оригинал на сайте Сколково по кнопке выше.</div>
 {{end}}
 {{end}}
 `))

@@ -13,6 +13,7 @@ type Config struct {
 	QdrantURL       string
 	QdrantColl      string
 	NavColl         string // отдельная Qdrant-коллекция навигации по сайту
+	SitePagesColl   string // отдельная Qdrant-коллекция страниц публичного сайта (sk.ru/dochub)
 	TEIURL          string
 	EmbeddingDim    int
 	SourceURL       string
@@ -79,6 +80,11 @@ type Config struct {
 	// Классификатор документов
 	ClassifierEnabled bool
 
+	// Страницы публичного сайта (sitepages) — отдельный от файлов слой знаний
+	SitePagesEnabled  bool
+	SitePagesSeeds    string // стартовые URL обхода через запятую
+	SitePagesMaxPages int    // лимит страниц за обход
+
 	// Льготы резидентов (preferences)
 	PreferencesEnabled bool
 	PreferencesURL     string // основной URL страницы льгот
@@ -133,6 +139,7 @@ func Load() Config {
 		QdrantURL:       env("QDRANT_URL", "http://localhost:6333"),
 		QdrantColl:      env("QDRANT_COLLECTION", "skolkovo_docs"),
 		NavColl:         env("NAV_COLLECTION", "skolkovo_navigation"),
+		SitePagesColl:   env("SITEPAGES_COLLECTION", "skolkovo_sitepages"),
 		TEIURL:          env("TEI_URL", "http://localhost:8081"),
 		EmbeddingDim:    envInt("EMBEDDING_DIM", 768),
 		SourceURL:       env("SOURCE_URL", "https://dochub.sk.ru/foundation/documents/"),
@@ -197,6 +204,11 @@ func Load() Config {
 
 		// Классификатор документов
 		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
+
+		// Страницы публичного сайта
+		SitePagesEnabled:  envBool("SITEPAGES_ENABLED", true),
+		SitePagesSeeds:    env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
+		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 300),
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),

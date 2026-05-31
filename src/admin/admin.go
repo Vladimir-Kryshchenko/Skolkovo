@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -29,17 +30,27 @@ import (
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/diff"
 	"baza-skolkovo/src/fetcher"
+	"baza-skolkovo/src/health"
 	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/scheduler"
 	"baza-skolkovo/src/scraper"
+	"baza-skolkovo/src/sitepages"
 )
+
+// SitePageReader — что админке нужно от хранилища страниц публичного сайта.
+type SitePageReader interface {
+	ListRecent(ctx context.Context, limit int) ([]*sitepages.Page, error)
+	GetWithText(ctx context.Context, id string) (*sitepages.Page, error)
+}
 
 // Server — HTTP-админка.
 type Server struct {
 	store        store.Store
 	linkStore    store.DocumentLinkStore
 	changeStore  changes.Store
+	healthStore  health.Store
+	sitePages    SitePageReader
 	prefStore    store.PreferenceStore
 	npaStore     store.NPAStore
 	rag          *rag.Service
@@ -107,6 +118,20 @@ func (s *Server) WithChangeStore(cs changes.Store) *Server {
 	return s
 }
 
+// WithHealthStore устанавливает мониторинг свежести источников (для панели
+// «когда обновлялось» на странице /changes).
+func (s *Server) WithHealthStore(hs health.Store) *Server {
+	s.healthStore = hs
+	return s
+}
+
+// WithSitePageStore подключает хранилище страниц публичного сайта (для раздела
+// «Страницы сайта»: список + просмотрщик).
+func (s *Server) WithSitePageStore(r SitePageReader) *Server {
+	s.sitePages = r
+	return s
+}
+
 // WithPreferenceStore устанавливает хранилище льгот.
 func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
 	s.prefStore = ps
@@ -141,9 +166,11 @@ func (s *Server) WithProxy6APIKey(key string) *Server {
 // docView — строка таблицы для шаблона.
 type docView struct {
 	model.Document
-	StatusStr string
-	FileSize  string // человекочитаемый размер файла
-	FileAge   string // время загрузки ("2 часа назад", "3 дня назад")
+	StatusStr      string
+	FileSize       string // человекочитаемый размер файла
+	FileAge        string // время загрузки ("2 часа назад", "3 дня назад")
+	SourceLinkURL  string // URL для кнопки «источник»: /api/proxy-source?id=... или SourceURL
+	SourceLinkText string // подпись ссылки: «источник» или «источник (локальный)»
 }
 
 // stats — сводка по реестру.
@@ -215,6 +242,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /documents/{id}/view-processed", s.requireAuth(s.handleViewProcessed))
 	mux.HandleFunc("GET /documents/{id}/download", s.requireAuth(s.handleDownload))
 	mux.HandleFunc("POST /documents/{id}/deindex", s.requireAuth(s.handleDeindex))
+	mux.HandleFunc("GET /documents/{id}/source", s.requireAuth(s.handleDocSource))
 
 	// Массовое одобрение документов
 	mux.HandleFunc("POST /api/approve-all", s.requireAuthJSON(s.handleAPIApproveAll))
@@ -256,6 +284,11 @@ func (s *Server) ListenAndServe() error {
 	// Лента изменений (история обновлений)
 	mux.HandleFunc("GET /changes", s.requireAuth(s.handleChangesPage))
 	mux.HandleFunc("GET /api/changes", s.requireAuthJSON(s.handleAPIChanges))
+
+	// Страницы публичного сайта (список + просмотрщик)
+	mux.HandleFunc("GET /sitepages", s.requireAuth(s.handleSitePagesPage))
+	mux.HandleFunc("GET /sitepages/{id}", s.requireAuth(s.handleSitePageView))
+	mux.HandleFunc("GET /api/sitepages", s.requireAuthJSON(s.handleAPISitePages))
 
 	// Льготы и НПА
 	mux.HandleFunc("GET /regulations", s.requireAuth(s.handleRegulationsPage))
@@ -510,6 +543,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				v.FileSize = formatFileSize(d.LocalPath)
 				v.FileAge = humanTimeAgo(d.FetchedAt)
 			}
+			v.SourceLinkURL, v.SourceLinkText = makeSourceLink(d.ID, d.SourceURL, d.LocalPath)
 			docs = append(docs, v)
 		}
 	}
@@ -778,12 +812,27 @@ func jsonResp(w http.ResponseWriter, ok bool, msg, errStr string) {
 
 // handleAPIScrape запускает парсинг RSS в фоне.
 func (s *Server) handleAPIScrape(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск парсинга RSS")
-	go func() {
-		// Здесь можно вызвать scraper если он доступен
-		log.Println("[admin/api] парсинг RSS запущен (заглушка — используйте CLI для полного парсинга)")
-	}()
+	if s.sourceURL == "" {
+		jsonResp(w, false, "", "SOURCE_URL не задан — парсинг невозможен")
+		return
+	}
 	jsonResp(w, true, "Парсинг RSS запущен в фоне. Обновите страницу через минуту.", "")
+	go func() {
+		ctx := context.Background()
+		sc := &scraper.Scraper{
+			RSSURL: scraper.DeriveRSS(s.sourceURL),
+			Store:  s.store,
+			Delay:  2 * time.Second,
+		}
+		sc.UseDynamicProxy(s.proxyManager.GetActiveURL)
+		rep, err := sc.Run(ctx)
+		if err != nil {
+			log.Printf("[admin/api] парсинг RSS: %v", err)
+			return
+		}
+		log.Printf("[admin/api] парсинг RSS завершён: добавлено %d, обновлено %d, ошибок %d",
+			rep.Catalogued, rep.Updated, len(rep.Errors))
+	}()
 }
 
 // handleAPICrawl запускает полный headless-обход сайта документов (категории +
@@ -980,13 +1029,49 @@ func (s *Server) handleAPIIndex(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, true, "Индексация запущена в фоне.", "")
 }
 
-// handleAPISync запускает полный цикл (заглушка — CLI делает основную работу).
+// handleAPISync запускает полный цикл: RSS-парсинг + индексация.
 func (s *Server) handleAPISync(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск полного синка")
+	if s.sourceURL == "" && s.rag == nil {
+		jsonResp(w, false, "", "SOURCE_URL и RAG-сервис не заданы")
+		return
+	}
+	jsonResp(w, true, "Полный синк запущен в фоне (RSS → индексация). Обновите страницу через 2-3 минуты.", "")
 	go func() {
-		log.Println("[admin/api] полный синк запущен (заглушка — используйте skolkovo sync)")
+		ctx := context.Background()
+		// Шаг 1: RSS-парсинг
+		if s.sourceURL != "" {
+			sc := &scraper.Scraper{
+				RSSURL: scraper.DeriveRSS(s.sourceURL),
+				Store:  s.store,
+				Delay:  2 * time.Second,
+			}
+			sc.UseDynamicProxy(s.proxyManager.GetActiveURL)
+			rep, err := sc.Run(ctx)
+			if err != nil {
+				log.Printf("[admin/api] sync: парсинг RSS: %v", err)
+			} else {
+				log.Printf("[admin/api] sync: парсинг завершён: добавлено %d, обновлено %d",
+					rep.Catalogued, rep.Updated)
+			}
+		}
+		// Шаг 2: Индексация всех «действует»
+		if s.rag != nil {
+			docs, err := s.store.List(ctx, store.Filter{Status: model.StatusActive})
+			if err != nil {
+				log.Printf("[admin/api] sync: список для индексации: %v", err)
+				return
+			}
+			var indexed int
+			for _, doc := range docs {
+				if _, err := s.rag.IndexDocument(ctx, doc.ID); err != nil {
+					log.Printf("[admin/api] sync: индексация %s: %v", doc.ID, err)
+					continue
+				}
+				indexed++
+			}
+			log.Printf("[admin/api] sync: проиндексировано %d документов", indexed)
+		}
 	}()
-	jsonResp(w, true, "Полный синк запущен в фоне.", "")
 }
 
 // handleAPISeedLocal регистрирует и индексирует все .md-файлы из DocsDir в RAG.
@@ -2146,7 +2231,7 @@ func graphToJSON(g graphData) string {
 // ===========================================================================
 
 type changesPageData struct {
-	Events     []changes.Event
+	Rows       []changeRow
 	Flash      string
 	FlashKind  string
 	Query      string
@@ -2154,7 +2239,33 @@ type changesPageData struct {
 	Category   string
 	DateFrom   string
 	DateTo     string
+	Tag        string
+	AllTags    []tagCount
+	BaseQS     string // строка запроса прочих фильтров (без tag) для ссылок-чипов
+	Health     []sourceHealthRow
 	Stats      changesStats
+}
+
+// changeRow — изменение вместе с авто-тегами для отображения и фильтрации.
+type changeRow struct {
+	Event changes.Event
+	Tags  []string
+}
+
+// tagCount — тег и сколько изменений им помечено (для облака тегов).
+type tagCount struct {
+	Name  string
+	Count int
+	Enc   string // url.QueryEscape(Name) — для ссылки-чипа
+}
+
+// sourceHealthRow — строка панели «когда обновлялось» по одному источнику.
+type sourceHealthRow struct {
+	Label       string
+	State       string // ok|stale|failing|unknown
+	StateLabel  string
+	LastSuccess string
+	Items       int
 }
 
 type changesStats struct {
@@ -2173,6 +2284,7 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 	dateFrom := r.URL.Query().Get("date_from")
 	dateTo := r.URL.Query().Get("date_to")
+	tag := strings.TrimSpace(r.URL.Query().Get("tag"))
 
 	// Период по умолчанию: последние 30 дней
 	since := time.Now().AddDate(0, 0, -30)
@@ -2213,9 +2325,9 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		events = filtered
 	}
 
-	// Ограничение по date_to
+	// Ограничение по date_to (в локальной зоне — DetectedAt из TIMESTAMPTZ tz-aware).
 	if dateTo != "" {
-		if t, err := time.Parse("2006-01-02 15:04", dateTo+" 23:59"); err == nil {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", dateTo+" 23:59", time.Local); err == nil {
 			filtered := make([]changes.Event, 0, len(events))
 			for _, ev := range events {
 				if !ev.DetectedAt.After(t) {
@@ -2226,11 +2338,34 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Статистика
-	var st changesStats
-	st.Total = len(events)
+	// Авто-теги из метаданных + облако тегов. Облако считаем до фильтра по тегу,
+	// чтобы чипы отражали весь период, а не уже отфильтрованную выборку.
+	rows := make([]changeRow, 0, len(events))
+	tagFreq := map[string]int{}
 	for _, ev := range events {
-		switch ev.Kind {
+		tags := deriveTags(ev)
+		rows = append(rows, changeRow{Event: ev, Tags: tags})
+		for _, t := range tags {
+			tagFreq[t]++
+		}
+	}
+
+	// Фильтр по выбранному тегу.
+	if tag != "" {
+		filtered := make([]changeRow, 0, len(rows))
+		for _, row := range rows {
+			if containsStr(row.Tags, tag) {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+
+	// Статистика по показанным изменениям.
+	var st changesStats
+	st.Total = len(rows)
+	for _, row := range rows {
+		switch row.Event.Kind {
 		case changes.KindNew:
 			st.New++
 		case changes.KindUpdated:
@@ -2249,19 +2384,232 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	allTags := topTags(tagFreq, 24)
+	for i := range allTags {
+		allTags[i].Enc = url.QueryEscape(allTags[i].Name)
+	}
+
+	// Строка запроса прочих фильтров (без tag) — чтобы чипы тегов их сохраняли.
+	base := url.Values{}
+	if query != "" {
+		base.Set("q", query)
+	}
+	if entityType != "" {
+		base.Set("entity_type", entityType)
+	}
+	if category != "" {
+		base.Set("category", category)
+	}
+	if dateFrom != "" {
+		base.Set("date_from", dateFrom)
+	}
+	if dateTo != "" {
+		base.Set("date_to", dateTo)
+	}
+
 	data := changesPageData{
-		Events:     events,
+		Rows:       rows,
 		Query:      query,
 		EntityType: entityType,
 		Category:   category,
 		DateFrom:   dateFrom,
 		DateTo:     dateTo,
+		Tag:        tag,
+		AllTags:    allTags,
+		BaseQS:     base.Encode(),
+		Health:     s.sourceHealthRows(r.Context()),
 		Stats:      st,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "changes-layout", data); err != nil {
 		log.Println("[admin] changes шаблон:", err)
+	}
+}
+
+// deriveTags выводит авто-теги изменения из его метаданных: тип сущности,
+// категория, вид изменения, домен источника и важность (если задана). Ручной
+// разметки не требуется — теги вычисляются на лету.
+func deriveTags(ev changes.Event) []string {
+	var tags []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !containsStr(tags, s) {
+			tags = append(tags, s)
+		}
+	}
+	add(entityTypeLabel(ev.EntityType))
+	add(ev.Category)
+	add(kindLabel(string(ev.Kind)))
+	add(sourceDomain(ev.SourceURL))
+	add(severityLabel(string(ev.Severity)))
+	return tags
+}
+
+// entityTypeLabel — человекочитаемое имя типа сущности для тегов/фильтров.
+func entityTypeLabel(t string) string {
+	switch t {
+	case changes.EntityDocument:
+		return "Документ"
+	case changes.EntityNews:
+		return "Новость"
+	case changes.EntityEvent:
+		return "Мероприятие"
+	case changes.EntityContest:
+		return "Конкурс/грант"
+	case changes.EntityNPA:
+		return "НПА"
+	case changes.EntityPreference:
+		return "Льгота"
+	case changes.EntityFAQ:
+		return "FAQ"
+	case changes.EntityTelegram:
+		return "Telegram"
+	case changes.EntitySitePage:
+		return "Страница сайта"
+	default:
+		return t
+	}
+}
+
+func kindLabel(k string) string {
+	switch k {
+	case string(changes.KindNew):
+		return "Новое"
+	case string(changes.KindUpdated):
+		return "Обновлено"
+	case string(changes.KindOutdated):
+		return "Устарело"
+	case string(changes.KindRemoved):
+		return "Удалено"
+	default:
+		return ""
+	}
+}
+
+func severityLabel(s string) string {
+	switch s {
+	case "info":
+		return "Инфо"
+	case "warning":
+		return "Важное"
+	case "critical":
+		return "Критично"
+	default:
+		return ""
+	}
+}
+
+// sourceDomain возвращает домен источника без префикса www (для тега «sk.ru»).
+func sourceDomain(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// topTags возвращает не более limit самых частых тегов, отсортированных по
+// убыванию частоты, затем по алфавиту.
+func topTags(freq map[string]int, limit int) []tagCount {
+	out := make([]tagCount, 0, len(freq))
+	for name, n := range freq {
+		out = append(out, tagCount{Name: name, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// sourceHealthRows строит панель «когда обновлялось» по всем источникам.
+func (s *Server) sourceHealthRows(ctx context.Context) []sourceHealthRow {
+	if s.healthStore == nil {
+		return nil
+	}
+	sources, err := s.healthStore.List(ctx)
+	if err != nil {
+		log.Printf("[admin/changes] свежесть источников: %v", err)
+		return nil
+	}
+	now := time.Now()
+	rows := make([]sourceHealthRow, 0, len(sources))
+	for _, src := range sources {
+		state := src.State(24*time.Hour, now)
+		last := "—"
+		if src.LastSuccessAt != nil {
+			last = src.LastSuccessAt.Format("02.01.2006 15:04")
+		}
+		rows = append(rows, sourceHealthRow{
+			Label:       sourceLabel(src.Name),
+			State:       string(state),
+			StateLabel:  healthStateLabel(state),
+			LastSuccess: last,
+			Items:       src.ItemsLastRun,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Label < rows[j].Label })
+	return rows
+}
+
+// sourceLabel — человекочитаемое имя источника для панели свежести.
+func sourceLabel(name string) string {
+	switch name {
+	case "documents":
+		return "Документы"
+	case "news":
+		return "Новости"
+	case "events":
+		return "Мероприятия"
+	case "contests":
+		return "Конкурсы/гранты"
+	case "faq":
+		return "FAQ"
+	case "telegram":
+		return "Telegram"
+	case "preferences":
+		return "Льготы"
+	case "regulations":
+		return "НПА"
+	case "residents":
+		return "Резиденты"
+	case "sitepages":
+		return "Страницы сайта"
+	case "fetch":
+		return "Загрузка файлов"
+	default:
+		return name
+	}
+}
+
+func healthStateLabel(st health.Status) string {
+	switch st {
+	case health.StatusOK:
+		return "актуально"
+	case health.StatusStale:
+		return "устарело"
+	case health.StatusFailing:
+		return "ошибки"
+	default:
+		return "нет данных"
 	}
 }
 
@@ -2293,10 +2641,332 @@ func (s *Server) handleAPIChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Фильтр по авто-тегу (паритет с HTML-страницей /changes).
+	if tag := strings.TrimSpace(r.URL.Query().Get("tag")); tag != "" {
+		filtered := events[:0]
+		for _, ev := range events {
+			if containsStr(deriveTags(ev), tag) {
+				filtered = append(filtered, ev)
+			}
+		}
+		events = filtered
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":     true,
 		"events": events,
 		"count":  len(events),
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Страницы публичного сайта: список + просмотрщик.
+// ---------------------------------------------------------------------------
+
+type sitePagesPageData struct {
+	Rows      []sitePageRow
+	Query     string
+	Section   string
+	Status    string
+	DateFrom  string
+	DateTo    string
+	Sections  []string
+	Total     int
+	LastCrawl time.Time
+	HasStore  bool
+}
+
+type sitePageRow struct {
+	ID          string
+	URL         string
+	Title       string
+	Section     string
+	Status      string
+	StatusLabel string
+	LastChanged time.Time
+}
+
+type sitePageViewData struct {
+	ID          string
+	URL         string
+	Title       string
+	Section     string
+	Status      string
+	StatusLabel string
+	Summary     string
+	Text        string
+	HasText     bool
+	FirstSeen   time.Time
+	LastSeen    time.Time
+	LastChanged time.Time
+}
+
+// sitePageStatusLabel — человекочитаемый статус страницы сайта.
+func sitePageStatusLabel(st string) string {
+	switch st {
+	case sitepages.StatusActive:
+		return "доступна"
+	case sitepages.StatusGone:
+		return "недоступна (404)"
+	default:
+		return st
+	}
+}
+
+// handleSitePagesPage — список страниц публичного сайта с фильтрами
+// (поиск, раздел, статус, период по дате изменения).
+func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	section := r.URL.Query().Get("section")
+	status := r.URL.Query().Get("status")
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+
+	var pages []*sitepages.Page
+	if s.sitePages != nil {
+		if ps, err := s.sitePages.ListRecent(r.Context(), 2000); err == nil {
+			pages = ps
+		} else {
+			log.Printf("[admin/sitepages] ошибка загрузки: %v", err)
+		}
+	}
+
+	// Список разделов для выпадающего фильтра (по всем страницам, до фильтрации).
+	sectionSet := map[string]bool{}
+	var lastCrawl time.Time
+	for _, p := range pages {
+		if p.Section != "" {
+			sectionSet[p.Section] = true
+		}
+		if p.LastSeen.After(lastCrawl) {
+			lastCrawl = p.LastSeen
+		}
+	}
+	// Время последнего обхода — точнее из мониторинга свежести.
+	if s.healthStore != nil {
+		if src, err := s.healthStore.Get(r.Context(), "sitepages"); err == nil && src.LastSuccessAt != nil {
+			lastCrawl = *src.LastSuccessAt
+		}
+	}
+
+	var since, until time.Time
+	if dateFrom != "" {
+		if t, err := time.ParseInLocation("2006-01-02", dateFrom, time.Local); err == nil {
+			since = t
+		}
+	}
+	if dateTo != "" {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", dateTo+" 23:59", time.Local); err == nil {
+			until = t
+		}
+	}
+
+	qLower := strings.ToLower(query)
+	rows := make([]sitePageRow, 0, len(pages))
+	for _, p := range pages {
+		if query != "" {
+			if !strings.Contains(strings.ToLower(p.Title), qLower) &&
+				!strings.Contains(strings.ToLower(p.URL), qLower) &&
+				!strings.Contains(strings.ToLower(p.Section), qLower) &&
+				!strings.Contains(strings.ToLower(p.Summary), qLower) {
+				continue
+			}
+		}
+		if section != "" && p.Section != section {
+			continue
+		}
+		if status != "" && p.Status != status {
+			continue
+		}
+		if !since.IsZero() && p.LastChanged.Before(since) {
+			continue
+		}
+		if !until.IsZero() && p.LastChanged.After(until) {
+			continue
+		}
+		rows = append(rows, sitePageRow{
+			ID:          p.ID,
+			URL:         p.URL,
+			Title:       p.Title,
+			Section:     p.Section,
+			Status:      p.Status,
+			StatusLabel: sitePageStatusLabel(p.Status),
+			LastChanged: p.LastChanged,
+		})
+	}
+
+	sections := make([]string, 0, len(sectionSet))
+	for sec := range sectionSet {
+		sections = append(sections, sec)
+	}
+	sort.Strings(sections)
+
+	data := sitePagesPageData{
+		Rows:      rows,
+		Query:     query,
+		Section:   section,
+		Status:    status,
+		DateFrom:  dateFrom,
+		DateTo:    dateTo,
+		Sections:  sections,
+		Total:     len(rows),
+		LastCrawl: lastCrawl,
+		HasStore:  s.sitePages != nil,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "sitepages-layout", data); err != nil {
+		log.Println("[admin] sitepages шаблон:", err)
+	}
+}
+
+// handleSitePageView — просмотрщик одной страницы сайта: сохранённая информация
+// (заголовок, раздел, текст) + кнопка «Открыть на сайте Сколково».
+func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePages == nil {
+		http.Error(w, "хранилище страниц сайта не подключено", http.StatusServiceUnavailable)
+		return
+	}
+	p, err := s.sitePages.GetWithText(r.Context(), id)
+	if errors.Is(err, sitepages.ErrNotFound) {
+		http.Error(w, "страница не найдена", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "ошибка загрузки: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	text := p.Text
+	if strings.TrimSpace(text) == "" {
+		text = p.Summary
+	}
+	data := sitePageViewData{
+		ID:          p.ID,
+		URL:         p.URL,
+		Title:       p.Title,
+		Section:     p.Section,
+		Status:      p.Status,
+		StatusLabel: sitePageStatusLabel(p.Status),
+		Summary:     p.Summary,
+		Text:        text,
+		HasText:     strings.TrimSpace(text) != "",
+		FirstSeen:   p.FirstSeen,
+		LastSeen:    p.LastSeen,
+		LastChanged: p.LastChanged,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "sitepage-view-layout", data); err != nil {
+		log.Println("[admin] sitepage-view шаблон:", err)
+	}
+}
+
+// handleAPISitePages отдаёт страницы сайта в JSON (для интеграций).
+func (s *Server) handleAPISitePages(w http.ResponseWriter, r *http.Request) {
+	if s.sitePages == nil {
+		jsonResp(w, false, "", "Хранилище страниц сайта не подключено")
+		return
+	}
+	pages, err := s.sitePages.ListRecent(r.Context(), 2000)
+	if err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":    true,
+		"pages": pages,
+		"count": len(pages),
+	})
+}
+
+// makeSourceLink вычисляет URL и подпись для кнопки «источник» в списке документов.
+// Локальные file:// ссылки заменяются на внутренний admin-endpoint просмотра.
+// HTTP-ссылки проксируются через /documents/{id}/source (server-side fetch с прокси).
+func makeSourceLink(id, sourceURL, localPath string) (linkURL, linkText string) {
+	if sourceURL == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(sourceURL, "file://") {
+		if localPath != "" {
+			return "/documents/" + id + "/view-original", "источник"
+		}
+		return "", ""
+	}
+	if strings.HasPrefix(sourceURL, "http://") || strings.HasPrefix(sourceURL, "https://") {
+		return "/documents/" + id + "/source", "источник"
+	}
+	return sourceURL, "источник"
+}
+
+// handleDocSource проксирует запрос к SourceURL документа через активный прокси сервера.
+// Это позволяет администратору открывать ссылки на dochub.sk.ru даже если его браузер
+// не имеет доступа к сайту напрямую (например, находится за пределами России).
+func (s *Server) handleDocSource(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	doc, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Документ не найден", http.StatusNotFound)
+		return
+	}
+
+	// Локальный файл — отдаём через стандартный endpoint
+	if strings.HasPrefix(doc.SourceURL, "file://") {
+		if doc.LocalPath != "" {
+			http.Redirect(w, r, "/documents/"+id+"/view-original", http.StatusFound)
+			return
+		}
+		http.Error(w, "Файл недоступен", http.StatusNotFound)
+		return
+	}
+
+	if doc.SourceURL == "" || (!strings.HasPrefix(doc.SourceURL, "http://") && !strings.HasPrefix(doc.SourceURL, "https://")) {
+		http.Error(w, "Источник недоступен", http.StatusNotFound)
+		return
+	}
+
+	// Строим HTTP-клиент с активным прокси (если настроен)
+	transport := &http.Transport{}
+	if proxyAddr := s.proxyManager.GetActiveURL(); proxyAddr != "" {
+		if proxyU, parseErr := url.Parse(proxyAddr); parseErr == nil {
+			transport.Proxy = http.ProxyURL(proxyU)
+		}
+	}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("слишком много редиректов")
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), "GET", doc.SourceURL, nil)
+	if err != nil {
+		http.Error(w, "Ошибка запроса: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Ошибка получения источника: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Пробрасываем Content-Type и статус
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

@@ -72,6 +72,7 @@ import (
 	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/residents"
 	"baza-skolkovo/src/scraper"
+	"baza-skolkovo/src/sitepages"
 	"baza-skolkovo/src/telegram"
 	"baza-skolkovo/src/tgbot"
 )
@@ -94,6 +95,8 @@ func main() {
 		mustRun(cmdIndex(cfg, args))
 	case "navindex":
 		mustRun(cmdNavIndex(cfg, args))
+	case "sitepages":
+		mustRun(cmdSitePages(cfg, args))
 	case "catalog":
 		mustRun(cmdCatalog(cfg))
 	case "crawl":
@@ -168,6 +171,107 @@ func newNavQdrant(cfg config.Config) *qdrant.Client {
 // newNavIndexer создаёт индексатор навигации по сайту (коллекция NAV_COLLECTION).
 func newNavIndexer(cfg config.Config) *navindex.Indexer {
 	return navindex.NewIndexer(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL), cfg.EmbeddingDim)
+}
+
+// newSitePagesQdrant создаёт Qdrant-клиент для коллекции страниц публичного сайта.
+func newSitePagesQdrant(cfg config.Config) *qdrant.Client {
+	return qdrant.New(cfg.QdrantURL, cfg.SitePagesColl)
+}
+
+// newSitePagesIndexer создаёт индексатор страниц сайта (коллекция SITEPAGES_COLLECTION).
+func newSitePagesIndexer(cfg config.Config) *sitepages.Indexer {
+	return sitepages.NewIndexer(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL), cfg.EmbeddingDim)
+}
+
+// sitePagesSeeds разбирает SITEPAGES_SEEDS (URL через запятую) в список.
+func sitePagesSeeds(cfg config.Config) []string {
+	var out []string
+	for _, s := range strings.Split(cfg.SitePagesSeeds, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// cmdSitePages обходит страницы публичного сайта Сколково и индексирует их в
+// отдельную Qdrant-коллекцию (отдельно от файлов-документов):
+//
+//	sitepages crawl        — обойти сайт и обновить таблицу site_pages;
+//	sitepages index        — переиндексировать все страницы в Qdrant;
+//	sitepages search <q>   — смоук-проверка поиска (search_site_pages);
+//	sitepages              — всё сразу (crawl + index).
+func cmdSitePages(cfg config.Config, args []string) error {
+	action := "all"
+	if len(args) > 0 {
+		action = args[0]
+	}
+	ctx := context.Background()
+
+	// sitepages search <запрос> — смоук-проверка поиска по страницам.
+	if action == "search" {
+		query := strings.TrimSpace(strings.Join(args[1:], " "))
+		if query == "" {
+			return fmt.Errorf("использование: sitepages search <запрос>")
+		}
+		searcher := sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+		hits, err := searcher.Search(ctx, query, 5)
+		if err != nil {
+			return fmt.Errorf("поиск по страницам: %w", err)
+		}
+		for i, h := range hits {
+			fmt.Printf("%d. [%.3f] %s — %s\n   %s\n", i+1, h.Score, h.Title, h.URL, h.Section)
+		}
+		return nil
+	}
+
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		return fmt.Errorf("sitepages требует backend=postgres")
+	}
+	pageStore, err := sitepages.NewPostgresStore(ctx, ps.Pool())
+	if err != nil {
+		return fmt.Errorf("хранилище страниц: %w", err)
+	}
+
+	doCrawl := action == "all" || action == "crawl"
+	doIndex := action == "all" || action == "index"
+
+	if doCrawl {
+		var rec changes.Recorder
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			rec = cs
+		}
+		cr := sitepages.New(sitePagesSeeds(cfg), pageStore)
+		cr.MaxPages = cfg.SitePagesMaxPages
+		cr.Delay = cfg.ScrapeDelay
+		cr.Changes = rec
+		cr.UseProxy(cfg.ProxyURL)
+		rep, err := cr.Run(ctx)
+		if err != nil {
+			return fmt.Errorf("обход страниц: %w", err)
+		}
+		log.Printf("[sitepages] обход: посещено %d, новых %d, изменено %d, без изменений %d, ошибок %d",
+			rep.Visited, rep.New, rep.Changed, rep.Unchanged, len(rep.Errors))
+	}
+
+	if doIndex {
+		pages, err := pageStore.ListAll(ctx)
+		if err != nil {
+			return fmt.Errorf("чтение страниц: %w", err)
+		}
+		n, err := newSitePagesIndexer(cfg).Reindex(ctx, pages)
+		if err != nil {
+			return fmt.Errorf("индексация страниц: %w", err)
+		}
+		log.Printf("[sitepages] проиндексировано %d страниц в коллекцию %q", n, cfg.SitePagesColl)
+	}
+	return nil
 }
 
 // cmdNavIndex собирает навигационную карту сайта из src/navindex (источник истины)
@@ -962,6 +1066,14 @@ func cmdAdmin(cfg config.Config) error {
 		} else {
 			log.Printf("[admin] хранилище изменений: %v", err)
 		}
+		// Мониторинг свежести источников для панели на /changes.
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			srv.WithHealthStore(hs)
+		}
+		// Страницы публичного сайта (раздел «Страницы сайта»: список + просмотрщик).
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			srv.WithSitePageStore(sps)
+		}
 		// Подключаем хранилища льгот и НПА.
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		srv.WithPreferenceStore(pss)
@@ -1047,6 +1159,31 @@ func cmdServe(cfg config.Config) error {
 		}
 	}()
 
+	// --- Индекс страниц публичного сайта (для search_site_pages) ---
+	// Разогреваем коллекцию из уже собранных страниц (если backend=postgres).
+	if cfg.SitePagesEnabled {
+		if ps, ok := st.(*store.PostgresStore); ok {
+			go func() {
+				ctx := context.Background()
+				pageStore, err := sitepages.NewPostgresStore(ctx, ps.Pool())
+				if err != nil {
+					log.Printf("[serve:sitepages] хранилище недоступно: %v", err)
+					return
+				}
+				pages, err := pageStore.ListAll(ctx)
+				if err != nil {
+					log.Printf("[serve:sitepages] чтение страниц: %v", err)
+					return
+				}
+				if n, err := newSitePagesIndexer(cfg).Reindex(ctx, pages); err != nil {
+					log.Printf("[serve:sitepages] страницы не проиндексированы: %v", err)
+				} else {
+					log.Printf("[serve:sitepages] страницы проиндексированы: %d", n)
+				}
+			}()
+		}
+	}
+
 	// --- Prometheus /metrics на отдельном порту ---
 	promAddr := ":9090"
 	promMux := http.NewServeMux()
@@ -1081,6 +1218,24 @@ func cmdServe(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		adminSrv.WithPreferenceStore(pss)
 		adminSrv.WithNPAStore(pss)
+
+		// Лента изменений нужна странице /changes (в режиме serve её раньше
+		// не подключали — страница истории получалась пустой).
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithChangeStore(cs)
+		} else {
+			log.Printf("[serve:admin] лента изменений недоступна: %v", err)
+		}
+		// Мониторинг свежести источников для панели «когда обновлялось» на /changes.
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithHealthStore(hs)
+		} else {
+			log.Printf("[serve:admin] мониторинг свежести недоступен: %v", err)
+		}
+		// Страницы публичного сайта (раздел «Страницы сайта»).
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithSitePageStore(sps)
+		}
 	}
 
 	// Подключаем менеджер прокси к админке.
@@ -1149,6 +1304,11 @@ func cmdServe(cfg config.Config) error {
 				portalStores.NotifStore = store.NewPostgresNotificationStore(pgs.Pool())
 				portalStores.DocStore = pcs
 				portalStores.SubscriptionStore = pcs
+				// Лента изменений для блока «Что нового в базе Сколково» в дашборде
+				// (без неё getRecentChanges возвращает пусто — блок не рендерится).
+				if cs, err := changes.NewPostgresStore(ctx, pgs.Pool()); err == nil {
+					portalStores.ChangeStore = cs
+				}
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -1417,6 +1577,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	var residentStore store.ResidentStore
 	var healthStore health.Store
 	var changeStore changes.Recorder
+	var sitePageStore *sitepages.PostgresStore
 
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
@@ -1431,6 +1592,17 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			changeStore = cs
 		}
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			sitePageStore = sps
+		}
+	}
+
+	// proxyResolver: активный прокси из админки, иначе статический PROXY_URL.
+	proxyResolver := func() string {
+		if u := pm.GetActiveURL(); u != "" {
+			return u
+		}
+		return cfg.ProxyURL
 	}
 
 	// recordHealth фиксирует результат прогона источника (no-op без Postgres).
@@ -1563,6 +1735,35 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 					recordHealth("regulations", res.New+res.Updated, nil)
 				}
 			}
+
+			// Страницы публичного сайта (отдельно от файлов-документов)
+			if cfg.SitePagesEnabled && sitePageStore != nil {
+				log.Printf("[serve:sitepages] обход страниц сайта")
+				cr := sitepages.New(sitePagesSeeds(cfg), sitePageStore)
+				cr.MaxPages = cfg.SitePagesMaxPages
+				cr.Delay = cfg.ScrapeDelay
+				cr.Changes = changeStore
+				cr.UseDynamicProxy(proxyResolver)
+				rep, err := cr.Run(ctx)
+				if err != nil {
+					log.Printf("[serve:sitepages] ошибка обхода: %v", err)
+					recordHealth("sitepages", 0, err)
+				} else {
+					recordHealth("sitepages", rep.New+rep.Changed, nil)
+					// Инкрементально доиндексируем изменённые/новые страницы.
+					if rep.New+rep.Changed > 0 {
+						if pages, lerr := sitePageStore.ListRecent(ctx, rep.New+rep.Changed); lerr == nil {
+							if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+								log.Printf("[serve:sitepages] индексация: %v", ierr)
+							} else {
+								log.Printf("[serve:sitepages] готово: новых %d, изменено %d, проиндексировано %d", rep.New, rep.Changed, n)
+							}
+						}
+					} else {
+						log.Printf("[serve:sitepages] готово: без изменений (посещено %d)", rep.Visited)
+					}
+				}
+			}
 		}
 	}
 }
@@ -1574,6 +1775,11 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.
 	// в отдельной Qdrant-коллекции, не зависит от Postgres.
 	navSearcher := navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
 	mcpserver.RegisterNavigationTools(mcpSrv, navSearcher)
+
+	// Поиск по страницам публичного сайта (search_site_pages) — отдельная
+	// Qdrant-коллекция, не зависит от Postgres.
+	pageSearcher := sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+	mcpserver.RegisterSitePageTools(mcpSrv, pageSearcher)
 
 	ps, ok := st.(*store.PostgresStore)
 	if !ok {

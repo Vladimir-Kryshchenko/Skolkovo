@@ -92,6 +92,8 @@ type Config struct {
 	// Консультантский дашборд
 	ConsultantAddr    string // адрес для консультантского дашборда
 	ConsultantEnabled bool
+	ConsultantUser    string // логин Basic Auth для дашборда консультанта
+	ConsultantPass    string // пароль Basic Auth для дашборда консультанта
 
 	// Аудит-лог MCP
 	MCPAuditEnabled bool
@@ -203,6 +205,8 @@ func Load() Config {
 		// Консультантский дашборд
 		ConsultantAddr:    env("CONSULTANT_ADDR", ":8094"),
 		ConsultantEnabled: envBool("CONSULTANT_ENABLED", true),
+		ConsultantUser:    env("CONSULTANT_USER", "consultant"),
+		ConsultantPass:    env("CONSULTANT_PASS", ""),
 
 		// Аудит-лог MCP
 		MCPAuditEnabled: envBool("MCP_AUDIT_ENABLED", true),

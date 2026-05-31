@@ -44,7 +44,7 @@ INSERT INTO clients (id, name, inn, contact_email, contact_phone, residency_stag
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.CreatedAt, client.UpdatedAt)
+		nullStrPtr(client.TenantID), client.CreatedAt, client.UpdatedAt)
 	return err
 }
 
@@ -74,7 +74,7 @@ UPDATE clients SET name=$2, inn=$3, contact_email=$4, contact_phone=$5,
 WHERE id = $1`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.UpdatedAt)
+		nullStrPtr(client.TenantID), client.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -606,10 +606,14 @@ func (s *PostgresClientStore) CreateTenant(ctx context.Context, tenant *model.Te
 		tenant.CreatedAt = time.Now()
 	}
 
+	settings := tenant.Settings
+	if settings == nil {
+		settings = json.RawMessage("{}")
+	}
 	_, err := s.db.Exec(ctx, `
 INSERT INTO tenants (id, name, api_key, settings, created_at, active)
 VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenant.ID, tenant.Name, tenant.APIKey, tenant.Settings,
+		tenant.ID, tenant.Name, tenant.APIKey, settings,
 		tenant.CreatedAt, tenant.Active)
 	return err
 }

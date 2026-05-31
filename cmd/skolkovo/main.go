@@ -987,12 +987,16 @@ func cmdAdmin(cfg config.Config) error {
 		}
 	}
 
-	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту.
+	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту (BasicAuth).
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
+	var residencyHandlerAdmin http.Handler = residencyMux
+	if cfg.AdminUser != "" && cfg.AdminPassword != "" {
+		residencyHandlerAdmin = admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Резидентство-Админ", residencyMux)
+	}
 	go func() {
-		log.Printf("[admin:residency] запуск на %s", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyHandlerAdmin); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
@@ -1056,12 +1060,16 @@ func cmdServe(cfg config.Config) error {
 		}
 	}()
 
-	// --- Админка резидентства ---
+	// --- Админка резидентства (BasicAuth) ---
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
+	var residencyHandler http.Handler = residencyMux
+	if cfg.AdminUser != "" && cfg.AdminPassword != "" {
+		residencyHandler = admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Резидентство-Админ", residencyMux)
+	}
 	go func() {
-		log.Printf("[admin:residency] запуск на %s", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyHandler); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
@@ -1205,9 +1213,9 @@ func cmdServe(cfg config.Config) error {
 				}
 			}
 			if consultantStores.ClientStore != nil {
-				mux := admin.RegisterConsultantRoutes(nil, consultantStores)
+				h := admin.RegisterConsultantRoutes(nil, consultantStores, cfg.ConsultantUser, cfg.ConsultantPass)
 				log.Printf("[consultant] дашборд запускается на %s", cfg.ConsultantAddr)
-				if err := http.ListenAndServe(cfg.ConsultantAddr, mux); err != nil {
+				if err := http.ListenAndServe(cfg.ConsultantAddr, h); err != nil {
 					log.Printf("[consultant] остановлен: %v", err)
 				}
 			} else {

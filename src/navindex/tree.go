@@ -5,7 +5,7 @@ package navindex
 // При добавлении/изменении страниц обновляйте этот файл — из него генерируются
 // JSON, Markdown-карта и векторный индекс навигации (одной командой `navindex`).
 func Tree() []Interface {
-	return []Interface{portal(), chatWidget(), consultant(), residencyAdmin(), mainAdmin(), mcpServer()}
+	return []Interface{portal(), chatWidget(), consultant(), residencyAdmin(), mainAdmin(), mcpServer(), telegramBot()}
 }
 
 // ИНТЕРФЕЙС 1 — Личный кабинет клиента (Портал, :8092).
@@ -123,8 +123,8 @@ func consultant() Interface {
 		Port:     ":8094",
 		Name:     "Дашборд консультанта",
 		Audience: "Менеджеры резидентства",
-		Auth:     "Внутренний (прямой URL).",
-		HowTo:    "Открыть :8094/consultant/dashboard.",
+		Auth:     "HTTP Basic Auth (логин/пароль). Переменные: CONSULTANT_USER, CONSULTANT_PASS. Если пусты — доступ открыт по прямому URL.",
+		HowTo:    "Открыть :8094/consultant/dashboard, ввести логин/пароль консультанта.",
 		Pages: []Page{
 			{
 				Route: "/consultant/dashboard", Title: "Дашборд консультанта",
@@ -142,7 +142,7 @@ func consultant() Interface {
 
 // ИНТЕРФЕЙС 4 — Резидентство-Админ (:8091).
 func residencyAdmin() Interface {
-	nav := "Меню: Документы, Клиенты, Чек-листы, Дедлайны, Шаблоны, Тенанты, Мероприятия, Конкурсы, ИИ."
+	nav := "Меню: Клиенты, Чек-листы, Дедлайны, Шаблоны, Тенанты, Мероприятия, Конкурсы. Ссылка «ИИ» ведёт на :8090/ai/models (настройка моделей и агентов)."
 	return Interface{
 		Port:     ":8091",
 		Name:     "Резидентство-Админ",
@@ -232,7 +232,7 @@ func residencyAdmin() Interface {
 
 // ИНТЕРФЕЙС 5 — Главная Админ-панель (:8090).
 func mainAdmin() Interface {
-	nav := "Меню: Документы, Изменения, Сравнение, Аналитика, Граф, Клиенты, ИИ. Кнопки: Парсинг RSS, Индексация, Полный синк, Индекс структуры."
+	nav := "Меню: Документы, Изменения, Сравнение, Аналитика, Граф, Льготы и НПА, Прокси, ИИ. Кнопки: Парсинг RSS, Индексация, Полный синк, Индекс структуры."
 	return Interface{
 		Port:     ":8090",
 		Name:     "Главная Админ-панель",
@@ -248,6 +248,23 @@ func mainAdmin() Interface {
 					{Name: "Вкладка «Документы»", Kind: "tab", Labels: []string{"поиск", "фильтр статуса (Все/Действует/На проверке/Устарел/Архив/Отклонён)", "Заголовок", "Категория", "Статус", "Файл", "действия: смотреть/скачать/загрузить/версия/де-индекс/удалить"}},
 					{Name: "Вкладка «Сборщик» (collector)", Kind: "tab", Labels: []string{"карточки: Всего/Активные/На проверке/Устарелые/Архив/Отклонённые/Индексировано", "таблица отчётов сборщика", "настройки планировщика: Включён/Интервал/Авто-одобрение/Следующий запуск"}},
 					{Name: "Вкладка «Валидатор» (validator)", Kind: "tab", Labels: []string{"Всего", "Валидные", "Невалидные", "Активные без файлов"}},
+				},
+			},
+			{
+				Route: "/stats", Title: "Статистика базы",
+				Purpose: "Сводная статистика по документам, источникам, индексированию и работе системы.",
+				HowTo:   "Прямой URL :8090/stats.",
+				Blocks: []Block{
+					{Name: "Статистика документов", Kind: "section", Labels: []string{"Всего документов", "Действует", "На проверке", "Устарело", "Архив", "Отклонено", "Индексировано в RAG"}},
+					{Name: "Статистика источников", Kind: "section", Labels: []string{"RSS-источники", "Мероприятия", "Конкурсы", "FAQ", "Резиденты", "Telegram-каналы"}},
+				},
+			},
+			{
+				Route: "/login", Title: "Вход в Админ-панель",
+				Purpose: "Форма HTTP Basic Auth для входа администратора.",
+				HowTo:   "Открывается автоматически при переходе на :8090 без авторизации.",
+				Blocks: []Block{
+					{Name: "Форма входа", Kind: "form", Labels: []string{"Логин", "Пароль", "кнопка «Войти»"}},
 				},
 			},
 			{
@@ -347,9 +364,81 @@ func mcpServer() Interface {
 					{Name: "Льготы и НПА", Kind: "section", Labels: []string{"search_preferences", "get_preference", "search_npa", "get_npa"}},
 					{Name: "Актуальность и мониторинг", Kind: "section", Labels: []string{"get_recent_changes", "get_source_health", "get_coverage_audit"}},
 					{Name: "Резидентство", Kind: "section", Labels: []string{"get_client_status", "get_checklist", "get_deadlines", "get_client_documents", "list_clients", "create_client", "update_client_stage", "get_templates"}},
-					{Name: "Документы клиента", Kind: "section", Labels: []string{"draft_document", "generate_document", "list_document_templates"}},
+					{Name: "Документы клиента", Kind: "section", Labels: []string{"draft_document (params: client_id, document_type: application/project_description/report/extension_request/exit_notice/ird_description) — LLM-черновик документа в Markdown", "generate_document (params: template_id, client_id, variables key=value, inline:bool) — готовый файл PDF/DOCX; список шаблонов — list_document_templates", "list_document_templates — список имён файлов шаблонов для generate_document"}},
 					{Name: "Агенты", Kind: "section", Labels: []string{"ask_consultant", "validate_document", "get_next_steps", "subscribe_to_changes", "check_eligibility"}},
 					{Name: "Навигация", Kind: "section", Labels: []string{"get_navigation — где что находится на сайте и как туда попасть"}},
+				},
+			},
+		},
+	}
+}
+
+// ИНТЕРФЕЙС 7 — Telegram-бот для клиентов резидентства.
+func telegramBot() Interface {
+	return Interface{
+		Port:     "Telegram",
+		Name:     "Telegram-бот для клиентов резидентства",
+		Audience: "Клиенты-резиденты, менеджеры",
+		Auth:     "Привязка по email: бот запрашивает email, затем связывает Telegram-аккаунт с записью клиента в системе.",
+		HowTo:    "Найти бота в Telegram, нажать Start или написать /start. Email должен совпадать с email клиента в системе.",
+		Pages: []Page{
+			{
+				Route: "/start", Title: "Команда /start — Приветствие и привязка",
+				Purpose: "Инициализация бота: запрос email для привязки аккаунта к записи клиента.",
+				HowTo:   "Написать боту /start.",
+				Blocks: []Block{
+					{Name: "Приветственное сообщение", Kind: "section", Labels: []string{"текст приветствия", "запрос email для привязки"}},
+					{Name: "Главное меню (inline-кнопки)", Kind: "nav", Labels: []string{"📊 Статус", "📋 Дедлайны", "📁 Документы", "❓ Задать вопрос", "❓ Помощь"}},
+				},
+			},
+			{
+				Route: "/status", Title: "Команда /status — Статус резидентства",
+				Purpose: "Текущая стадия резидентства клиента с описанием стадии.",
+				HowTo:   "Написать /status или нажать кнопку «📊 Статус» в меню.",
+				Blocks: []Block{
+					{Name: "Карточка статуса", Kind: "section", Labels: []string{"название стадии", "описание стадии", "дата последнего перехода"}},
+				},
+			},
+			{
+				Route: "/deadlines", Title: "Команда /deadlines — Ближайшие дедлайны",
+				Purpose: "Список ближайших дедлайнов клиента с пагинацией (5 на страницу).",
+				HowTo:   "Написать /deadlines или нажать кнопку «📋 Дедлайны».",
+				Blocks: []Block{
+					{Name: "Список дедлайнов", Kind: "section", Labels: []string{"название дедлайна", "срок", "статус (upcoming/overdue/completed)"}},
+					{Name: "Пагинация", Kind: "nav", Labels: []string{"кнопка «◀ Назад»", "кнопка «Вперёд ▶»", "счётчик страниц"}},
+				},
+			},
+			{
+				Route: "/docs", Title: "Команда /docs — Мои документы",
+				Purpose: "Документы клиента, связанные с резидентством (пагинация 5 на страницу).",
+				HowTo:   "Написать /docs или нажать кнопку «📁 Документы».",
+				Blocks: []Block{
+					{Name: "Список документов", Kind: "section", Labels: []string{"название документа", "роль", "статус (pending/submitted/approved/rejected)", "дата"}},
+					{Name: "Пагинация", Kind: "nav", Labels: []string{"кнопка «◀ Назад»", "кнопка «Вперёд ▶»", "счётчик страниц"}},
+				},
+			},
+			{
+				Route: "/checklists", Title: "Команда /checklists — Мои чек-листы",
+				Purpose: "Чек-листы процедур резидентства клиента с прогрессом.",
+				HowTo:   "Написать /checklists.",
+				Blocks: []Block{
+					{Name: "Список чек-листов", Kind: "section", Labels: []string{"название чек-листа", "тип процедуры", "статус", "X/Y шагов выполнено"}},
+				},
+			},
+			{
+				Route: "/ask", Title: "Команда /ask — Вопрос консультанту",
+				Purpose: "Задать вопрос ИИ-консультанту по базе Сколково через MCP ask_consultant.",
+				HowTo:   "Написать /ask <вопрос> или просто написать сообщение (если уже авторизован).",
+				Blocks: []Block{
+					{Name: "Ответ консультанта", Kind: "section", Labels: []string{"текст ответа", "ссылки на источники (документы/НПА/события)"}},
+				},
+			},
+			{
+				Route: "/help", Title: "Команда /help — Справка",
+				Purpose: "Список доступных команд бота.",
+				HowTo:   "Написать /help или нажать кнопку «❓ Помощь».",
+				Blocks: []Block{
+					{Name: "Справка", Kind: "section", Labels: []string{"/start — начало работы", "/status — статус резидентства", "/deadlines — дедлайны", "/docs — документы", "/checklists — чек-листы", "/ask <вопрос> — задать вопрос", "/help — эта справка"}},
 				},
 			},
 		},

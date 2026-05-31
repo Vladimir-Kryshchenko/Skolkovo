@@ -18,19 +18,60 @@ import (
 )
 
 const (
-	mcpBase     = "http://localhost:8080"
-	adminBase   = "http://localhost:8090"
-	residencyBase = "http://localhost:8091"
+	mcpBase        = "http://localhost:8080"
+	adminBase      = "http://localhost:8090"
+	residencyBase  = "http://localhost:8091"
 	consultantBase = "http://localhost:8094"
 	prometheusBase = "http://localhost:9090"
-	apiKey      = "517a4b18d8701532ce5e9d50671395b8602a9f9e68691f1d"
-	adminUser   = "admin"
-	adminPass   = "change-me-please"
+	apiKey         = "517a4b18d8701532ce5e9d50671395b8602a9f9e68691f1d"
+	adminUser      = "admin"
+	adminPass      = "change-me-please"
 )
 
 func authHeader() string {
 	cred := base64.StdEncoding.EncodeToString([]byte(adminUser + ":" + adminPass))
 	return "Basic " + cred
+}
+
+// adminLogin выполняет вход в сессионную админку и возвращает cookie сессии.
+func adminLogin(t *testing.T) *http.Cookie {
+	t.Helper()
+	noRedirect := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 10 * time.Second,
+	}
+	req, err := http.NewRequest("POST", adminBase+"/login",
+		strings.NewReader("username="+adminUser+"&password="+adminPass))
+	if err != nil {
+		t.Fatalf("adminLogin: build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		t.Fatalf("adminLogin: %v", err)
+	}
+	defer resp.Body.Close()
+	for _, c := range resp.Cookies() {
+		if c.Name == "admin_session" {
+			return c
+		}
+	}
+	t.Fatal("adminLogin: no session cookie returned")
+	return nil
+}
+
+// getWithCookie выполняет GET-запрос с cookie сессии.
+func getWithCookie(t *testing.T, url string, cookie *http.Cookie) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.AddCookie(cookie)
+	client := &http.Client{Timeout: 10 * time.Second}
+	return client.Do(req)
 }
 
 func get(t *testing.T, url string, headers map[string]string) (*http.Response, error) {
@@ -160,7 +201,8 @@ func TestMCP_GetSourceHealth(t *testing.T) {
 // ===========================================================================
 
 func TestAdmin_MainPage(t *testing.T) {
-	resp, err := get(t, adminBase+"/", map[string]string{"Authorization": authHeader()})
+	cookie := adminLogin(t)
+	resp, err := getWithCookie(t, adminBase+"/", cookie)
 	if err != nil {
 		t.Fatalf("Admin / request failed: %v", err)
 	}
@@ -170,7 +212,6 @@ func TestAdmin_MainPage(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
-	// Verify key UI elements present
 	elements := []string{"База Сколково", "Документы", "Парсинг RSS", "Индексация", "Всего", "Действует"}
 	for _, el := range elements {
 		if !strings.Contains(html, el) {
@@ -180,7 +221,8 @@ func TestAdmin_MainPage(t *testing.T) {
 }
 
 func TestAdmin_DiffPage(t *testing.T) {
-	resp, err := get(t, adminBase+"/diff", map[string]string{"Authorization": authHeader()})
+	cookie := adminLogin(t)
+	resp, err := getWithCookie(t, adminBase+"/diff", cookie)
 	if err != nil {
 		t.Fatalf("Admin /diff failed: %v", err)
 	}
@@ -190,7 +232,7 @@ func TestAdmin_DiffPage(t *testing.T) {
 	}
 	body, _ := io.ReadAll(resp.Body)
 	html := string(body)
-	for _, el := range []string{"Сравнение документов", "Документ 1", "Документ 2", "Сравнить"} {
+	for _, el := range []string{"Сравнение", "Документ 1", "Документ 2", "Сравнить"} {
 		if !strings.Contains(html, el) {
 			t.Errorf("Admin /diff: missing element '%s'", el)
 		}
@@ -198,7 +240,8 @@ func TestAdmin_DiffPage(t *testing.T) {
 }
 
 func TestAdmin_AnalyticsPage(t *testing.T) {
-	resp, err := get(t, adminBase+"/analytics", map[string]string{"Authorization": authHeader()})
+	cookie := adminLogin(t)
+	resp, err := getWithCookie(t, adminBase+"/analytics", cookie)
 	if err != nil {
 		t.Fatalf("Admin /analytics failed: %v", err)
 	}
@@ -209,7 +252,8 @@ func TestAdmin_AnalyticsPage(t *testing.T) {
 }
 
 func TestAdmin_GraphPage(t *testing.T) {
-	resp, err := get(t, adminBase+"/graph", map[string]string{"Authorization": authHeader()})
+	cookie := adminLogin(t)
+	resp, err := getWithCookie(t, adminBase+"/graph", cookie)
 	if err != nil {
 		t.Fatalf("Admin /graph failed: %v", err)
 	}
@@ -361,12 +405,25 @@ func TestPrometheus_Metrics(t *testing.T) {
 // ===========================================================================
 
 func TestAdmin_AuthRejected(t *testing.T) {
-	resp, err := get(t, adminBase+"/", map[string]string{"Authorization": "Basic d3Jvbmc6d3Jvbmc="})
+	// Админка использует сессионную авторизацию (форма входа).
+	// Без сессии должен быть редирект на /login (303).
+	noRedirect := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 10 * time.Second,
+	}
+	req, _ := http.NewRequest("GET", adminBase+"/", nil)
+	resp, err := noRedirect.Do(req)
 	if err != nil {
 		t.Fatalf("Admin auth test failed: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 401 {
-		t.Fatalf("Admin /: expected 401 for wrong credentials, got %d", resp.StatusCode)
+	if resp.StatusCode != 303 {
+		t.Fatalf("Admin /: expected 303 redirect for unauthenticated access, got %d", resp.StatusCode)
+	}
+	location := resp.Header.Get("Location")
+	if !strings.Contains(location, "/login") {
+		t.Errorf("Admin /: expected redirect to /login, got %s", location)
 	}
 }

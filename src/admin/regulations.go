@@ -233,8 +233,33 @@ var regulationsTmpl = template.Must(template.New("regulations").Funcs(template.F
   --yellow: #bf6900; --yellow-bg: #fff6e5; --yellow-border: #f0d6a8;
   --red: #de350b; --red-bg: #fde8e0; --red-border: #f5b8a0;
   --gray: #676f83; --gray-bg: #f0f1f3; --gray-border: #d8dbe4;
+  --font: 'Figtree', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
 }
-body { font-family: 'Figtree', system-ui, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; padding: 20px; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --surface-hover: #2a2f45;
+    --primary: #579dff; --primary-hover: #7db3ff; --primary-light: #1e3050;
+    --text: #d0d1d8; --text-secondary: #9698a6; --text-muted: #7e8194;
+    --border: #3b3f54; --border-strong: #4a4f66;
+    --shadow: 0 1px 3px rgba(0,0,0,.4);
+    --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+    --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
+    --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+    --gray: #9698a6; --gray-bg: #2a2f45; --gray-border: #3b3f54;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #181b2b; --surface: #23273a; --surface-alt: #2a2f45; --surface-hover: #2a2f45;
+  --primary: #579dff; --primary-hover: #7db3ff; --primary-light: #1e3050;
+  --text: #d0d1d8; --text-secondary: #9698a6; --text-muted: #7e8194;
+  --border: #3b3f54; --border-strong: #4a4f66;
+  --shadow: 0 1px 3px rgba(0,0,0,.4);
+  --green: #4ade80; --green-bg: #1a2e1a; --green-border: #2d5a2d;
+  --yellow: #fbbf24; --yellow-bg: #2e2408; --yellow-border: #5a4510;
+  --red: #ff6b6b; --red-bg: #2e1a1a; --red-border: #5a2d2d;
+  --gray: #9698a6; --gray-bg: #2a2f45; --gray-border: #3b3f54;
+}
+body { font-family: var(--font); background: var(--bg); color: var(--text); line-height: 1.5; padding: 20px; }
 h1 { font-size: 24px; font-weight: 700; margin-bottom: 20px; }
 h2 { font-size: 18px; font-weight: 600; margin: 24px 0 12px; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 20px; margin-bottom: 20px; }
@@ -258,8 +283,9 @@ tr:hover td { background: var(--surface-hover); }
 .btn-danger:hover { background: var(--red-bg); }
 form label { display: block; font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 4px; }
 form input[type="text"], form input[type="date"], form input[type="url"], form textarea, form select {
-  width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; font-family: inherit; background: var(--surface);
+  width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; font-family: inherit; background: var(--surface); color: var(--text); outline: none; transition: border-color .15s, box-shadow .15s;
 }
+form input:focus, form textarea:focus, form select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.12); }
 form textarea { min-height: 60px; resize: vertical; }
 form .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
 form .form-group { margin-bottom: 12px; }
@@ -275,17 +301,51 @@ a.source-link:hover { text-decoration: underline; }
 .tab:hover { color: var(--primary); }
 .tab-content { display: none; }
 .tab-content.active { display: block; }
+.page-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--primary); text-decoration: none; font-size: 14px; font-weight: 500; }
+.back-link:hover { text-decoration: underline; }
+.back-link svg { width: 16px; height: 16px; }
+.title-icon { width: 22px; height: 22px; color: var(--primary); vertical-align: -3px; margin-right: 8px; }
+.theme-btn { background: var(--surface); color: var(--text-secondary); border: 1px solid var(--border); border-radius: 6px; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all .15s; flex-shrink: 0; }
+.theme-btn:hover { background: var(--surface-hover); color: var(--text); }
+.theme-btn svg { width: 18px; height: 18px; }
+/* Tooltip */
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%);
+  background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px;
+  font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.2);
+}
+[data-tooltip]:hover::before {
+  content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+  border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none;
+}
+@media (max-width: 600px) {
+  .form-row { grid-template-columns: 1fr !important; }
+}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<a href="/" style="color:var(--primary);text-decoration:none;font-size:14px">← Назад в админку</a>
-<h1>📜 Льготы и НПА</h1>
+<div class="page-top">
+  <a href="/" class="back-link" data-tooltip="Вернуться в административную панель">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+    Назад в админку
+  </a>
+  <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+    <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+    <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+  </button>
+</div>
+<h1><svg class="title-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>Льготы и НПА (нормативные правовые акты)</h1>
 
 {{if .Flash}}<div class="flash flash-{{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="tabs">
-  <div class="tab active" onclick="showTab('prefs',this)">Льготы ({{len .Preferences}})</div>
-  <div class="tab" onclick="showTab('npas',this)">НПА (нормативные акты) ({{len .NPAs}})</div>
+  <div class="tab active" onclick="showTab('prefs',this)" data-tooltip="Реестр льгот и преференций для резидентов">Льготы ({{len .Preferences}})</div>
+  <div class="tab" onclick="showTab('npas',this)" data-tooltip="Нормативные правовые акты — законы и постановления">НПА (нормативные правовые акты) ({{len .NPAs}})</div>
 </div>
 
 <div id="prefs" class="tab-content active">
@@ -457,6 +517,23 @@ function showTab(id, el) {
   document.getElementById(id).classList.add('active');
   el.classList.add('active');
 }
+function toggleTheme() {
+  var r = document.documentElement;
+  var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  var next = cur === 'dark' ? 'light' : 'dark';
+  r.setAttribute('data-theme', next);
+  localStorage.setItem('theme', next);
+  updateThemeIcons(next);
+}
+function updateThemeIcons(theme) {
+  var moon = document.querySelector('.icon-moon');
+  var sun = document.querySelector('.icon-sun');
+  if (moon && sun) { moon.style.display = theme === 'dark' ? 'none' : ''; sun.style.display = theme === 'dark' ? '' : 'none'; }
+}
+document.addEventListener('DOMContentLoaded', function() {
+  var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  updateThemeIcons(cur);
+});
 </script>
 </body>
 </html>

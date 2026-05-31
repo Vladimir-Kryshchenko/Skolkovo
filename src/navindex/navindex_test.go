@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// TestTreeCoverage проверяет, что карта покрывает все 6 интерфейсов и порты.
+// TestTreeCoverage проверяет, что карта покрывает все 6 веб-интерфейсов + Telegram-бот.
 func TestTreeCoverage(t *testing.T) {
 	tree := Tree()
-	wantPorts := []string{":8080", ":8090", ":8091", ":8092", ":8093", ":8094"}
+	wantPorts := []string{":8080", ":8090", ":8091", ":8092", ":8093", ":8094", "Telegram"}
 	got := map[string]bool{}
 	for _, iface := range tree {
 		if len(iface.Pages) == 0 {
@@ -18,7 +18,7 @@ func TestTreeCoverage(t *testing.T) {
 	}
 	for _, p := range wantPorts {
 		if !got[p] {
-			t.Errorf("в карте нет интерфейса на порту %s", p)
+			t.Errorf("в карте нет интерфейса на порту/канале %s", p)
 		}
 	}
 }

@@ -298,6 +298,7 @@ body {
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.9em;
+  overflow-wrap: anywhere;
 }
 .message.assistant pre {
   background: var(--msg-code);
@@ -378,7 +379,7 @@ body {
 <body>
 <div class="chat-container">
   <div class="chat-header">
-    {{if .LogoURL}}<img src="{{.LogoURL}}" alt="logo">{{end}}
+    {{if .LogoURL}}<img src="{{.LogoURL}}" alt="Логотип">{{end}}
     <h2>Консультант Сколково</h2>
     <button class="chat-header-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
       <svg id="themeIcon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -502,7 +503,7 @@ const widgetJS = `
     '.sk-msg.assistant{align-self:flex-start;background:var(--sk-msg-bg,#2c3044);color:var(--sk-text,#e8eaed)}'+
     '.sk-msg.assistant p{margin:0 0 6px}'+
     '.sk-msg.assistant p:last-child{margin-bottom:0}'+
-    '.sk-msg.assistant code{background:var(--sk-code-bg,#363b50);padding:2px 5px;border-radius:3px;font-size:.9em}'+
+    '.sk-msg.assistant code{background:var(--sk-code-bg,#363b50);padding:2px 5px;border-radius:3px;font-size:.9em;overflow-wrap:anywhere}'+
     '.sk-msg.assistant pre{background:var(--sk-code-bg,#363b50);padding:6px 10px;border-radius:5px;overflow-x:auto}'+
     '.sk-msg.assistant pre code{background:none;padding:0}'+
     '.sk-input-row{border-top:1px solid var(--sk-border,#333850);padding:10px;display:flex;gap:6px;background:var(--sk-surface,#23273a);flex-shrink:0}'+
@@ -537,15 +538,34 @@ const widgetJS = `
     style.textContent = WIDGET_CSS.replace(/var\(--sk-primary,([^)]*)\)/g, primary);
     document.head.appendChild(style);
 
+    // Палитра виджета адаптируется к теме: cfg.theme ('light'|'dark') либо
+    // системная prefers-color-scheme хост-страницы (по умолчанию).
     document.documentElement.style.setProperty('--sk-primary', primary);
     document.documentElement.style.setProperty('--sk-hover', '#005fbf');
-    document.documentElement.style.setProperty('--sk-surface', '#23273a');
-    document.documentElement.style.setProperty('--sk-text', '#e8eaed');
-    document.documentElement.style.setProperty('--sk-muted', '#9ca3af');
-    document.documentElement.style.setProperty('--sk-border', '#333850');
-    document.documentElement.style.setProperty('--sk-input-border', '#3e4460');
-    document.documentElement.style.setProperty('--sk-msg-bg', '#2c3044');
-    document.documentElement.style.setProperty('--sk-code-bg', '#363b50');
+    var SK_THEMES = {
+      light: { surface:'#ffffff', text:'#323338', muted:'#676879', border:'#e0e2e8', inputBorder:'#c3c6d4', msgBg:'#f0f2f5', codeBg:'#eef0f4' },
+      dark:  { surface:'#23273a', text:'#e8eaed', muted:'#9ca3af', border:'#333850', inputBorder:'#3e4460', msgBg:'#2c3044', codeBg:'#363b50' }
+    };
+    function applySkTheme(scheme) {
+      var t = SK_THEMES[scheme] || SK_THEMES.light;
+      var s = document.documentElement.style;
+      s.setProperty('--sk-surface', t.surface);
+      s.setProperty('--sk-text', t.text);
+      s.setProperty('--sk-muted', t.muted);
+      s.setProperty('--sk-border', t.border);
+      s.setProperty('--sk-input-border', t.inputBorder);
+      s.setProperty('--sk-msg-bg', t.msgBg);
+      s.setProperty('--sk-code-bg', t.codeBg);
+    }
+    var mq = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+    if (cfg.theme === 'light' || cfg.theme === 'dark') {
+      applySkTheme(cfg.theme);
+    } else {
+      applySkTheme(mq && mq.matches ? 'dark' : 'light');
+      if (mq && mq.addEventListener) {
+        mq.addEventListener('change', function(e) { applySkTheme(e.matches ? 'dark' : 'light'); });
+      }
+    }
 
     // Inject HTML
     var wrapper = document.createElement('div');
@@ -563,6 +583,7 @@ const widgetJS = `
       var logoWrap = panel.querySelector('.sk-logo-wrap');
       var img = document.createElement('img');
       img.src = logoURL;
+      img.alt = 'Логотип';
       logoWrap.appendChild(img);
     }
 

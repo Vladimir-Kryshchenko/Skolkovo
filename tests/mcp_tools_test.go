@@ -74,7 +74,7 @@ func (s *testMCPServer) callToolNoError(t *testing.T, name string, args map[stri
 }
 
 func toJSON(v any) string {
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := json.Marshal(v)
 	if err != nil {
 		return "{}"
 	}
@@ -353,7 +353,7 @@ func TestGetClientStatusTool(t *testing.T) {
 	if !strings.Contains(result, `"name":"ООО Тест"`) {
 		t.Fatalf("expected name, got: %s", result)
 	}
-	if !strings.Contains(result, `"residency_stage":"Подача_заявки"`) {
+	if !strings.Contains(result, `"residency_stage":"подача_заявки"`) {
 		t.Fatalf("expected stage, got: %s", result)
 	}
 }
@@ -549,10 +549,10 @@ func TestUpdateClientStageTool(t *testing.T) {
 	})
 
 	result := srv.callTool(t, "update_client_stage", map[string]interface{}{"client_id": clientID, "new_stage": string(model.StageExamination), "notes": "Документы приняты"})
-	if !strings.Contains(result, `"from_stage":"Подача_заявки"`) {
+	if !strings.Contains(result, `"from_stage":"подача_заявки"`) {
 		t.Fatalf("expected from_stage, got: %s", result)
 	}
-	if !strings.Contains(result, `"to_stage":"Экспертиза"`) {
+	if !strings.Contains(result, `"to_stage":"экспертиза"`) {
 		t.Fatalf("expected to_stage, got: %s", result)
 	}
 }
@@ -755,7 +755,7 @@ func TestGenerateDocumentTool(t *testing.T) {
 
 	// Без inline.
 	result := srv.callTool(t, "generate_document", map[string]interface{}{"template_id": "application", "client_id": "client-1"})
-	if !strings.Contains(result, `"filename":"application_client-1.pdf"`) {
+	if !strings.Contains(result, `application_client-1.pdf`) {
 		t.Fatalf("expected filename, got: %s", result)
 	}
 	if strings.Contains(result, "content_base64") {

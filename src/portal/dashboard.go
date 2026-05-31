@@ -185,6 +185,14 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 .card h2 svg { width: 18px; height: 18px; color: var(--primary); flex-shrink: 0; }
 .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
 
+/* Notice banner */
+.notice-banner { display: flex; align-items: flex-start; gap: 10px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #92400e; }
+.notice-banner svg { flex-shrink: 0; color: #f59e0b; margin-top: 1px; }
+.notice-banner a { color: #b45309; font-weight: 600; text-decoration: underline; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .notice-banner { background: #2d1a00; border-color: #b45309; color: #fcd34d; } :root:not([data-theme="light"]) .notice-banner a { color: #fbbf24; } }
+:root[data-theme="dark"] .notice-banner { background: #2d1a00; border-color: #b45309; color: #fcd34d; }
+:root[data-theme="dark"] .notice-banner a { color: #fbbf24; }
+
 /* Progress bar */
 .progress { background: var(--gray-bg); border-radius: 6px; height: 8px; overflow: hidden; }
 .progress-bar { height: 100%; border-radius: 6px; background: var(--primary); transition: width .4s ease; }
@@ -484,6 +492,12 @@ document.addEventListener('DOMContentLoaded', function() {
 {{/* ===== DASHBOARD PAGE ===== */}}
 {{define "dashboard"}}
 {{.Flash}}
+<div class="notice-banner">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  <span>Это ваш прогресс в <strong>нашем сопровождении</strong>. Официальный статус заявки и документы — в
+    <a href="https://cabinet.sk.ru/" target="_blank" rel="noopener">личном кабинете Сколково cabinet.sk.ru</a>.
+  </span>
+</div>
 <div class="grid grid-2">
   <div>
     <div class="card">

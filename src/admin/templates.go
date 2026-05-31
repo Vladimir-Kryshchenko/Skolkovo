@@ -1319,7 +1319,7 @@ document.addEventListener('DOMContentLoaded', function() {
 {{/* Last parse info */}}
 <div class="parse-info">
   <div>
-    <span class="label">📡 Последний парсинг:</span>
+    <span class="label"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;vertical-align:-2px;margin-right:6px"><path d="M4 11a9 9 0 0 1 9 9"/><path d="M4 4a16 16 0 0 1 16 16"/><circle cx="5" cy="19" r="1"/></svg>Последний парсинг:</span>
     {{if .Stats.LastParse.IsZero}}
       <span class="time">ещё не выполнялся</span>
     {{else}}

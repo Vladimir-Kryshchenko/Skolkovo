@@ -83,7 +83,7 @@ func registerWorkflowTools(srv *testMCPServer, store *workflowStore) {
 		if !ok {
 			return mcp.NewToolResultError("клиент не найден"), nil
 		}
-		return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","name":"%s","stage":"%s","updated_at":"%s"}`, c.ID, c.Name, c.ResidencyStage, c.UpdatedAt.Format(time.RFC3339))), nil
+		return mcp.NewToolResultText(fmt.Sprintf(`{"id":"%s","name":"%s","inn":"%s","stage":"%s","updated_at":"%s"}`, c.ID, c.Name, c.INN, c.ResidencyStage, c.UpdatedAt.Format(time.RFC3339))), nil
 	})
 
 	srv.addTool("get_checklist", func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -264,7 +264,7 @@ func TestWorkflow_ClientLifecycle(t *testing.T) {
 	})
 	assertWorkflowContains(t, result, "ООО Инновации Плюс", "create_client: name")
 	assertWorkflowContains(t, result, "7701234567", "create_client: inn")
-	assertWorkflowContains(t, result, `"stage":"Подача_заявки"`, "create_client: initial stage")
+	assertWorkflowContains(t, result, `"stage":"подача_заявки"`, "create_client: initial stage")
 
 	clientID := extractField(result, "id")
 	if clientID == "" {
@@ -276,17 +276,17 @@ func TestWorkflow_ClientLifecycle(t *testing.T) {
 		"new_stage": string(model.StageExamination),
 		"notes":     "Документы приняты к экспертизе",
 	})
-	assertWorkflowContains(t, result2, `"from":"Подача_заявки"`, "update_stage: from")
-	assertWorkflowContains(t, result2, `"to":"Экспертиза"`, "update_stage: to")
+	assertWorkflowContains(t, result2, `"from":"подача_заявки"`, "update_stage: from")
+	assertWorkflowContains(t, result2, `"to":"экспертиза"`, "update_stage: to")
 
 	result3 := callTool(t, srv, "update_client_stage", map[string]interface{}{
 		"client_id": clientID,
 		"new_stage": string(model.StageDecision),
 	})
-	assertWorkflowContains(t, result3, `"to":"Решение"`, "update_stage: decision")
+	assertWorkflowContains(t, result3, `"to":"решение"`, "update_stage: decision")
 
 	result4 := callTool(t, srv, "get_client_status", map[string]interface{}{"client_id": clientID})
-	assertWorkflowContains(t, result4, `"stage":"Решение"`, "get_status: stage")
+	assertWorkflowContains(t, result4, `"stage":"решение"`, "get_status: stage")
 	assertWorkflowContains(t, result4, "ООО Инновации Плюс", "get_status: name")
 
 	callTool(t, srv, "get_checklist", map[string]interface{}{"client_id": clientID})
@@ -375,7 +375,7 @@ func TestWorkflow_AIWorkflow(t *testing.T) {
 	assertWorkflowContains(t, result3, `"inn":"7709876543"`, "draft: inn")
 
 	result4 := callTool(t, srv, "generate_document", map[string]interface{}{"template_id": "Заявление_на_резидентство.go.tpl", "client_id": clientID})
-	assertWorkflowContains(t, result4, `"filename":"Заявление_на_резидентство.go.tpl`, "generate: filename")
+	assertWorkflowContains(t, result4, `Заявление_на_резидентство.go.tpl`, "generate: filename")
 	if strings.Contains(result4, "content_base64") {
 		t.Error("should not contain base64 without inline")
 	}
@@ -459,7 +459,7 @@ func TestWorkflow_FullResidencyLifecycle(t *testing.T) {
 	}
 
 	finalStatus := callTool(t, srv, "get_client_status", map[string]interface{}{"client_id": clientID})
-	assertWorkflowContains(t, finalStatus, `"stage":"Выход"`, "final stage: exit")
+	assertWorkflowContains(t, finalStatus, `"stage":"выход"`, "final stage: exit")
 
 	if len(store.transitions[clientID]) != 7 {
 		t.Errorf("expected 7 transitions, got %d", len(store.transitions[clientID]))

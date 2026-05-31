@@ -1056,9 +1056,10 @@ func (s *Server) handleViewOriginal(w http.ResponseWriter, r *http.Request) {
 	if ext == ".pdf" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PDF — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1091,7 +1092,7 @@ func (s *Server) handleViewOriginal(w http.ResponseWriter, r *http.Request) {
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1155,9 +1156,10 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Исходный документ — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1194,7 +1196,7 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1307,9 +1309,10 @@ func (s *Server) handleViewProcessed(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Обработанный документ — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1342,7 +1345,7 @@ func (s *Server) handleViewProcessed(w http.ResponseWriter, r *http.Request) {
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1380,8 +1383,8 @@ body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; ba
 </div>
 
 <div class="stats">
-  <div class="stat"><div class="n">%d</div><div class="l">Чанков</div></div>
-  <div class="stat"><div class="n">%d</div><div class="l">Всего символов</div></div>
+  <div class="stat" data-tooltip="Количество фрагментов (чанков), на которые разбит документ для индексации"><div class="n">%d</div><div class="l">Чанков</div></div>
+  <div class="stat" data-tooltip="Суммарная длина текста всех чанков в символах"><div class="n">%d</div><div class="l">Всего символов</div></div>
 </div>
 `, doc.Title, doc.Title, len(chunks), s.totalChars(chunks))
 
@@ -2115,10 +2118,14 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		Limit:      500,
 	}
 
-	events, err := s.changeStore.Recent(r.Context(), filter)
-	if err != nil && s.changeStore != nil {
-		log.Printf("[admin/changes] ошибка загрузки: %v", err)
-		events = nil
+	var events []changes.Event
+	if s.changeStore != nil {
+		var err error
+		events, err = s.changeStore.Recent(r.Context(), filter)
+		if err != nil {
+			log.Printf("[admin/changes] ошибка загрузки: %v", err)
+			events = nil
+		}
 	}
 
 	// Фильтрация по поиску на стороне Go (для заголовков)
@@ -2165,8 +2172,10 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Время последнего парсинга — берём из отчётов коллектора
-	if reports, err := s.reportStore.GetReports(1); err == nil && len(reports) > 0 {
-		st.LastParse = reports[0].StartedAt
+	if s.reportStore != nil {
+		if reports, err := s.reportStore.GetReports(1); err == nil && len(reports) > 0 {
+			st.LastParse = reports[0].StartedAt
+		}
 	}
 
 	data := changesPageData{

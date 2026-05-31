@@ -68,7 +68,7 @@ services:
       SITEPAGES_COLLECTION: ${SITEPAGES_COLLECTION:-skolkovo_sitepages}
       SITEPAGES_ENABLED: ${SITEPAGES_ENABLED:-true}
       SITEPAGES_SEEDS: ${SITEPAGES_SEEDS:-https://sk.ru/,https://dochub.sk.ru/foundation/documents/}
-      SITEPAGES_MAX_PAGES: ${SITEPAGES_MAX_PAGES:-300}
+      SITEPAGES_MAX_PAGES: ${SITEPAGES_MAX_PAGES:-0}
       TEI_URL: http://tei:80
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       POSTGRES_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable

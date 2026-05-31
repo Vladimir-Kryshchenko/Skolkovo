@@ -110,7 +110,7 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+<button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
   <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
   <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
 </button>
@@ -127,19 +127,19 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
     <div class="form-group">
       <label for="role">Роль</label>
       <div class="role-switch">
-        <label class="role-option active" data-role="admin" onclick="selectRole('admin', this)" data-tooltip="Полный доступ: управление документами, настройка ИИ, индексация">
+        <label class="role-option active" data-role="admin" onclick="selectRole('admin', this)" title="Полный доступ: управление документами, настройка ИИ, индексация">
           <input type="radio" name="role" value="admin" checked>
           <div class="role-badge">А</div>
           <div class="role-label">Администратор</div>
           <div class="role-desc">Полный доступ</div>
         </label>
-        <label class="role-option" data-role="user" onclick="selectRole('user', this)" data-tooltip="Рабочий доступ: управление документами, без настроек системы">
+        <label class="role-option" data-role="user" onclick="selectRole('user', this)" title="Рабочий доступ: управление документами, без настроек системы">
           <input type="radio" name="role" value="user">
           <div class="role-badge">П</div>
           <div class="role-label">Пользователь</div>
           <div class="role-desc">Рабочий доступ</div>
         </label>
-        <label class="role-option" data-role="viewer" onclick="selectRole('viewer', this)" data-tooltip="Только просмотр: просмотр документов без возможности редактирования">
+        <label class="role-option" data-role="viewer" onclick="selectRole('viewer', this)" title="Только просмотр: просмотр документов без возможности редактирования">
           <input type="radio" name="role" value="viewer">
           <div class="role-badge">Н</div>
           <div class="role-label">Наблюдатель</div>
@@ -149,16 +149,16 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
     </div>
     <div class="form-group">
       <label for="username">Имя пользователя</label>
-      <input type="text" id="username" name="username" placeholder="Введите логин" required autocomplete="username" data-tooltip="Имя пользователя, выданное администратором">
+      <input type="text" id="username" name="username" placeholder="Введите логин" required autocomplete="username" title="Имя пользователя, выданное администратором">
     </div>
     <div class="form-group">
       <label for="password">Пароль</label>
-      <input type="password" id="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" data-tooltip="Пароль для входа в систему">
+      <input type="password" id="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" title="Пароль для входа в систему">
     </div>
-    <button type="submit" class="btn btn-primary" data-tooltip="Войти в систему с выбранной ролью">Войти</button>
+    <button type="submit" class="btn btn-primary" title="Войти в систему с выбранной ролью">Войти</button>
   </form>
   <div class="footer">
-    <a href="/" data-tooltip="Вернуться на главную страницу">Вернуться на главную</a>
+    <a href="/" title="Вернуться на главную страницу">Вернуться на главную</a>
   </div>
 </div>
 <script>
@@ -434,25 +434,25 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
     <h1>База Сколково</h1>
   </div>
   <div class="header-actions">
-    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
-    <a href="/changes" data-tooltip="История изменений: что нового появилось в базе">Изменения</a>
-    <a href="/sitepages" data-tooltip="Страницы публичного сайта Сколково: просмотр и переход на сайт">Страницы сайта</a>
-    <a href="/diff" data-tooltip="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" data-tooltip="Граф связей между документами">Граф</a>
-    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
+    <a href="/" title="Список всех документов базы знаний">Документы</a>
+    <a href="/changes" title="История изменений: что нового появилось в базе">Изменения</a>
+    <a href="/sitepages" title="Страницы публичного сайта Сколково: просмотр и переход на сайт">Страницы сайта</a>
+    <a href="/diff" title="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" title="Граф связей между документами">Граф</a>
+    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
     <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы) для получения новых документов (~20 документов)">Парсинг RSS (каналы)</button>
-    <button onclick="runAction('index', this)" data-tooltip="Проиндексировать все документы со статусом «действует» в векторном поиске (RAG (поиск по векторам))">Индексация</button>
-    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: загрузка документов, новостей и последующая индексация">Полный синк</button>
-    <button onclick="runAction('approve-all', this)" style="background:#00875a;color:#fff" data-tooltip="Одобрить все документы «на проверке» и запустить их индексацию в RAG — документы с метаданными попадут в поиск даже без локального файла">✓ Одобрить все ({{.PendingCount}})</button>
-    <button onclick="runAction('seed-local', this)" data-tooltip="Зарегистрировать и проиндексировать все .md-файлы из папки документов">Индекс структуры</button>
-    <button onclick="runAction('navindex', this)" data-tooltip="Пересобрать навигацию по сайту для чат-бота (коллекция skolkovo_navigation, инструмент get_navigation)">Навигация бота</button>
+    <button onclick="runAction('scrape', this)" title="Запустить парсинг RSS (каналы) для получения новых документов (~20 документов)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" title="Проиндексировать все документы со статусом «действует» в векторном поиске (RAG (поиск по векторам))">Индексация</button>
+    <button onclick="runAction('sync', this)" title="Полный цикл: загрузка документов, новостей и последующая индексация">Полный синк</button>
+    <button onclick="runAction('approve-all', this)" style="background:#00875a;color:#fff" title="Одобрить все документы «на проверке» и запустить их индексацию в RAG — документы с метаданными попадут в поиск даже без локального файла">✓ Одобрить все ({{.PendingCount}})</button>
+    <button onclick="runAction('seed-local', this)" title="Зарегистрировать и проиндексировать все .md-файлы из папки документов">Индекс структуры</button>
+    <button onclick="runAction('navindex', this)" title="Пересобрать навигацию по сайту для чат-бота (коллекция skolkovo_navigation, инструмент get_navigation)">Навигация бота</button>
     <div class="header-divider"></div>
-    <span class="header-user" data-tooltip="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
-    <a href="/logout" data-tooltip="Выйти из системы" style="padding: 5px 10px">Выход</a>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+    <span class="header-user" title="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
+    <a href="/logout" title="Выйти из системы" style="padding: 5px 10px">Выход</a>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
@@ -575,22 +575,22 @@ document.addEventListener('DOMContentLoaded', function() {
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat total" data-tooltip="Общее количество документов в реестре">
+  <div class="stat total" title="Общее количество документов в реестре">
     <div class="n">{{.Stats.Total}}</div><div class="l">Всего</div>
   </div>
-  <div class="stat active" data-tooltip="Документы со статусом «действует» — участвуют в RAG (поиск по векторам)-поиске">
+  <div class="stat active" title="Документы со статусом «действует» — участвуют в RAG (поиск по векторам)-поиске">
     <div class="n">{{.Stats.Active}}</div><div class="l">Действует</div>
   </div>
-  <div class="stat pending" data-tooltip="Документы ожидают проверки перед переводом в статус «действует»">
+  <div class="stat pending" title="Документы ожидают проверки перед переводом в статус «действует»">
     <div class="n">{{.Stats.Pending}}</div><div class="l">На проверке</div>
   </div>
-  <div class="stat outdated" data-tooltip="Устаревшие документы — заменены новыми версиями">
+  <div class="stat outdated" title="Устаревшие документы — заменены новыми версиями">
     <div class="n">{{.Stats.Outdated}}</div><div class="l">Устарело</div>
   </div>
-  <div class="stat archived" data-tooltip="Документы в архиве — не участвуют в поиске">
+  <div class="stat archived" title="Документы в архиве — не участвуют в поиске">
     <div class="n">{{.Stats.Archived}}</div><div class="l">Архив</div>
   </div>
-  <div class="stat indexed" data-tooltip="Документы, проиндексированные в Qdrant (векторный поиск)">
+  <div class="stat indexed" title="Документы, проиндексированные в Qdrant (векторный поиск)">
     <div class="n">{{.Stats.Indexed}}</div><div class="l">В индексе (RAG (поиск по векторам))</div>
   </div>
 </div>
@@ -598,21 +598,49 @@ document.addEventListener('DOMContentLoaded', function() {
 <div class="toolbar">
   <label>Статус:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/" data-tooltip="Все документы">Все ({{.Stats.Total}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "на_проверке"}} active{{end}}" href="/?status=на_проверке" data-tooltip="Документы на проверке">На проверке ({{.Stats.Pending}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "действует"}} active{{end}}" href="/?status=действует" data-tooltip="Действующие документы">Действует ({{.Stats.Active}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "устарел"}} active{{end}}" href="/?status=устарел" data-tooltip="Устаревшие документы">Устарел ({{.Stats.Outdated}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "архив"}} active{{end}}" href="/?status=архив" data-tooltip="Архивные документы">Архив ({{.Stats.Archived}})</a>
-    <a class="filter-tab{{if eq .FilterStatus "отклонён"}} active{{end}}" href="/?status=отклонён" data-tooltip="Отклонённые документы">Отклонён ({{.Stats.Rejected}})</a>
-  </div>
-  <div class="search-box">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-    <form method="get" action="/">
-      <input type="hidden" name="status" value="{{.FilterStatus}}">
-      <input type="text" name="q" value="{{.Query}}" placeholder="Поиск по названию…" data-tooltip="Поиск документов по названию">
-    </form>
+    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/{{if .BaseQS}}?{{.BaseQS}}{{end}}" title="Все документы">Все ({{.Stats.Total}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "на_проверке"}} active{{end}}" href="/?status=на_проверке{{if .BaseQS}}&{{.BaseQS}}{{end}}" title="Документы, ожидающие проверки">На проверке ({{.Stats.Pending}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "действует"}} active{{end}}" href="/?status=действует{{if .BaseQS}}&{{.BaseQS}}{{end}}" title="Действующие документы (участвуют в поиске)">Действует ({{.Stats.Active}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "устарел"}} active{{end}}" href="/?status=устарел{{if .BaseQS}}&{{.BaseQS}}{{end}}" title="Устаревшие документы">Устарел ({{.Stats.Outdated}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "архив"}} active{{end}}" href="/?status=архив{{if .BaseQS}}&{{.BaseQS}}{{end}}" title="Архивные документы">Архив ({{.Stats.Archived}})</a>
+    <a class="filter-tab{{if eq .FilterStatus "отклонён"}} active{{end}}" href="/?status=отклонён{{if .BaseQS}}&{{.BaseQS}}{{end}}" title="Отклонённые документы">Отклонён ({{.Stats.Rejected}})</a>
   </div>
 </div>
+
+<form class="doc-filters" method="get" action="/">
+  <input type="hidden" name="status" value="{{.FilterStatus}}">
+  <div class="filter-field" style="flex:2;min-width:200px">
+    <label>Поиск по названию</label>
+    <input type="text" name="q" value="{{.Query}}" placeholder="Название документа…">
+  </div>
+  <div class="filter-field">
+    <label>Категория</label>
+    <select name="category">
+      <option value="">Все категории</option>
+      {{range .Categories}}<option value="{{.}}"{{if eq . $.FilterCategory}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label title="Когда запись обновлялась в базе">Обновлено от</label>
+    <input type="date" name="updated_from" value="{{.UpdatedFrom}}">
+  </div>
+  <div class="filter-field">
+    <label>Обновлено до</label>
+    <input type="date" name="updated_to" value="{{.UpdatedTo}}">
+  </div>
+  <div class="filter-field">
+    <label title="Дата публикации документа на сайте Сколково (есть не у всех)">Загружено на sk.ru от</label>
+    <input type="date" name="published_from" value="{{.PublishedFrom}}">
+  </div>
+  <div class="filter-field">
+    <label>Загружено на sk.ru до</label>
+    <input type="date" name="published_to" value="{{.PublishedTo}}">
+  </div>
+  <div class="filter-actions-inline">
+    <button type="submit" class="btn btn-primary btn-sm">Применить</button>
+    <a href="/" class="btn btn-ghost btn-sm">Сбросить</a>
+  </div>
+</form>
 
 {{if .Docs}}
 <div class="table-wrap">
@@ -634,7 +662,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <div class="doc-title">{{.Title}}</div>
       <div class="doc-meta">
-        {{if .SourceLinkURL}}<a href="{{.SourceLinkURL}}" target="_blank" rel="noopener" data-tooltip="Открыть источник документа">{{.SourceLinkText}}</a>{{end}}
+        {{if .SourceLinkURL}}<a href="{{.SourceLinkURL}}" target="_blank" rel="noopener" title="Открыть источник документа">{{.SourceLinkText}}</a>{{end}}
         <span class="id-code">{{.ID}}</span>
         {{if .PublishedAt}}<span>{{.PublishedAt.Format "02.01.2006"}}</span>{{end}}
         {{if .Supersedes}}<span>заменяет {{.Supersedes}}</span>{{end}}
@@ -643,21 +671,23 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <input type="text" value="{{.Category}}" placeholder="категория"
              onchange="saveCategory('{{.ID}}', this.value, this)"
-             style="width:140px" data-tooltip="Категория документа. Нажмите Enter или уйдите с поля для сохранения">
+             style="width:140px" title="Категория документа. Нажмите Enter или уйдите с поля для сохранения">
     </td>
     <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
     <td>
       {{if .LocalPath}}
-        <div class="file-ok"><span class="file-ok-icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>Файл загружен</div>
+        <div class="file-ok"><span class="file-ok-icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>Файл на сервере</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">{{.FileSize}} · {{.FileAge}}</div>
         <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">
-          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-ghost btn-sm" data-tooltip="Просмотреть исходный файл документа">Исходник</a>
-          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" data-tooltip="Скачать исходный файл документа">Скачать</a>
-          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" data-tooltip="Просмотреть обработанную версию (текст для RAG (поиск по векторам))">Обработанный</a>{{end}}
+          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-ghost btn-sm" title="Открыть файл в просмотрщике">Просмотр</a>
+          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" title="Скачать файл документа">Скачать</a>
+          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" title="Текст документа, как он проиндексирован для поиска">Текст для поиска</a>{{end}}
         </div>
       {{else}}
-        <div class="file-upload">
-          <input type="file" onchange="uploadFile('{{.ID}}', this)" style="max-width:140px;font-size:11px" data-tooltip="Выберите файл документа для загрузки">
+        {{if .WebURL}}<a href="{{.WebURL}}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" title="Открыть оригинал на сайте Сколково (откроется или скачается в вашем браузере)">Открыть на сайте ↗</a>{{end}}
+        <div style="font-size:11px;color:var(--text-secondary);margin-top:4px">файл не загружен на сервер</div>
+        <div class="file-upload" style="margin-top:4px">
+          <input type="file" onchange="uploadFile('{{.ID}}', this)" style="max-width:140px;font-size:11px" title="Прикрепить файл документа вручную">
         </div>
       {{end}}
     </td>
@@ -669,7 +699,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <div class="actions">
         <div class="action-row">
-          <select onchange="setStatus('{{.ID}}', this.value, this)" data-tooltip="Изменить статус документа. Только «действует» попадает в RAG (поиск по векторам)-поиск">
+          <select onchange="setStatus('{{.ID}}', this.value, this)" title="Изменить статус документа. Только «действует» попадает в RAG (поиск по векторам)-поиск">
             <option value="на_проверке" {{if eq .StatusStr "на_проверке"}}selected{{end}}>На проверке</option>
             <option value="действует" {{if eq .StatusStr "действует"}}selected{{end}}>Действует</option>
             <option value="устарел" {{if eq .StatusStr "устарел"}}selected{{end}}>Устарел</option>
@@ -680,14 +710,14 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="action-row">
           <input type="text" value="{{.Supersedes}}" placeholder="id заменяемого"
                  onchange="saveSupersedes('{{.ID}}', this.value, this)"
-                 style="flex:1;min-width:100px" data-tooltip="ID документа, который этот документ замещает">
-          <button class="btn btn-ghost btn-sm" onclick="saveSupersedes('{{.ID}}', this.previousElementSibling.value, this)" data-tooltip="Сохранить связь замещения">
+                 style="flex:1;min-width:100px" title="ID документа, который этот документ замещает">
+          <button class="btn btn-ghost btn-sm" onclick="saveSupersedes('{{.ID}}', this.previousElementSibling.value, this)" title="Сохранить связь замещения">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
           </button>
         </div>
         <div class="action-row">
-          {{if .Indexed}}<button class="btn btn-ghost btn-sm" onclick="deindexDoc('{{.ID}}')" data-tooltip="Удалить документ из RAG (поиск по векторам)-индекса (запись в реестре сохраняется)">Деиндекс</button>{{end}}
-          <button class="btn btn-danger btn-sm" onclick="deleteDoc('{{.ID}}')" data-tooltip="Безвозвратно удалить документ из реестра и индекса">Удалить</button>
+          {{if .Indexed}}<button class="btn btn-ghost btn-sm" onclick="deindexDoc('{{.ID}}')" title="Удалить документ из RAG (поиск по векторам)-индекса (запись в реестре сохраняется)">Деиндекс</button>{{end}}
+          <button class="btn btn-danger btn-sm" onclick="deleteDoc('{{.ID}}')" title="Безвозвратно удалить документ из реестра и индекса">Удалить</button>
         </div>
       </div>
     </td>
@@ -822,19 +852,19 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
     <h1>База Сколково</h1>
   </div>
   <div class="header-actions">
-    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
-    <a href="/diff" class="active-link" data-tooltip="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" data-tooltip="Граф связей между документами">Граф</a>
-    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
+    <a href="/" title="Список всех документов базы знаний">Документы</a>
+    <a href="/diff" class="active-link" title="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" title="Граф связей между документами">Граф</a>
+    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
     <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
-    <button onclick="runAction('index', this)" data-tooltip="Индексация в RAG (поиск по векторам)">Индексация</button>
-    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: документы + новости + индексация">Полный синк</button>
-    <button onclick="runAction('seed-local', this)" data-tooltip="Индекс структуры">Индекс структуры</button>
-    <button onclick="runAction('navindex', this)" data-tooltip="Пересобрать навигацию по сайту для чат-бота (get_navigation)">Навигация бота</button>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+    <button onclick="runAction('scrape', this)" title="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" title="Индексация в RAG (поиск по векторам)">Индексация</button>
+    <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">Полный синк</button>
+    <button onclick="runAction('seed-local', this)" title="Индекс структуры">Индекс структуры</button>
+    <button onclick="runAction('navindex', this)" title="Пересобрать навигацию по сайту для чат-бота (get_navigation)">Навигация бота</button>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
@@ -850,19 +880,19 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
     <div class="form-row">
       <div class="form-group">
         <label for="doc1">Документ 1</label>
-        <select name="doc1" id="doc1" required data-tooltip="Выберите первый документ для сравнения">
+        <select name="doc1" id="doc1" required title="Выберите первый документ для сравнения">
           <option value="">— выберите —</option>
           {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc1ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
         </select>
       </div>
       <div class="form-group">
         <label for="doc2">Документ 2</label>
-        <select name="doc2" id="doc2" required data-tooltip="Выберите второй документ для сравнения">
+        <select name="doc2" id="doc2" required title="Выберите второй документ для сравнения">
           <option value="">— выберите —</option>
           {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc2ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
         </select>
       </div>
-      <button type="submit" class="btn btn-primary" id="compareBtn" data-tooltip="Сравнить выбранные документы">
+      <button type="submit" class="btn btn-primary" id="compareBtn" title="Сравнить выбранные документы">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
         Сравнить
       </button>
@@ -1013,19 +1043,19 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
     <h1>База Сколково</h1>
   </div>
   <div class="header-actions">
-    <a href="/" data-tooltip="Список всех документов базы знаний">Документы</a>
-    <a href="/diff" data-tooltip="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" data-tooltip="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" class="active-link" data-tooltip="Граф связей между документами">Граф</a>
-    <a href="/clients" data-tooltip="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" data-tooltip="Настройка ИИ-моделей и агентов">ИИ</a>
+    <a href="/" title="Список всех документов базы знаний">Документы</a>
+    <a href="/diff" title="Сравнение версий документов">Сравнение</a>
+    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
+    <a href="/graph" class="active-link" title="Граф связей между документами">Граф</a>
+    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
+    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
     <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" data-tooltip="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
-    <button onclick="runAction('index', this)" data-tooltip="Индексация в RAG (поиск по векторам)">Индексация</button>
-    <button onclick="runAction('sync', this)" data-tooltip="Полный цикл: документы + новости + индексация">Полный синк</button>
-    <button onclick="runAction('seed-local', this)" data-tooltip="Индекс структуры">Индекс структуры</button>
-    <button onclick="runAction('navindex', this)" data-tooltip="Пересобрать навигацию по сайту для чат-бота (get_navigation)">Навигация бота</button>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему">
+    <button onclick="runAction('scrape', this)" title="Запустить парсинг RSS (каналы)">Парсинг RSS (каналы)</button>
+    <button onclick="runAction('index', this)" title="Индексация в RAG (поиск по векторам)">Индексация</button>
+    <button onclick="runAction('sync', this)" title="Полный цикл: документы + новости + индексация">Полный синк</button>
+    <button onclick="runAction('seed-local', this)" title="Индекс структуры">Индекс структуры</button>
+    <button onclick="runAction('navindex', this)" title="Пересобрать навигацию по сайту для чат-бота (get_navigation)">Навигация бота</button>
+    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
       <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
       <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
     </button>
@@ -1038,9 +1068,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
     Граф связей документов
   </h2>
   <div class="legend">
-    <div class="legend-item" data-tooltip="Документ ссылается на другой"><div class="legend-color" style="background:#2563eb"></div><span>Ссылается (references)</span></div>
-    <div class="legend-item" data-tooltip="Документ замещает другой (более новая версия)"><div class="legend-color" style="background:#dc2626"></div><span>Замещает (supersedes)</span></div>
-    <div class="legend-item" data-tooltip="Документы связаны по теме"><div class="legend-color" style="background:#16a34a"></div><span>Связано (related)</span></div>
+    <div class="legend-item" title="Документ ссылается на другой"><div class="legend-color" style="background:#2563eb"></div><span>Ссылается (references)</span></div>
+    <div class="legend-item" title="Документ замещает другой (более новая версия)"><div class="legend-color" style="background:#dc2626"></div><span>Замещает (supersedes)</span></div>
+    <div class="legend-item" title="Документы связаны по теме"><div class="legend-color" style="background:#16a34a"></div><span>Связано (related)</span></div>
   </div>
   <div id="graph-container"></div>
 </div>
@@ -1349,7 +1379,7 @@ document.addEventListener('DOMContentLoaded', function() {
     {{if .Stats.LastParse.IsZero}}
       <span class="time">ещё не выполнялся</span>
     {{else}}
-      <span class="time" data-tooltip="Когда последний раз успешно работал сбор данных">{{.Stats.LastParse.Format "02.01.2006 15:04"}}</span>
+      <span class="time" title="Когда последний раз успешно работал сбор данных">{{.Stats.LastParse.Format "02.01.2006 15:04"}}</span>
     {{end}}
   </div>
   <div style="font-size:12px;color:var(--text-secondary)">
@@ -1398,8 +1428,8 @@ document.addEventListener('DOMContentLoaded', function() {
         <input type="date" id="date_to" name="date_to" value="{{.DateTo}}">
       </div>
       <div class="filter-actions">
-        <button type="submit" class="btn btn-primary" data-tooltip="Применить фильтры">Применить</button>
-        <a href="/changes" class="btn btn-ghost" data-tooltip="Сбросить все фильтры">Сбросить</a>
+        <button type="submit" class="btn btn-primary" title="Применить фильтры">Применить</button>
+        <a href="/changes" class="btn btn-ghost" title="Сбросить все фильтры">Сбросить</a>
       </div>
     </div>
   </form>
@@ -1409,9 +1439,9 @@ document.addEventListener('DOMContentLoaded', function() {
 {{if .AllTags}}
 <div class="tag-bar">
   <span class="tag-bar-label">Теги:</span>
-  {{if .Tag}}<a class="tag-chip tag-reset" href="/changes{{if .BaseQS}}?{{.BaseQS}}{{end}}" data-tooltip="Сбросить фильтр по тегу">× {{.Tag}}</a>{{end}}
+  {{if .Tag}}<a class="tag-chip tag-reset" href="/changes{{if .BaseQS}}?{{.BaseQS}}{{end}}" title="Сбросить фильтр по тегу">× {{.Tag}}</a>{{end}}
   {{range .AllTags}}
-    <a class="tag-chip{{if eq .Name $.Tag}} active{{end}}" href="/changes?tag={{.Enc}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" data-tooltip="Фильтровать по тегу «{{.Name}}»">{{.Name}}<span class="tag-count">{{.Count}}</span></a>
+    <a class="tag-chip{{if eq .Name $.Tag}} active{{end}}" href="/changes?tag={{.Enc}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" title="Фильтровать по тегу «{{.Name}}»">{{.Name}}<span class="tag-count">{{.Count}}</span></a>
   {{end}}
 </div>
 {{end}}
@@ -1422,7 +1452,7 @@ document.addEventListener('DOMContentLoaded', function() {
   <div class="health-title">Свежесть источников</div>
   <div class="health-grid">
     {{range .Health}}
-    <div class="health-card health-{{.State}}" data-tooltip="Последнее успешное обновление: {{.LastSuccess}}">
+    <div class="health-card health-{{.State}}" title="Последнее успешное обновление: {{.LastSuccess}}">
       <div class="health-dot"></div>
       <div class="health-body">
         <div class="health-name">{{.Label}}</div>
@@ -1452,11 +1482,11 @@ document.addEventListener('DOMContentLoaded', function() {
   <tbody>
   {{range .Rows}}
   <tr>
-    <td style="white-space:nowrap;font-size:12px" data-tooltip="{{.Event.DetectedAt.Format "02.01.2006 15:04:05"}}">
+    <td style="white-space:nowrap;font-size:12px" title="{{.Event.DetectedAt.Format "02.01.2006 15:04:05"}}">
       {{.Event.DetectedAt.Format "02.01 15:04"}}
     </td>
     <td>
-      <span class="kind-badge kind-{{.Event.Kind}}" data-tooltip="
+      <span class="kind-badge kind-{{.Event.Kind}}" title="
         {{if eq .Event.Kind "new"}}Сущность впервые появилась в базе
         {{else if eq .Event.Kind "updated"}}Содержимое или метаданные изменились
         {{else if eq .Event.Kind "outdated"}}Сущность переведена в статус «устарела»
@@ -1469,13 +1499,13 @@ document.addEventListener('DOMContentLoaded', function() {
     <td>
       <div style="font-weight:600;font-size:13px">{{.Event.Title}}</div>
       {{if .Event.Summary}}<div style="font-size:11px;color:var(--text-secondary);margin-top:4px">{{.Event.Summary}}</div>{{end}}
-      {{if .Tags}}<div class="row-tags">{{range .Tags}}<a class="tag-chip mini{{if eq . $.Tag}} active{{end}}" href="/changes?tag={{. | urlquery}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" data-tooltip="Фильтровать по тегу «{{.}}»">{{.}}</a>{{end}}</div>{{end}}
+      {{if .Tags}}<div class="row-tags">{{range .Tags}}<a class="tag-chip mini{{if eq . $.Tag}} active{{end}}" href="/changes?tag={{. | urlquery}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" title="Фильтровать по тегу «{{.}}»">{{.}}</a>{{end}}</div>{{end}}
       <div style="font-size:10px;color:var(--text-secondary);margin-top:2px;font-family:monospace">{{.Event.EntityID}}</div>
     </td>
     <td style="font-size:12px">{{if .Event.Category}}{{.Event.Category}}{{else}}—{{end}}</td>
     <td>
-      {{if eq .Event.EntityType "sitepage"}}<a href="/sitepages/{{.Event.EntityID}}" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть страницу в просмотрщике">просмотр</a><br>{{end}}
-      {{if .Event.SourceURL}}<a href="{{.Event.SourceURL}}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary)" data-tooltip="Открыть источник">источник ↗</a>{{else}}—{{end}}
+      {{if eq .Event.EntityType "sitepage"}}<a href="/sitepages/{{.Event.EntityID}}" style="font-size:12px;color:var(--primary)" title="Открыть страницу в просмотрщике">просмотр</a><br>{{end}}
+      {{if .Event.SourceURL}}<a href="{{.Event.SourceURL}}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary)" title="Открыть источник">источник ↗</a>{{else}}—{{end}}
     </td>
   </tr>
   {{end}}
@@ -1597,7 +1627,7 @@ tbody tr:hover { background: var(--surface-alt); }
     <a href="/clients">Клиенты</a>
     <div class="header-divider"></div>
     <a href="/logout" style="padding:5px 10px">Выход</a>
-    <button class="theme-btn header-actions-btn" onclick="spToggleTheme()" data-tooltip="Переключить тему">
+    <button class="theme-btn header-actions-btn" onclick="spToggleTheme()" title="Переключить тему">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
     </button>
   </div>
@@ -1628,7 +1658,7 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
 <div class="parse-info">
   <div>
     <span class="label">Последний обход сайта:</span>
-    {{if .LastCrawl.IsZero}}<span class="time">ещё не выполнялся</span>{{else}}<span class="time" data-tooltip="Когда краулер последний раз успешно прошёл по сайту">{{.LastCrawl.Format "02.01.2006 15:04"}}</span>{{end}}
+    {{if .LastCrawl.IsZero}}<span class="time">ещё не выполнялся</span>{{else}}<span class="time" title="Когда краулер последний раз успешно прошёл по сайту">{{.LastCrawl.Format "02.01.2006 15:04"}}</span>{{end}}
   </div>
   <div style="font-size:12px;color:var(--text-secondary)">Показано страниц: <strong>{{.Total}}</strong></div>
 </div>
@@ -1692,14 +1722,14 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
   <tr>
     <td style="font-size:12px;color:var(--text-secondary)">{{if .Section}}{{.Section}}{{else}}—{{end}}</td>
     <td>
-      <div style="font-weight:600"><a href="/sitepages/{{.ID}}" data-tooltip="Открыть в просмотрщике">{{.Title}}</a></div>
+      <div style="font-weight:600"><a href="/sitepages/{{.ID}}" title="Открыть в просмотрщике">{{.Title}}</a></div>
       <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">{{.URL}}</div>
     </td>
     <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
-    <td style="font-size:12px;white-space:nowrap" data-tooltip="{{.LastChanged.Format "02.01.2006 15:04:05"}}">{{.LastChanged.Format "02.01.2006"}}</td>
+    <td style="font-size:12px;white-space:nowrap" title="{{.LastChanged.Format "02.01.2006 15:04:05"}}">{{.LastChanged.Format "02.01.2006"}}</td>
     <td>
-      <a class="act-link" href="/sitepages/{{.ID}}" data-tooltip="Прочитать сохранённую информацию">Просмотр</a>
-      <a class="act-link" href="{{.URL}}" target="_blank" rel="noopener" data-tooltip="Открыть страницу на сайте Сколково">На сайте ↗</a>
+      <a class="act-link" href="/sitepages/{{.ID}}" title="Прочитать сохранённую информацию">Просмотр</a>
+      <a class="act-link" href="{{.URL}}" target="_blank" rel="noopener" title="Открыть страницу на сайте Сколково">На сайте ↗</a>
     </td>
   </tr>
   {{end}}
@@ -1734,11 +1764,11 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
 </html>{{end}}
 
 {{define "sitepage-view-content"}}
-<div style="margin-bottom:16px"><a href="/sitepages" class="btn btn-ghost" data-tooltip="Вернуться к списку страниц">← К списку страниц</a></div>
+<div style="margin-bottom:16px"><a href="/sitepages" class="btn btn-ghost" title="Вернуться к списку страниц">← К списку страниц</a></div>
 <div class="breadcrumb">{{if .Section}}{{.Section}}{{else}}Главная{{end}}</div>
 <div class="card-head">
   <h2>{{.Title}}</h2>
-  <a class="open-site" href="{{.URL}}" target="_blank" rel="noopener" data-tooltip="Открыть оригинал на сайте Сколково и прочитать всё там">Открыть на сайте Сколково ↗</a>
+  <a class="open-site" href="{{.URL}}" target="_blank" rel="noopener" title="Открыть оригинал на сайте Сколково и прочитать всё там">Открыть на сайте Сколково ↗</a>
 </div>
 <div class="page-meta">
   <span>Статус: <b>{{.StatusLabel}}</b></span>

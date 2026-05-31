@@ -64,13 +64,15 @@ type Crawler struct {
 }
 
 // New создаёт краулер с разумными значениями по умолчанию.
+// MaxPages = 0 означает «без лимита» (обход ограничен только числом уникальных
+// страниц в пределах разрешённых хостов).
 func New(seeds []string, st Store) *Crawler {
 	return &Crawler{
 		Seeds:    seeds,
 		Store:    st,
 		HTTP:     &http.Client{Timeout: 60 * time.Second},
 		Delay:    3 * time.Second,
-		MaxPages: 300,
+		MaxPages: 0,
 	}
 }
 
@@ -115,9 +117,7 @@ func (c *Crawler) timeout() time.Duration {
 // Run обходит сайт начиная со стартовых URL в пределах их хостов и возвращает отчёт.
 func (c *Crawler) Run(ctx context.Context) (*Report, error) {
 	rep := &Report{StartedAt: time.Now()}
-	if c.MaxPages <= 0 {
-		c.MaxPages = 300
-	}
+	unlimited := c.MaxPages <= 0 // 0 = без лимита страниц
 
 	// Допустимые хосты — хосты стартовых URL.
 	allowedHosts := map[string]bool{}
@@ -137,7 +137,7 @@ func (c *Crawler) Run(ctx context.Context) (*Report, error) {
 	}
 
 	visited := map[string]bool{}
-	for len(queue) > 0 && rep.Visited < c.MaxPages {
+	for len(queue) > 0 && (unlimited || rep.Visited < c.MaxPages) {
 		select {
 		case <-ctx.Done():
 			return rep, ctx.Err()

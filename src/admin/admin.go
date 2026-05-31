@@ -171,6 +171,7 @@ type docView struct {
 	FileAge        string // время загрузки ("2 часа назад", "3 дня назад")
 	SourceLinkURL  string // URL для кнопки «источник»: /api/proxy-source?id=... или SourceURL
 	SourceLinkText string // подпись ссылки: «источник» или «источник (локальный)»
+	WebURL         string // прямая http(s)-ссылка на оригинал (для «Открыть на сайте»); пусто для file://
 }
 
 // stats — сводка по реестру.
@@ -179,19 +180,26 @@ type stats struct {
 }
 
 type pageData struct {
-	Docs         []docView
-	Stats        stats
-	Query        string
-	Flash        string
-	FlashKind    string
-	FilterStatus string
-	Tab          string
-	Settings     model.SchedulerSettings
-	Reports      []model.CollectorReport
-	Validation   *model.ValidationReport
-	NextRunStr   string
-	CurrentUser  *AdminSession
-	PendingCount int // количество документов «на проверке» для кнопки «Одобрить все»
+	Docs           []docView
+	Stats          stats
+	Query          string
+	Flash          string
+	FlashKind      string
+	FilterStatus   string
+	FilterCategory string   // выбранная категория
+	UpdatedFrom    string   // fetched_at от (YYYY-MM-DD)
+	UpdatedTo      string   // fetched_at до
+	PublishedFrom  string   // published_at (загрузка на sk.ru) от
+	PublishedTo    string   // published_at до
+	Categories     []string // список категорий для выпадающего фильтра
+	BaseQS         string   // прочие фильтры без status — для ссылок-вкладок статусов
+	Tab            string
+	Settings       model.SchedulerSettings
+	Reports        []model.CollectorReport
+	Validation     *model.ValidationReport
+	NextRunStr     string
+	CurrentUser    *AdminSession
+	PendingCount   int // количество документов «на проверке» для кнопки «Одобрить все»
 }
 
 // loginPageData — данные для страницы входа.
@@ -526,16 +534,63 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	status := model.Status(r.URL.Query().Get("status"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	updatedFrom := r.URL.Query().Get("updated_from")
+	updatedTo := r.URL.Query().Get("updated_to")
+	publishedFrom := r.URL.Query().Get("published_from")
+	publishedTo := r.URL.Query().Get("published_to")
+
+	// parseDay разбирает YYYY-MM-DD в локальной зоне (end=true — конец дня).
+	parseDay := func(v string, end bool) time.Time {
+		if v == "" {
+			return time.Time{}
+		}
+		layout, val := "2006-01-02", v
+		if end {
+			layout, val = "2006-01-02 15:04", v+" 23:59"
+		}
+		t, err := time.ParseInLocation(layout, val, time.Local)
+		if err != nil {
+			return time.Time{}
+		}
+		return t
+	}
+	updFrom, updTo := parseDay(updatedFrom, false), parseDay(updatedTo, true)
+	pubFrom, pubTo := parseDay(publishedFrom, false), parseDay(publishedTo, true)
+
 	var docs []docView
+	categorySet := map[string]bool{}
 	if tab == "documents" {
-		allDocs, err := s.store.List(r.Context(), store.Filter{Status: status})
+		allDocs, err := s.store.List(r.Context(), store.Filter{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		docs = make([]docView, 0, len(allDocs))
+		qLower := strings.ToLower(query)
 		for _, d := range allDocs {
-			if query != "" && !strings.Contains(strings.ToLower(d.Title), strings.ToLower(query)) {
+			if d.Category != "" {
+				categorySet[d.Category] = true
+			}
+			if status != "" && d.Status != status {
+				continue
+			}
+			if query != "" && !strings.Contains(strings.ToLower(d.Title), qLower) {
+				continue
+			}
+			if category != "" && d.Category != category {
+				continue
+			}
+			if !updFrom.IsZero() && d.FetchedAt.Before(updFrom) {
+				continue
+			}
+			if !updTo.IsZero() && d.FetchedAt.After(updTo) {
+				continue
+			}
+			if !pubFrom.IsZero() && (d.PublishedAt == nil || d.PublishedAt.Before(pubFrom)) {
+				continue
+			}
+			if !pubTo.IsZero() && (d.PublishedAt == nil || d.PublishedAt.After(pubTo)) {
 				continue
 			}
 			v := docView{Document: d, StatusStr: string(d.Status)}
@@ -544,7 +599,28 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				v.FileAge = humanTimeAgo(d.FetchedAt)
 			}
 			v.SourceLinkURL, v.SourceLinkText = makeSourceLink(d.ID, d.SourceURL, d.LocalPath)
+			if strings.HasPrefix(d.SourceURL, "http://") || strings.HasPrefix(d.SourceURL, "https://") {
+				v.WebURL = d.SourceURL
+			}
 			docs = append(docs, v)
+		}
+	}
+
+	categories := make([]string, 0, len(categorySet))
+	for c := range categorySet {
+		categories = append(categories, c)
+	}
+	sort.Strings(categories)
+
+	// base — прочие фильтры (без status) для ссылок-вкладок статусов.
+	base := url.Values{}
+	for k, v := range map[string]string{
+		"q": query, "category": category,
+		"updated_from": updatedFrom, "updated_to": updatedTo,
+		"published_from": publishedFrom, "published_to": publishedTo,
+	} {
+		if v != "" {
+			base.Set(k, v)
 		}
 	}
 
@@ -580,19 +656,26 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{
-		Docs:         docs,
-		Stats:        st,
-		Query:        query,
-		Flash:        r.URL.Query().Get("msg"),
-		FlashKind:    orDefault(r.URL.Query().Get("kind"), "ok"),
-		FilterStatus: string(status),
-		Tab:          tab,
-		Settings:     settings,
-		Reports:      reports,
-		Validation:   valRep,
-		NextRunStr:   nextRunStr,
-		CurrentUser:  sessionFromContext(r),
-		PendingCount: st.Pending,
+		Docs:           docs,
+		Stats:          st,
+		Query:          query,
+		Flash:          r.URL.Query().Get("msg"),
+		FlashKind:      orDefault(r.URL.Query().Get("kind"), "ok"),
+		FilterStatus:   string(status),
+		FilterCategory: category,
+		UpdatedFrom:    updatedFrom,
+		UpdatedTo:      updatedTo,
+		PublishedFrom:  publishedFrom,
+		PublishedTo:    publishedTo,
+		Categories:     categories,
+		BaseQS:         base.Encode(),
+		Tab:            tab,
+		Settings:       settings,
+		Reports:        reports,
+		Validation:     valRep,
+		NextRunStr:     nextRunStr,
+		CurrentUser:    sessionFromContext(r),
+		PendingCount:   st.Pending,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2897,7 +2980,9 @@ func makeSourceLink(id, sourceURL, localPath string) (linkURL, linkText string) 
 		return "", ""
 	}
 	if strings.HasPrefix(sourceURL, "http://") || strings.HasPrefix(sourceURL, "https://") {
-		return "/documents/" + id + "/source", "источник"
+		// Прямая ссылка на оригинал — открывается в браузере пользователя.
+		// Серверный прокси бесполезен без доступа сервера к источнику (WAF/гео) — 502.
+		return sourceURL, "открыть на сайте ↗"
 	}
 	return sourceURL, "источник"
 }

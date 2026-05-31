@@ -208,7 +208,7 @@ func Load() Config {
 		// Страницы публичного сайта
 		SitePagesEnabled:  envBool("SITEPAGES_ENABLED", true),
 		SitePagesSeeds:    env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
-		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 300),
+		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 0), // 0 = без лимита
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),

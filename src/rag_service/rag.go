@@ -20,7 +20,10 @@ import (
 const (
 	chunkSize    = 1200
 	chunkOverlap = 150
-	embedBatch   = 16
+	// embedBatch — число чанков в одном запросе к TEI. Малый батч (4), т.к. TEI
+	// (CPU multilingual-e5) отдаёт 413, если суммарный размер батча велик — это
+	// било индексацию текста крупных PDF. См. embedChunksResilient.
+	embedBatch = 4
 )
 
 // Service связывает реестр документов, эмбеддинги и Qdrant.
@@ -107,35 +110,26 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 		return 0, fmt.Errorf("очистка старых точек: %w", err)
 	}
 
+	okChunks, vecs := s.embedChunksResilient(ctx, chunks)
+	if len(okChunks) == 0 {
+		return 0, fmt.Errorf("эмбеддинги: ни один чанк не удалось закодировать (%d чанков)", len(chunks))
+	}
 	var points []qdrant.Point
-	for start := 0; start < len(chunks); start += embedBatch {
-		end := min(start+embedBatch, len(chunks))
-		batch := chunks[start:end]
-
-		inputs := make([]string, len(batch))
-		for i, c := range batch {
-			inputs[i] = embed.PrefixPassage + c
-		}
-		vecs, err := s.Emb.Embed(ctx, inputs)
-		if err != nil {
-			return 0, fmt.Errorf("эмбеддинги: %w", err)
-		}
-		for i, v := range vecs {
-			points = append(points, qdrant.Point{
-				ID:     uuid.NewString(),
-				Vector: v,
-				Payload: map[string]any{
-					"document_id": doc.ID,
-					"title":       doc.Title,
-					"source_url":  doc.SourceURL,
-					"category":    doc.Category,
-					"status":      string(doc.Status),
-					"entity_type": "document",
-					"chunk_index": start + i,
-					"text":        batch[i],
-				},
-			})
-		}
+	for i, v := range vecs {
+		points = append(points, qdrant.Point{
+			ID:     uuid.NewString(),
+			Vector: v,
+			Payload: map[string]any{
+				"document_id": doc.ID,
+				"title":       doc.Title,
+				"source_url":  doc.SourceURL,
+				"category":    doc.Category,
+				"status":      string(doc.Status),
+				"entity_type": "document",
+				"chunk_index": i,
+				"text":        okChunks[i],
+			},
+		})
 	}
 
 	if err := s.Qdr.Upsert(ctx, points); err != nil {
@@ -145,6 +139,35 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 		return 0, err
 	}
 	return len(points), nil
+}
+
+// embedChunksResilient кодирует чанки в эмбеддинги батчами по embedBatch. Если
+// батч не прошёл (например, TEI вернул 413 на крупном тексте), батч дробится по
+// одному чанку; одиночный непроходимый чанк пропускается, чтобы документ всё
+// равно проиндексировался. Возвращает успешно закодированные чанки и их векторы
+// (выровненные по индексам). Так одна проблема не теряет весь документ.
+func (s *Service) embedChunksResilient(ctx context.Context, chunks []string) (okChunks []string, vecs [][]float32) {
+	for start := 0; start < len(chunks); start += embedBatch {
+		end := min(start+embedBatch, len(chunks))
+		batch := chunks[start:end]
+		inputs := make([]string, len(batch))
+		for i, c := range batch {
+			inputs[i] = embed.PrefixPassage + c
+		}
+		if bv, err := s.Emb.Embed(ctx, inputs); err == nil && len(bv) == len(batch) {
+			okChunks = append(okChunks, batch...)
+			vecs = append(vecs, bv...)
+			continue
+		}
+		// Батч не прошёл — пробуем каждый чанк по отдельности, пропуская сбойные.
+		for _, c := range batch {
+			if one, err := s.Emb.Embed(ctx, []string{embed.PrefixPassage + c}); err == nil && len(one) == 1 {
+				okChunks = append(okChunks, c)
+				vecs = append(vecs, one[0])
+			}
+		}
+	}
+	return okChunks, vecs
 }
 
 // EntityDoc — произвольная сущность (мероприятие, конкурс, FAQ и т.п.) для

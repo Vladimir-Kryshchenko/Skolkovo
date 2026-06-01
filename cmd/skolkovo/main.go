@@ -633,6 +633,10 @@ func cmdCrawl(cfg config.Config) error {
 	return nil
 }
 
+// cmdFetch скачивает тела файлов dochub. Основной путь — по сессионной куке
+// (env DOCHUB_COOKIE или сохранённая в админке): обычный HTTP без браузера и
+// прокси, обходит WAF. FETCH_LIMIT ограничивает число файлов за прогон (0 — все).
+// Скачанные регистрируются «на_проверке»; индексируются после одобрения.
 func cmdFetch(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)
@@ -641,13 +645,47 @@ func cmdFetch(cfg config.Config) error {
 	}
 	defer st.Close()
 
+	svc := newRAG(cfg, st, nil)
+
+	cookie := cfg.DochubCookie
+	if cookie == "" {
+		cookie = admin.LoadDochubCookie(cfg.DocsDir)
+	}
+	if cookie != "" {
+		f, err := fetcher.New("", "", cfg.FetchWait, nil) // без Chrome и без прокси
+		if err != nil {
+			return err
+		}
+		applyFetchProfile(f, cfg)
+		f.Cookie = cookie
+		// Возобновляемость: не качаем то, что уже скачано (есть файл на диске).
+		f.SkipURL = func(u string) bool {
+			if d, derr := st.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+				if _, serr := os.Stat(d.LocalPath); serr == nil {
+					return true
+				}
+			}
+			return false
+		}
+		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
+		fmt.Println("Скачивание тел файлов dochub по куке (без браузера и прокси). Темп щадящий — займёт время…")
+		docs, errs := f.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
+			func(m string) { fmt.Println("  " + m) })
+		n := registerCookieDocs(ctx, st, svc, docs)
+		fmt.Printf("Готово: скачано файлов %d, в реестр %d, ошибок %d (часть — «мёртвые» дубли /m/docs/, это норма)\n", len(docs), n, len(errs))
+		if len(docs) == 0 && len(errs) > 0 {
+			fmt.Println("0 файлов — вероятно, кука dochub протухла. Обновите её (админка /proxy или DOCHUB_COOKIE).")
+		}
+		return nil
+	}
+
+	// Фоллбэк: старый headless+прокси путь (обычно блокируется WAF).
+	fmt.Println("DOCHUB_COOKIE не задана — пробую headless+прокси (обычно блокируется WAF). Надёжнее задать куку в админке /proxy.")
 	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
 	if err != nil {
 		return err
 	}
 	applyFetchProfile(f, cfg)
-
-	svc := newRAG(cfg, st, nil)
 	indexFn := func(ctx context.Context, id string) error {
 		if err := svc.Init(ctx); err != nil {
 			return err
@@ -655,7 +693,6 @@ func cmdFetch(cfg config.Config) error {
 		_, err := svc.IndexDocument(ctx, id)
 		return err
 	}
-
 	done, errs := f.EnrichMissing(ctx, st, cfg.DocsDir, cfg.FetchLimit, indexFn)
 	fmt.Printf("Загрузка файлов: скачано %d, ошибок %d\n", done, len(errs))
 	for _, e := range errs {

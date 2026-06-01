@@ -76,6 +76,14 @@ func (f *Fetcher) CollectViaCookie(ctx context.Context, baseURL string, cats []C
 				}
 				seen[d.Link] = true
 
+				// Возобновляемость: пропускаем уже скачанные ранее файлы.
+				if f.SkipURL != nil && f.SkipURL(d.Link) {
+					if tkey := strings.ToLower(cleanCatalogTitle(d.Title)); tkey != "" {
+						okTitles[tkey] = true // и его дубль больше не трогаем
+					}
+					continue
+				}
+
 				// Дедуп по заголовку: если файл с таким названием уже скачан
 				// (часто документ залит дважды — рабочая ссылка + «мёртвый» дубль),
 				// второй не трогаем — не качаем повторно и не шумим 403-ошибкой.

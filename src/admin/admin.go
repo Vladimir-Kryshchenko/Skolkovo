@@ -1106,6 +1106,15 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			f.Cookie = cookie
+			// Возобновляемость: пропускаем уже скачанные файлы (есть на диске).
+			f.SkipURL = func(u string) bool {
+				if d, derr := s.store.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+					if _, serr := os.Stat(d.LocalPath); serr == nil {
+						return true
+					}
+				}
+				return false
+			}
 			cats := make([]fetcher.CategorySpec, 0, len(scraper.CategoryNames))
 			for slug, name := range scraper.CategoryNames {
 				cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})

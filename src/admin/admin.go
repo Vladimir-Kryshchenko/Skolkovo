@@ -1120,9 +1120,15 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 				cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})
 			}
 			outDir := filepath.Join(s.docsDir, "На_проверке", "Загружено")
+			byTitle := s.cookieTitleIndex(ctx) // индекс для реконсиляции, строим один раз
+			added := 0
 			docs, errs := f.CollectViaCookie(ctx, s.sourceURL, cats, outDir, 0,
-				func(m string) { log.Printf("[admin/api] %s", m) })
-			added := s.registerCookieDocs(ctx, docs)
+				func(m string) { log.Printf("[admin/api] %s", m) },
+				func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+					if s.registerOneCookieDoc(ctx, cd, byTitle) {
+						added++
+					}
+				})
 			log.Printf("[admin/api] скачивание по куке завершено: файлов %d, в реестр %d, ошибок %d (часть ошибок — «мёртвые» дубли /m/docs/, это норма)", len(docs), added, len(errs))
 			// Фиксируем результат в мониторинге свежести, чтобы провал (например,
 			// протухшая кука → 403 на всё) был виден в админке, а не только в логах.
@@ -1158,67 +1164,62 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, true, "Кука dochub не задана — пробую headless+прокси (обычно блокируется WAF). Надёжный способ: задайте куку на странице «Прокси».", "")
 }
 
-// registerCookieDocs регистрирует скачанные по куке файлы как документы реестра.
-// Реконсиляция, чтобы не плодить дубли: 1) если запись с этим download-URL уже
-// есть — обновляем файл; 2) если есть документ с тем же заголовком без файла
-// (например, из RSS-каталога) — прикрепляем файл к нему; 3) иначе создаём новую
-// запись «на проверке». Возвращает число добавленных/обновлённых.
-func (s *Server) registerCookieDocs(ctx context.Context, docs []fetcher.CookieDoc) int {
-	if len(docs) == 0 {
-		return 0
-	}
+// cookieTitleIndex один раз строит индекс «нормализованный заголовок → документ»
+// для реконсиляции скачанных файлов с записями каталога (без файла).
+func (s *Server) cookieTitleIndex(ctx context.Context) map[string]model.Document {
 	existing, _ := s.store.List(ctx, store.Filter{})
-	byTitle := make(map[string]model.Document, len(existing))
+	idx := make(map[string]model.Document, len(existing))
 	for _, d := range existing {
 		if k := cookieDocTitleKey(d.Title); k != "" {
-			byTitle[k] = d
+			idx[k] = d
 		}
 	}
-	var n int
-	for _, cd := range docs {
-		id := scraper.DocID(cd.URL)
-		// 1) Уже есть запись с этим download-URL.
-		if doc, err := s.store.Get(ctx, id); err == nil {
-			doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
-			if doc.Category == "" {
-				doc.Category = cd.Category
-			}
-			if s.store.Upsert(ctx, doc) == nil {
-				n++
-				s.maybeReindex(doc)
-			}
-			continue
-		}
-		// 2) Реконсиляция по заголовку с RSS-записью без файла.
-		if k := cookieDocTitleKey(cd.Title); k != "" {
-			if ex, ok := byTitle[k]; ok && ex.LocalPath == "" {
-				ex.LocalPath, ex.FileHash, ex.Indexed = cd.LocalPath, cd.Hash, false
-				if ex.Category == "" {
-					ex.Category = cd.Category
-				}
-				if s.store.Upsert(ctx, ex) == nil {
-					n++
-					s.maybeReindex(ex)
-				}
-				continue
-			}
-		}
-		// 3) Новая запись. Утратившие силу — сразу «устарел» (не в RAG как активные).
-		status := model.StatusPending
-		if cd.Category == scraper.CategoryNames["unactual_documents"] ||
-			strings.Contains(strings.ToUpper(cd.Title), "УТРАТИЛ") {
-			status = model.StatusOutdated
-		}
-		doc := model.Document{
-			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
-			LocalPath: cd.LocalPath, FileHash: cd.Hash,
-			Status: status, FetchedAt: time.Now(),
+	return idx
+}
+
+// registerOneCookieDoc регистрирует ОДИН скачанный файл (инкрементально, по мере
+// скачивания — чтобы прогресс не терялся при обрыве). Реконсиляция, чтобы не
+// плодить дубли: 1) запись с этим download-URL уже есть — обновляем файл;
+// 2) есть документ с тем же заголовком без файла — прикрепляем к нему; 3) иначе
+// создаём новую запись (утратившие силу — «устарел», иначе «на_проверке»).
+// Возвращает true, если запись добавлена/обновлена.
+func (s *Server) registerOneCookieDoc(ctx context.Context, cd fetcher.CookieDoc, byTitle map[string]model.Document) bool {
+	id := scraper.DocID(cd.URL)
+	if doc, err := s.store.Get(ctx, id); err == nil {
+		doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+		if doc.Category == "" {
+			doc.Category = cd.Category
 		}
 		if s.store.Upsert(ctx, doc) == nil {
-			n++
+			s.maybeReindex(doc)
+			return true
+		}
+		return false
+	}
+	if k := cookieDocTitleKey(cd.Title); k != "" {
+		if ex, ok := byTitle[k]; ok && ex.LocalPath == "" {
+			ex.LocalPath, ex.FileHash, ex.Indexed = cd.LocalPath, cd.Hash, false
+			if ex.Category == "" {
+				ex.Category = cd.Category
+			}
+			if s.store.Upsert(ctx, ex) == nil {
+				s.maybeReindex(ex)
+				return true
+			}
+			return false
 		}
 	}
-	return n
+	status := model.StatusPending
+	if cd.Category == scraper.CategoryNames["unactual_documents"] ||
+		strings.Contains(strings.ToUpper(cd.Title), "УТРАТИЛ") {
+		status = model.StatusOutdated
+	}
+	doc := model.Document{
+		ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+		LocalPath: cd.LocalPath, FileHash: cd.Hash,
+		Status: status, FetchedAt: time.Now(),
+	}
+	return s.store.Upsert(ctx, doc) == nil
 }
 
 // maybeReindex переиндексирует документ, если он действует и RAG подключён

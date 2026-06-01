@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"os"
 	"path/filepath"
 
 	"baza-skolkovo/src/admin"
@@ -10,6 +11,7 @@ import (
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/fetcher"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/scraper"
 )
 
 // headlessCollect выполняет headless-обход сайта (обход WAF) и скачивание
@@ -37,9 +39,23 @@ func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc
 		applyFetchProfile(cf, cfg)
 		cf.Cookie = cookie
 		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
+		// Возобновляемость: не качаем уже скачанное.
+		cf.SkipURL = func(u string) bool {
+			if d, derr := st.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+				if _, serr := os.Stat(d.LocalPath); serr == nil {
+					return true
+				}
+			}
+			return false
+		}
+		n := 0
 		docs, errs := cf.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
-			func(m string) { log.Printf("[collect] %s", m) })
-		n := registerCookieDocs(ctx, st, svc, docs)
+			func(m string) { log.Printf("[collect] %s", m) },
+			func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+				if registerOneCookieDocCmd(ctx, st, svc, cd) {
+					n++
+				}
+			})
 		log.Printf("[collect] по куке dochub: скачано файлов %d, в реестр %d, ошибок %d", len(docs), n, len(errs))
 		return len(docs), n, nil
 	}

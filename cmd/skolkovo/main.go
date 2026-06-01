@@ -556,32 +556,39 @@ func upsertCatalogItems(ctx context.Context, st store.Store, items []fetcher.Cat
 func registerCookieDocs(ctx context.Context, st store.Store, svc *rag.Service, docs []fetcher.CookieDoc) int {
 	var n int
 	for _, cd := range docs {
-		id := scraper.DocID(cd.URL)
-		if doc, err := st.Get(ctx, id); err == nil {
-			doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
-			if doc.Category == "" {
-				doc.Category = cd.Category
-			}
-			if st.Upsert(ctx, doc) == nil {
-				n++
-				if svc != nil && doc.Status == model.StatusActive {
-					if svc.Init(ctx) == nil {
-						_, _ = svc.IndexDocument(ctx, id)
-					}
-				}
-			}
-			continue
-		}
-		doc := model.Document{
-			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
-			LocalPath: cd.LocalPath, FileHash: cd.Hash,
-			Status: cookieDocStatus(cd.Title, cd.Category), FetchedAt: time.Now(),
-		}
-		if st.Upsert(ctx, doc) == nil {
+		if registerOneCookieDocCmd(ctx, st, svc, cd) {
 			n++
 		}
 	}
 	return n
+}
+
+// registerOneCookieDocCmd регистрирует один скачанный файл (инкрементально):
+// обновляет существующую запись по download-URL либо создаёт новую с верным
+// статусом; действующие сразу переиндексирует. Возвращает true при успехе.
+func registerOneCookieDocCmd(ctx context.Context, st store.Store, svc *rag.Service, cd fetcher.CookieDoc) bool {
+	id := scraper.DocID(cd.URL)
+	if doc, err := st.Get(ctx, id); err == nil {
+		doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+		if doc.Category == "" {
+			doc.Category = cd.Category
+		}
+		if st.Upsert(ctx, doc) == nil {
+			if svc != nil && doc.Status == model.StatusActive {
+				if svc.Init(ctx) == nil {
+					_, _ = svc.IndexDocument(ctx, id)
+				}
+			}
+			return true
+		}
+		return false
+	}
+	doc := model.Document{
+		ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+		LocalPath: cd.LocalPath, FileHash: cd.Hash,
+		Status: cookieDocStatus(cd.Title, cd.Category), FetchedAt: time.Now(),
+	}
+	return st.Upsert(ctx, doc) == nil
 }
 
 // cookieDocStatus определяет статус нового документа: «устарел» для категории
@@ -678,10 +685,15 @@ func cmdFetch(cfg config.Config) error {
 			return false
 		}
 		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
-		fmt.Println("Скачивание тел файлов dochub по куке (без браузера и прокси). Темп щадящий — займёт время…")
+		fmt.Println("Скачивание тел файлов dochub по куке (без браузера и прокси)…")
+		n := 0
 		docs, errs := f.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
-			func(m string) { fmt.Println("  " + m) })
-		n := registerCookieDocs(ctx, st, svc, docs)
+			func(m string) { fmt.Println("  " + m) },
+			func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+				if registerOneCookieDocCmd(ctx, st, svc, cd) {
+					n++
+				}
+			})
 		fmt.Printf("Готово: скачано файлов %d, в реестр %d, ошибок %d (часть — «мёртвые» дубли /m/docs/, это норма)\n", len(docs), n, len(errs))
 		if len(docs) == 0 && len(errs) > 0 {
 			fmt.Println("0 файлов — вероятно, кука dochub протухла. Обновите её (админка /proxy или DOCHUB_COOKIE).")

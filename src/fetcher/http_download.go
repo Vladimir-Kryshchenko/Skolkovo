@@ -42,7 +42,10 @@ type CookieDoc struct {
 // прокси. Между файлами «человеческие» паузы (ServicePipe лимитит частоту:
 // перебор ловит 418/403). limit<=0 — без ограничения. Возвращает скачанные
 // документы и ошибки (403 на «мёртвых» дублях /m/docs/ — это норма).
-func (f *Fetcher) CollectViaCookie(ctx context.Context, baseURL string, cats []CategorySpec, outDir string, limit int, logf func(string)) ([]CookieDoc, []string) {
+// onDoc (если задан) вызывается СРАЗУ после успешного скачивания каждого файла —
+// чтобы регистрировать его в реестр инкрементально (прогресс не теряется при
+// обрыве/перезапуске), а не одним пакетом в конце.
+func (f *Fetcher) CollectViaCookie(ctx context.Context, baseURL string, cats []CategorySpec, outDir string, limit int, logf func(string), onDoc func(CookieDoc)) ([]CookieDoc, []string) {
 	if logf == nil {
 		logf = func(string) {}
 	}
@@ -94,7 +97,10 @@ func (f *Fetcher) CollectViaCookie(ctx context.Context, baseURL string, cats []C
 
 				if len(out)+len(errs) > 0 { // пауза перед каждым файлом, кроме первого
 					select {
-					case <-time.After(f.betweenFilesDelay()):
+					// Умеренная пауза (~1.5–3 с): для авторизованной куки этого
+					// достаточно против лимита ServicePipe, но в разы быстрее
+					// «человеческого» профиля headless-обхода (там 7 с + перерывы).
+					case <-time.After(f.humanDelay(1500, 3000)):
 					case <-ctx.Done():
 						return out, errs
 					}
@@ -104,18 +110,22 @@ func (f *Fetcher) CollectViaCookie(ctx context.Context, baseURL string, cats []C
 					errs = append(errs, fmt.Sprintf("%s: %v", d.Link, derr))
 					continue
 				}
-				out = append(out, CookieDoc{
+				cd := CookieDoc{
 					Title:     cleanCatalogTitle(d.Title),
 					URL:       d.Link,
 					Category:  c.Name,
 					LocalPath: lp,
 					Hash:      hash,
-				})
+				}
+				out = append(out, cd)
 				if tkey != "" {
 					okTitles[tkey] = true
 				}
 				done++
 				logf(fmt.Sprintf("скачано %d: %s", done, filepath.Base(lp)))
+				if onDoc != nil {
+					onDoc(cd) // инкрементальная регистрация — прогресс сохраняется сразу
+				}
 			}
 			pageURL = next
 			if pageURL != "" {

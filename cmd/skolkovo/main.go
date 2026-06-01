@@ -575,13 +575,23 @@ func registerCookieDocs(ctx context.Context, st store.Store, svc *rag.Service, d
 		doc := model.Document{
 			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
 			LocalPath: cd.LocalPath, FileHash: cd.Hash,
-			Status: model.StatusPending, FetchedAt: time.Now(),
+			Status: cookieDocStatus(cd.Title, cd.Category), FetchedAt: time.Now(),
 		}
 		if st.Upsert(ctx, doc) == nil {
 			n++
 		}
 	}
 	return n
+}
+
+// cookieDocStatus определяет статус нового документа: «устарел» для категории
+// утративших силу / заголовков с «УТРАТИЛ», иначе «на_проверке».
+func cookieDocStatus(title, category string) model.Status {
+	if category == scraper.CategoryNames["unactual_documents"] ||
+		strings.Contains(strings.ToUpper(title), "УТРАТИЛ") {
+		return model.StatusOutdated
+	}
+	return model.StatusPending
 }
 
 func cmdCatalog(cfg config.Config) error {

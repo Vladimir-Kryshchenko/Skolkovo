@@ -1203,11 +1203,16 @@ func (s *Server) registerCookieDocs(ctx context.Context, docs []fetcher.CookieDo
 				continue
 			}
 		}
-		// 3) Новая запись.
+		// 3) Новая запись. Утратившие силу — сразу «устарел» (не в RAG как активные).
+		status := model.StatusPending
+		if cd.Category == scraper.CategoryNames["unactual_documents"] ||
+			strings.Contains(strings.ToUpper(cd.Title), "УТРАТИЛ") {
+			status = model.StatusOutdated
+		}
 		doc := model.Document{
 			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
 			LocalPath: cd.LocalPath, FileHash: cd.Hash,
-			Status: model.StatusPending, FetchedAt: time.Now(),
+			Status: status, FetchedAt: time.Now(),
 		}
 		if s.store.Upsert(ctx, doc) == nil {
 			n++

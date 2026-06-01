@@ -171,8 +171,16 @@ const wafDetector = `(function(){
       body.toLowerCase().indexOf('подтвердите') !== -1) {
     return 'challenge';
   }
-  // 403/503 pages
-  if (body.indexOf('403') !== -1 && body.indexOf('Forbidden') !== -1) {
+  // 403/503 pages. ServicePipe (WAF dochub) отдаёт короткие текстовые блоки:
+  //   "Forbidden\nTransaction ID: …"  и
+  //   "Forbidden\n…IP: …\nIf you are not a bot, please copy the report…"
+  // В них НЕТ числа "403", поэтому старая проверка их пропускала как ok →
+  // jsFindFile ничего не находил → errNoLink (и смена прокси не срабатывала).
+  var low = body.toLowerCase();
+  if (low.indexOf('if you are not a bot') !== -1 ||
+      low.indexOf('transaction id') !== -1 ||
+      (low.indexOf('forbidden') !== -1 && body.length < 600) ||
+      (body.indexOf('403') !== -1 && low.indexOf('forbidden') !== -1)) {
     return 'forbidden';
   }
   // Success
@@ -207,6 +215,12 @@ type Fetcher struct {
 	BreakMin     time.Duration // мин. длительность длинного перерыва
 	BreakMax     time.Duration // макс. длительность длинного перерыва
 	LongPausePct int           // вероятность (0-100) длинной паузы между файлами
+
+	// Cookie — сессионная кука dochub (spid + AuthorizationCookie), скопированная
+	// из реального браузера, прошедшего WAF. С ней простой HTTP-GET качает тела
+	// файлов БЕЗ браузера и БЕЗ прокси (см. http_download.go). Периодически
+	// протухает — обновляется в админке. "" — куки нет (HTTP-скачивание выкл.).
+	Cookie string
 
 	Rng  *rand.Rand
 	HTTP *http.Client

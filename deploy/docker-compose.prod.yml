@@ -69,6 +69,15 @@ services:
       SITEPAGES_ENABLED: ${SITEPAGES_ENABLED:-true}
       SITEPAGES_SEEDS: ${SITEPAGES_SEEDS:-https://sk.ru/,https://dochub.sk.ru/foundation/documents/}
       SITEPAGES_MAX_PAGES: ${SITEPAGES_MAX_PAGES:-0}
+      # ИИ-аннотирование страниц сайта (теги/описание/цели/тезисы/выводы).
+      # Требует настроенной LLM-модели: задайте QWEN_API_KEY (ниже) либо заведите
+      # модель вручную в /ai/models и включите агента «Аннотатор страниц».
+      SITEPAGES_ENRICH_ENABLED: ${SITEPAGES_ENRICH_ENABLED:-true}
+      SITEPAGES_ENRICH_DELAY: ${SITEPAGES_ENRICH_DELAY:-1s}
+      # Ключ Alibaba Cloud (Qwen): при наличии авто-сидятся модели и агенты —
+      # включая «Аннотатор страниц». Без него ИИ-аннотирование и LLM-синтез
+      # консультанта не работают (страницы остаются без тегов/аннотаций).
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
       TEI_URL: http://tei:80
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       POSTGRES_DSN: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
@@ -84,6 +93,22 @@ services:
       DOCS_DIR: /data/docs
       REGISTRY_PATH: /data/docs/Метаданные/реестр_документов.json
       REPORT_DIR: /data/reports
+      # ─── Скачивание тел файлов dochub ─────────────────────────────────────
+      # WAF dochub (ServicePipe) блокирует ЛЮБУЮ автоматизацию (curl, headless и
+      # headful chromedp) на страницах документов — НЕЗАВИСИМО от IP, поэтому
+      # прокси НЕ решает. Рабочий способ — сессионная кука реального браузера,
+      # прошедшего WAF: с ней обычный HTTP качает файлы с любого IP, без браузера
+      # и прокси. Куку задают в админке (:8090 /proxy → «Кука dochub»); env
+      # DOCHUB_COOKIE — фоллбэк. PROXY_URL/PROXY6 для файлов НЕ нужны (оставлены
+      # для совместимости), CHROME_PATH — лишь для старого headless-фоллбэка.
+      SOURCE_URL: ${SOURCE_URL:-https://dochub.sk.ru/foundation/documents/}
+      DOCHUB_COOKIE: ${DOCHUB_COOKIE:-}
+      CHROME_PATH: ${CHROME_PATH:-/usr/bin/chromium}
+      SCRAPE_INTERVAL: ${SCRAPE_INTERVAL:-6h}
+      PROXY_URL: ${PROXY_URL:-}
+      PROXY6_API_KEY: ${PROXY6_API_KEY:-}
+      FETCH_LIMIT: ${FETCH_LIMIT:-0}
+      FETCH_WAIT: ${FETCH_WAIT:-7s}
     volumes:
       - docs_data:/data/docs
       - reports_data:/data/reports

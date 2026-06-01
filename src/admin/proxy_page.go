@@ -3,6 +3,7 @@ package admin
 import (
 	"fmt"
 	"net/http"
+	"strings"
 )
 
 // handleProxyPage отображает страницу управления прокси
@@ -12,11 +13,19 @@ func (s *Server) handleProxyPage(w http.ResponseWriter, r *http.Request) {
 	activeID := s.proxyManager.CurrentID
 	s.proxyManager.mu.Unlock()
 
+	cookieMasked, cookieSavedAt := "", ""
+	if s.cookieStore != nil {
+		cookieMasked = s.cookieStore.Masked()
+		cookieSavedAt = s.cookieStore.SavedAtStr()
+	}
+
 	data := map[string]interface{}{
-		"Proxies":  proxies,
-		"ActiveID": activeID,
-		"Page":     "proxy",
-		"Title":    "Управление прокси и VPN",
+		"Proxies":       proxies,
+		"ActiveID":      activeID,
+		"Page":          "proxy",
+		"Title":         "Управление прокси и VPN",
+		"CookieMasked":  cookieMasked,
+		"CookieSavedAt": cookieSavedAt,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -510,5 +519,67 @@ async function findRussianProxy(btn) {
 </script>
 </body>
 </html>`
+
+	// Карточка куки dochub — основной способ скачивания файлов (HTTP по куке).
+	cookieMasked, _ := data["CookieMasked"].(string)
+	cookieSavedAt, _ := data["CookieSavedAt"].(string)
+	cookieStatus := `<span style="color:var(--text-secondary)">не задана</span>`
+	if cookieMasked != "" {
+		cookieStatus = `задана: <code>` + cookieMasked + `</code>`
+		if cookieSavedAt != "" {
+			cookieStatus += ` · обновлена ` + cookieSavedAt
+		}
+	}
+	cookieCard := `
+  <div class="card" style="border-left:4px solid #008653;margin-bottom:16px">
+    <div class="card-head">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8.5 8.5v.01M16 15.5v.01M11 12v.01M12 17v.01M7 14v.01"/></svg>
+      <h2>Кука dochub — скачивание файлов (рекомендуется)</h2>
+    </div>
+    <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px">
+      Надёжный способ забрать тела файлов: вставьте сессионную куку из браузера, который уже открыл dochub.
+      Качается обычным HTTP — без браузера и без прокси (кука работает с любого IP).
+      Где взять: F12 → вкладка <b>Сеть</b> → обновите страницу dochub → клик по запросу страницы →
+      <b>Заголовки запроса</b> → скопируйте всю строку <code>cookie</code>. Кука периодически протухает —
+      обновите её, когда «Скачать файлы» начнёт давать 403.
+    </p>
+    <div style="font-size:13px;margin-bottom:10px">Текущая кука: ` + cookieStatus + `</div>
+    <textarea id="cookieInput" rows="3" placeholder="spid=...; sk_lang=ru; AuthorizationCookie=..." style="width:100%;font-family:monospace;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:6px;resize:vertical"></textarea>
+    <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="saveCookie(this)" style="padding:8px 16px;background:var(--primary);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Сохранить куку</button>
+      <button onclick="fetchFiles(this)" style="padding:8px 16px;background:var(--green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-weight:600">Скачать файлы</button>
+    </div>
+    <div id="cookieResult" style="margin-top:10px;font-size:13px"></div>
+  </div>
+`
+	cookieJS := `
+async function saveCookie(btn){
+  var c=document.getElementById('cookieInput').value.trim();
+  var r=document.getElementById('cookieResult');
+  if(!c){ r.style.color='var(--danger,#de350b)'; r.innerHTML='Вставьте куку'; return; }
+  var orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='Сохраняю…';
+  try{
+    var res=await fetch('/api/dochub-cookie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:c})});
+    var d=await res.json();
+    r.style.color=d.ok?'var(--green)':'var(--danger,#de350b)';
+    r.innerHTML=(d.ok?'✅ ':'❌ ')+(d.msg||d.error||'');
+    if(d.ok) setTimeout(function(){location.reload()},1200);
+  }catch(e){ r.style.color='var(--danger,#de350b)'; r.innerHTML='❌ '+e.message; }
+  btn.disabled=false; btn.innerHTML=orig;
+}
+async function fetchFiles(btn){
+  var r=document.getElementById('cookieResult');
+  var orig=btn.innerHTML; btn.disabled=true; btn.innerHTML='Запускаю…';
+  try{
+    var res=await fetch('/api/fetch',{method:'POST'});
+    var d=await res.json();
+    r.style.color=d.ok?'var(--green)':'var(--danger,#de350b)';
+    r.innerHTML=(d.ok?'✅ ':'❌ ')+(d.msg||d.error||'');
+  }catch(e){ r.style.color='var(--danger,#de350b)'; r.innerHTML='❌ '+e.message; }
+  btn.disabled=false; btn.innerHTML=orig;
+}
+`
+	html = strings.Replace(html, "<main>", "<main>"+cookieCard, 1)
+	html = strings.Replace(html, "</script>\n</body>", cookieJS+"</script>\n</body>", 1)
 	return html
 }

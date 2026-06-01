@@ -109,9 +109,14 @@ func (pf *RussianProxyFinder) fetchProxy6Net(ctx context.Context) ([]string, err
 		if item.Active != "1" {
 			continue
 		}
-		scheme := item.Type
-		if scheme == "" {
-			scheme = "http"
+		// proxy6 отдаёт type как "auto"/"http"/"https" (HTTP-совместимый прокси) или
+		// "socks"/"socks5". http.Transport.Proxy понимает только http/https/socks5,
+		// поэтому всё, кроме socks, нормализуем в http (иначе получится auto:// и
+		// "unsupported proxy scheme").
+		scheme := "http"
+		switch strings.ToLower(item.Type) {
+		case "socks", "socks5":
+			scheme = "socks5"
 		}
 		var proxyURL string
 		if item.User != "" {

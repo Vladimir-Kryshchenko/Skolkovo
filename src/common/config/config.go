@@ -34,6 +34,7 @@ type Config struct {
 	NotifyWebhook   string
 	ChromePath      string // путь к Chrome для headless-загрузчика ("" — автоопределение)
 	ProxyURL        string // прокси для загрузчика (например, резидентный) — обход WAF
+	DochubCookie    string // сессионная кука dochub из браузера (spid+AuthorizationCookie) — HTTP-скачивание тел файлов без браузера; обычно задаётся в админке
 	FetchLimit      int    // сколько документов скачивать за прогон (0 — все)
 	FetchWait       time.Duration
 
@@ -164,6 +165,7 @@ func Load() Config {
 		NotifyWebhook:   env("NOTIFY_WEBHOOK", ""),
 		ChromePath:      env("CHROME_PATH", ""),
 		ProxyURL:        env("PROXY_URL", ""),
+		DochubCookie:    env("DOCHUB_COOKIE", ""),
 		FetchLimit:      envInt("FETCH_LIMIT", 0),
 		FetchWait:       envDuration("FETCH_WAIT", 7*time.Second),
 

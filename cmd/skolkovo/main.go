@@ -550,6 +550,40 @@ func upsertCatalogItems(ctx context.Context, st store.Store, items []fetcher.Cat
 	return added, merged
 }
 
+// registerCookieDocs регистрирует файлы, скачанные по куке dochub (с прикреплённым
+// телом), в реестр: дедуп по download-URL, переиндексация действующих. Возвращает
+// число добавленных/обновлённых.
+func registerCookieDocs(ctx context.Context, st store.Store, svc *rag.Service, docs []fetcher.CookieDoc) int {
+	var n int
+	for _, cd := range docs {
+		id := scraper.DocID(cd.URL)
+		if doc, err := st.Get(ctx, id); err == nil {
+			doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+			if doc.Category == "" {
+				doc.Category = cd.Category
+			}
+			if st.Upsert(ctx, doc) == nil {
+				n++
+				if svc != nil && doc.Status == model.StatusActive {
+					if svc.Init(ctx) == nil {
+						_, _ = svc.IndexDocument(ctx, id)
+					}
+				}
+			}
+			continue
+		}
+		doc := model.Document{
+			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+			LocalPath: cd.LocalPath, FileHash: cd.Hash,
+			Status: model.StatusPending, FetchedAt: time.Now(),
+		}
+		if st.Upsert(ctx, doc) == nil {
+			n++
+		}
+	}
+	return n
+}
+
 func cmdCatalog(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"path/filepath"
 
 	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/common/config"
@@ -20,6 +21,29 @@ import (
 // pm (может быть nil) используется для динамической ротации прокси при WAF-бане.
 // No-op при недоступном Chrome — это не критичная ошибка для общего цикла.
 func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager) (found, fetched int, err error) {
+	// Основной путь — по сессионной куке dochub (из админки или env DOCHUB_COOKIE):
+	// HTTP-скачивание тел файлов БЕЗ браузера и БЕЗ прокси. Обходит WAF, т.к. кука
+	// выдана реальному браузеру, прошедшему проверку. Если кука есть — идём только
+	// этим путём (headless всё равно блокируется WAF).
+	cookie := cfg.DochubCookie
+	if cookie == "" {
+		cookie = admin.LoadDochubCookie(cfg.DocsDir)
+	}
+	if cookie != "" {
+		cf, cerr := fetcher.New("", "", cfg.FetchWait, nil)
+		if cerr != nil {
+			return 0, 0, cerr
+		}
+		applyFetchProfile(cf, cfg)
+		cf.Cookie = cookie
+		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
+		docs, errs := cf.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
+			func(m string) { log.Printf("[collect] %s", m) })
+		n := registerCookieDocs(ctx, st, svc, docs)
+		log.Printf("[collect] по куке dochub: скачано файлов %d, в реестр %d, ошибок %d", len(docs), n, len(errs))
+		return len(docs), n, nil
+	}
+
 	// Используем активный прокси из ProxyManager если есть — он приоритетнее cfg.ProxyURL.
 	activeProxy := cfg.ProxyURL
 	if pm != nil {
@@ -97,7 +121,7 @@ func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc
 // runScheduledCollect — обёртка headlessCollect для планировщика: фиксирует
 // результат в мониторинге свежести. No-op при недоступном Chrome.
 func runScheduledCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager, recordHealth func(string, int, error)) {
-	log.Printf("[serve:collect] headless-обход сайта + скачивание тел (обход WAF)")
+	log.Printf("[serve:collect] скачивание тел файлов dochub (по куке, если задана)")
 	found, fetched, err := headlessCollect(ctx, cfg, st, svc, pm)
 	if err != nil {
 		log.Printf("[serve:collect] headless-браузер недоступен: %v", err)

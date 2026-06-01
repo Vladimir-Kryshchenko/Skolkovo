@@ -88,6 +88,7 @@ type Server struct {
 	navIndexer   *navindex.Indexer  // Переиндексация навигации по сайту (опционально)
 	proxyManager *ProxyManager      // Управление прокси
 	proxy6APIKey string             // API-ключ proxy6.net для автопоиска российских прокси
+	cookieStore  *DochubCookieStore // сессионная кука dochub для HTTP-скачивания тел файлов
 	addr         string
 	user         string
 	pass         string
@@ -124,13 +125,14 @@ func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 		authStore.AddUser(envOrDefault("ADMIN_VIEWER_USER", "viewer"), p, "Наблюдатель", RoleViewer)
 	}
 
-	// Инициализируем менеджер прокси
+	// Инициализируем менеджер прокси и хранилище куки dochub.
 	proxyManager := NewProxyManager(filepath.Join(docsDir, ".admin", "proxies.json"))
+	cookieStore := NewDochubCookieStore(filepath.Join(docsDir, ".admin", "dochub_cookie.json"))
 
 	return &Server{
 		store: st, rag: ragSvc, addr: addr, user: user, pass: pass, docsDir: docsDir,
 		chromePath: chromePath, proxyURL: proxyURL, fetchWait: fetchWait, sourceURL: sourceURL,
-		authStore: authStore, proxyManager: proxyManager,
+		authStore: authStore, proxyManager: proxyManager, cookieStore: cookieStore,
 	}
 }
 
@@ -209,6 +211,14 @@ func (s *Server) WithProxyManager(pm *ProxyManager) *Server {
 // WithProxy6APIKey устанавливает API-ключ proxy6.net для автопоиска российских прокси.
 func (s *Server) WithProxy6APIKey(key string) *Server {
 	s.proxy6APIKey = key
+	return s
+}
+
+// WithDochubCookieStore подключает хранилище сессионной куки dochub — питает
+// HTTP-скачивание тел файлов по куке (страница «Прокси» → поле куки, кнопка
+// «Скачать файлы»).
+func (s *Server) WithDochubCookieStore(cs *DochubCookieStore) *Server {
+	s.cookieStore = cs
 	return s
 }
 
@@ -396,6 +406,7 @@ func (s *Server) ListenAndServe() error {
 		json.NewEncoder(w).Encode(map[string]string{"active_id": id})
 	}))
 	mux.HandleFunc("POST /api/proxy/find-russian", s.requireAuthJSON(s.handleAPIFindRussianProxy))
+	mux.HandleFunc("POST /api/dochub-cookie", s.requireAuthJSON(s.handleAPISetDochubCookie))
 	mux.HandleFunc("GET /proxy", s.requireAuth(s.handleProxyPage)) // UI страница
 
 	// ИИ Конфигурация — модели и агенты
@@ -1046,13 +1057,72 @@ func (s *Server) upsertCatalogItems(ctx context.Context, items []fetcher.Catalog
 	return added, merged
 }
 
-// handleAPIFetch запускает скачивание файлов документов через активный прокси.
+// handleAPISetDochubCookie сохраняет сессионную куку dochub (из браузера,
+// прошедшего WAF) — с ней HTTP-скачивание тел файлов работает без браузера и
+// без прокси. Принимает поле "cookie" (form или JSON).
+func (s *Server) handleAPISetDochubCookie(w http.ResponseWriter, r *http.Request) {
+	if s.cookieStore == nil {
+		jsonResp(w, false, "", "хранилище куки не подключено")
+		return
+	}
+	cookie := strings.TrimSpace(r.FormValue("cookie"))
+	if cookie == "" {
+		// Пробуем JSON-тело.
+		var body struct {
+			Cookie string `json:"cookie"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cookie = strings.TrimSpace(body.Cookie)
+	}
+	if cookie == "" {
+		jsonResp(w, false, "", "пустая кука")
+		return
+	}
+	if err := s.cookieStore.Set(cookie); err != nil {
+		jsonResp(w, false, "", "сохранение: "+err.Error())
+		return
+	}
+	log.Println("[admin/api] кука dochub обновлена")
+	jsonResp(w, true, "Кука dochub сохранена. Теперь «Скачать файлы» качает тела по куке (без браузера и прокси).", "")
+}
+
+// handleAPIFetch запускает скачивание тел файлов. Основной путь — по сессионной
+// куке dochub (обычный HTTP, без браузера/прокси): обходит WAF, т.к. кука выдана
+// реальному браузеру, прошедшему проверку. Если куки нет — фоллбэк на старый
+// headless+прокси путь (обычно блокируется WAF; оставлен для совместимости).
 func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск скачивания файлов")
+	cookie := ""
+	if s.cookieStore != nil {
+		cookie = s.cookieStore.Get()
+	}
 
-	// Получаем активный прокси
+	if cookie != "" {
+		log.Println("[admin/api] скачивание тел файлов по куке dochub (HTTP, без браузера)")
+		go func() {
+			ctx := context.Background()
+			f, err := fetcher.New("", "", s.fetchWait, nil) // без Chrome и без прокси — кука работает с любого IP
+			if err != nil {
+				log.Printf("[admin/api] fetch(cookie): %v", err)
+				return
+			}
+			f.Cookie = cookie
+			cats := make([]fetcher.CategorySpec, 0, len(scraper.CategoryNames))
+			for slug, name := range scraper.CategoryNames {
+				cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})
+			}
+			outDir := filepath.Join(s.docsDir, "На_проверке", "Загружено")
+			docs, errs := f.CollectViaCookie(ctx, s.sourceURL, cats, outDir, 0,
+				func(m string) { log.Printf("[admin/api] %s", m) })
+			added := s.registerCookieDocs(ctx, docs)
+			log.Printf("[admin/api] скачивание по куке завершено: файлов %d, в реестр %d, ошибок %d (часть ошибок — «мёртвые» дубли /m/docs/, это норма)", len(docs), added, len(errs))
+		}()
+		jsonResp(w, true, "Скачивание тел файлов по куке запущено в фоне (без браузера и прокси). Обновите страницу через пару минут.", "")
+		return
+	}
+
+	// Фоллбэк: headless + прокси (кука не задана). Обычно режется WAF dochub.
+	log.Println("[admin/api] скачивание файлов: кука не задана — пробую headless+прокси (часто блокируется WAF)")
 	activeProxyURL := s.proxyManager.GetActiveURL()
-
 	go func() {
 		ctx := context.Background()
 		f, err := fetcher.New(s.chromePath, activeProxyURL, s.fetchWait, s.proxyManager.GetActiveURL)
@@ -1060,20 +1130,85 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[admin/api] fetch: %v", err)
 			return
 		}
-		// При WAF-бане автоматически переключаемся на рабочий прокси.
 		f.OnWAFBlocked = func() string {
 			s.proxyManager.AutoSwitch()
 			return s.proxyManager.GetActiveURL()
 		}
-
 		done, errs := f.EnrichMissing(ctx, s.store, s.docsDir, 0, nil)
 		log.Printf("[admin/api] скачивание завершено: скачано %d, ошибок %d", done, len(errs))
-		for _, e := range errs {
-			log.Printf("[admin/api] ошибка скачивания: %v", e)
-		}
 	}()
+	jsonResp(w, true, "Кука dochub не задана — пробую headless+прокси (обычно блокируется WAF). Надёжный способ: задайте куку на странице «Прокси».", "")
+}
 
-	jsonResp(w, true, "Скачивание файлов запущено в фоне. Используйте активный прокси.", "")
+// registerCookieDocs регистрирует скачанные по куке файлы как документы реестра.
+// Реконсиляция, чтобы не плодить дубли: 1) если запись с этим download-URL уже
+// есть — обновляем файл; 2) если есть документ с тем же заголовком без файла
+// (например, из RSS-каталога) — прикрепляем файл к нему; 3) иначе создаём новую
+// запись «на проверке». Возвращает число добавленных/обновлённых.
+func (s *Server) registerCookieDocs(ctx context.Context, docs []fetcher.CookieDoc) int {
+	if len(docs) == 0 {
+		return 0
+	}
+	existing, _ := s.store.List(ctx, store.Filter{})
+	byTitle := make(map[string]model.Document, len(existing))
+	for _, d := range existing {
+		if k := cookieDocTitleKey(d.Title); k != "" {
+			byTitle[k] = d
+		}
+	}
+	var n int
+	for _, cd := range docs {
+		id := scraper.DocID(cd.URL)
+		// 1) Уже есть запись с этим download-URL.
+		if doc, err := s.store.Get(ctx, id); err == nil {
+			doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+			if doc.Category == "" {
+				doc.Category = cd.Category
+			}
+			if s.store.Upsert(ctx, doc) == nil {
+				n++
+				s.maybeReindex(doc)
+			}
+			continue
+		}
+		// 2) Реконсиляция по заголовку с RSS-записью без файла.
+		if k := cookieDocTitleKey(cd.Title); k != "" {
+			if ex, ok := byTitle[k]; ok && ex.LocalPath == "" {
+				ex.LocalPath, ex.FileHash, ex.Indexed = cd.LocalPath, cd.Hash, false
+				if ex.Category == "" {
+					ex.Category = cd.Category
+				}
+				if s.store.Upsert(ctx, ex) == nil {
+					n++
+					s.maybeReindex(ex)
+				}
+				continue
+			}
+		}
+		// 3) Новая запись.
+		doc := model.Document{
+			ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+			LocalPath: cd.LocalPath, FileHash: cd.Hash,
+			Status: model.StatusPending, FetchedAt: time.Now(),
+		}
+		if s.store.Upsert(ctx, doc) == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// maybeReindex переиндексирует документ, если он действует и RAG подключён
+// (чтобы текст только что прикреплённого файла попал в поиск).
+func (s *Server) maybeReindex(doc model.Document) {
+	if s.rag != nil && doc.Status == model.StatusActive {
+		go s.syncIndex(doc.ID, model.StatusActive)
+	}
+}
+
+// cookieDocTitleKey — нормализованный ключ заголовка для реконсиляции дублей.
+func cookieDocTitleKey(t string) string {
+	return strings.ToLower(strings.Join(strings.Fields(t), " "))
 }
 
 // handleAPIApproveAll переводит все «на_проверке» документы в «действует»

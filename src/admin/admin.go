@@ -33,6 +33,7 @@ import (
 	"baza-skolkovo/src/health"
 	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/scheduler"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/sitepages"
@@ -42,6 +43,30 @@ import (
 type SitePageReader interface {
 	ListRecent(ctx context.Context, limit int) ([]*sitepages.Page, error)
 	GetWithText(ctx context.Context, id string) (*sitepages.Page, error)
+	RelatedByTags(ctx context.Context, id string, tags []string, limit int) ([]sitepages.RelatedPage, error)
+}
+
+// SitePageRelated — семантический поиск похожих страниц (реализуется
+// *sitepages.Searcher). Опционален: без него блок «похожие по смыслу» скрыт.
+type SitePageRelated interface {
+	Related(ctx context.Context, p *sitepages.Page, limit int) ([]sitepages.Hit, error)
+}
+
+// SitePageActions — ручные операции над страницей сайта (реализуется
+// *sitepages.AdminService). Опционален: без него кнопка «Переаннотировать» и
+// форма правки аннотации в просмотрщике скрыты.
+type SitePageActions interface {
+	ReannotateOne(ctx context.Context, id string) (string, error)
+	SaveAnnotation(ctx context.Context, id string, a sitepages.Annotation) error
+}
+
+// VersionStore — что админке нужно от хранилища версий документов для
+// автоматического сравнения редакций (страница /diff). Удовлетворяется
+// *store.PostgresVersionStore; метод LatestVersions заодно делает его
+// пригодным как relevance.VersionReader для повторного ИИ-анализа.
+type VersionStore interface {
+	DocumentsWithVersions(ctx context.Context, minVersions int) ([]store.DocVersionSummary, error)
+	LatestVersions(ctx context.Context, documentID string, n int) ([]*model.DocVersion, error)
 }
 
 // Server — HTTP-админка.
@@ -51,6 +76,9 @@ type Server struct {
 	changeStore  changes.Store
 	healthStore  health.Store
 	sitePages    SitePageReader
+	sitePageSim  SitePageRelated // семантически похожие страницы (опционально)
+	sitePageOps  SitePageActions // ручное переаннотирование/правка (опционально)
+	versionStore VersionStore // история версий документов (для /diff); опционально
 	prefStore    store.PreferenceStore
 	npaStore     store.NPAStore
 	rag          *rag.Service
@@ -129,6 +157,27 @@ func (s *Server) WithHealthStore(hs health.Store) *Server {
 // «Страницы сайта»: список + просмотрщик).
 func (s *Server) WithSitePageStore(r SitePageReader) *Server {
 	s.sitePages = r
+	return s
+}
+
+// WithSitePageSearcher подключает семантический поиск похожих страниц (блок
+// «похожие по смыслу» в просмотрщике страницы сайта).
+func (s *Server) WithSitePageSearcher(sim SitePageRelated) *Server {
+	s.sitePageSim = sim
+	return s
+}
+
+// WithSitePageActions подключает ручные операции над страницей: переаннотирование
+// и сохранение правок аннотации куратором (кнопка и форма в просмотрщике).
+func (s *Server) WithSitePageActions(ops SitePageActions) *Server {
+	s.sitePageOps = ops
+	return s
+}
+
+// WithVersionStore подключает хранилище версий документов — питает страницу
+// автоматического ИИ-сравнения версий (/diff) и повторный анализ «Монитором».
+func (s *Server) WithVersionStore(vs VersionStore) *Server {
+	s.versionStore = vs
 	return s
 }
 
@@ -273,9 +322,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/settings", s.requireAuthJSON(s.handleAPISettingsUpdate))
 	mux.HandleFunc("GET /api/reports", s.requireAuthJSON(s.handleAPIReports))
 
-	// Diff — сравнение версий документов
+	// Diff — автоматическое сравнение версий документов силами ИИ-агента «Монитор».
 	mux.HandleFunc("GET /diff", s.requireAuth(s.handleDiffPage))
-	mux.HandleFunc("POST /diff", s.requireAuth(s.handleDiffCompare))
+	mux.HandleFunc("GET /diff/{id}/full", s.requireAuth(s.handleDiffFull))
+	mux.HandleFunc("POST /api/diff/{id}/analyze", s.requireAuthJSON(s.handleAPIReanalyze))
 	mux.HandleFunc("GET /api/diff/{id1}/{id2}", s.requireAuthJSON(s.handleAPIDiff))
 
 	// Аналитика
@@ -296,6 +346,8 @@ func (s *Server) ListenAndServe() error {
 	// Страницы публичного сайта (список + просмотрщик)
 	mux.HandleFunc("GET /sitepages", s.requireAuth(s.handleSitePagesPage))
 	mux.HandleFunc("GET /sitepages/{id}", s.requireAuth(s.handleSitePageView))
+	mux.HandleFunc("POST /sitepages/{id}/reannotate", s.requireAuth(s.handleSitePageReannotate))
+	mux.HandleFunc("POST /sitepages/{id}/annotation", s.requireAuth(s.handleSitePageSaveAnnotation))
 	mux.HandleFunc("GET /api/sitepages", s.requireAuthJSON(s.handleAPISitePages))
 
 	// Льготы и НПА
@@ -1859,37 +1911,238 @@ func (s *Server) handleAPIReports(w http.ResponseWriter, r *http.Request) {
 // Diff — сравнение версий документов
 // ===========================================================================
 
+// diffDocCard — карточка документа с историей версий: автоматически
+// сопоставленные две последние редакции + вердикт ИИ-агента «Монитор».
+type diffDocCard struct {
+	DocID        string
+	Title        string
+	Category     string
+	VersionCount int
+	NewNo        int    // номер новой (последней) версии
+	OldNo        int    // номер предыдущей версии
+	NewAt        string // дата новой версии
+	OldAt        string // дата предыдущей версии
+	Added        int    // добавлено строк (по дифф-снимкам)
+	Removed      int    // удалено строк
+	Severity     string // info|warning|critical|"" — важность по ИИ-вердикту
+	SeverityText string // человекочитаемая важность
+	Summary      string // «что изменилось по сути» (ИИ или эвристика)
+	Stages       []string
+	Analyzed     bool   // есть зафиксированный ИИ-вердикт из ленты изменений
+	AnalyzedAt   string // когда зафиксирован вердикт
+}
+
 type diffPageData struct {
-	Docs     []model.Document
-	Doc1ID   string
-	Doc2ID   string
-	DiffHTML string
-	Error    string
+	Cards       []diffDocCard
+	Error       string
+	HasAI       bool // настроен ли включённый агент «Монитор»
+	Unavailable bool // хранилище версий не подключено (не Postgres)
 }
 
-// handleDiffPage показывает форму выбора двух документов для сравнения.
+// handleDiffPage показывает автоматическую ленту сравнения версий: документы,
+// у которых накоплено ≥2 редакций, с готовым вердиктом ИИ-агента «Монитор»
+// (гибрид: показываем посчитанное в пайплайне, плюс кнопка «Переанализировать»).
 func (s *Server) handleDiffPage(w http.ResponseWriter, r *http.Request) {
-	docs, _ := s.store.List(r.Context(), store.Filter{})
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
-
-	data := diffPageData{Docs: docs}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
-		log.Println("[admin] diff шаблон:", err)
-	}
-}
-
-// handleDiffCompare обрабатывает POST-форму сравнения.
-func (s *Server) handleDiffCompare(w http.ResponseWriter, r *http.Request) {
-	id1 := r.FormValue("doc1")
-	id2 := r.FormValue("doc2")
-
-	if id1 == "" || id2 == "" {
-		http.Error(w, "Выберите два документа", http.StatusBadRequest)
+	data := diffPageData{}
+	if s.versionStore == nil {
+		data.Unavailable = true
+		s.renderDiffPage(w, data)
 		return
 	}
 
-	s.renderDiff(w, r, id1, id2)
+	summaries, err := s.versionStore.DocumentsWithVersions(r.Context(), 2)
+	if err != nil {
+		data.Error = "Не удалось получить историю версий: " + err.Error()
+		s.renderDiffPage(w, data)
+		return
+	}
+
+	// Гибрид: подмешиваем зафиксированные ИИ-вердикты из ленты изменений
+	// (их уже посчитал «Монитор» в пайплайне) — без новых вызовов LLM.
+	verdicts := s.documentVerdicts(r.Context())
+	data.HasAI = s.monitorAgentConfigured(r.Context())
+
+	for _, sm := range summaries {
+		card := diffDocCard{
+			DocID:        sm.DocumentID,
+			VersionCount: sm.VersionCount,
+			NewNo:        sm.LatestNo,
+			NewAt:        sm.LatestAt.Format("02.01.2006 15:04"),
+			Title:        sm.DocumentID,
+		}
+		if doc, err := s.store.Get(r.Context(), sm.DocumentID); err == nil && doc.Title != "" {
+			card.Title = doc.Title
+			card.Category = doc.Category
+		}
+		// Статистика правок по двум последним снимкам (дёшево, без LLM).
+		if vers, err := s.versionStore.LatestVersions(r.Context(), sm.DocumentID, 2); err == nil && len(vers) >= 2 {
+			newV, oldV := vers[0], vers[1]
+			card.OldNo = oldV.VersionNo
+			card.OldAt = oldV.CreatedAt.Format("02.01.2006 15:04")
+			d := diff.CompareDocuments(oldV.ExtractedText, newV.ExtractedText)
+			card.Added = d.Summary.TotalAdded
+			card.Removed = d.Summary.TotalRemoved
+		}
+		if v, ok := verdicts[sm.DocumentID]; ok {
+			card.Severity = string(v.Severity)
+			card.SeverityText = severityLabel(string(v.Severity))
+			card.Summary = v.AnalysisSummary
+			card.Stages = v.AffectedStages
+			card.Analyzed = true
+			if !v.DetectedAt.IsZero() {
+				card.AnalyzedAt = v.DetectedAt.Format("02.01.2006 15:04")
+			}
+		}
+		data.Cards = append(data.Cards, card)
+	}
+
+	s.renderDiffPage(w, data)
+}
+
+// documentVerdicts собирает самые свежие зафиксированные ИИ-вердикты по
+// документам из ленты изменений (entity_type=document) — по одному на документ.
+func (s *Server) documentVerdicts(ctx context.Context) map[string]changes.Event {
+	if s.changeStore == nil {
+		return map[string]changes.Event{}
+	}
+	// Быстрый путь: один точечный запрос «последний вердикт на документ».
+	if ps, ok := s.changeStore.(*changes.PostgresStore); ok {
+		if m, err := ps.LatestAnalyzedByType(ctx, changes.EntityDocument); err == nil {
+			return m
+		}
+	}
+	// Фолбэк (не-Postgres бэкенд): скан последних событий ленты.
+	evs, err := s.changeStore.Recent(ctx, changes.Filter{EntityType: changes.EntityDocument, Limit: 1000})
+	if err != nil {
+		return map[string]changes.Event{}
+	}
+	return latestVerdicts(evs)
+}
+
+// latestVerdicts из списка событий, отсортированного по убыванию времени,
+// выбирает по одному — самому свежему — событию с непустым ИИ-вердиктом на
+// документ. Вынесено отдельно для прямого юнит-тестирования без БД.
+func latestVerdicts(evs []changes.Event) map[string]changes.Event {
+	out := map[string]changes.Event{}
+	for _, ev := range evs {
+		if _, seen := out[ev.EntityID]; seen {
+			continue
+		}
+		if ev.Severity == "" {
+			continue // вердикта пока нет — ждём следующее (более старое) событие
+		}
+		out[ev.EntityID] = ev
+	}
+	return out
+}
+
+// monitorAgentConfigured сообщает, настроен ли включённый агент «Монитор»
+// (для подсказки на странице: будет ли реальный ИИ-анализ или эвристика).
+func (s *Server) monitorAgentConfigured(ctx context.Context) bool {
+	if s.aiStore == nil {
+		return false
+	}
+	agents, err := s.aiStore.ListAgents(ctx)
+	if err != nil {
+		return false
+	}
+	for _, a := range agents {
+		if a.AgentType == aimodels.AgentMonitor && a.Enabled && a.ModelID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// handleDiffFull отдаёт полный визуальный дифф двух последних версий документа
+// (самостоятельный HTML-документ — встраивается в iframe на странице сравнения).
+func (s *Server) handleDiffFull(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.versionStore == nil {
+		http.Error(w, "хранилище версий не подключено", http.StatusServiceUnavailable)
+		return
+	}
+	vers, err := s.versionStore.LatestVersions(r.Context(), id, 2)
+	if err != nil || len(vers) < 2 {
+		http.Error(w, "недостаточно версий для сравнения", http.StatusNotFound)
+		return
+	}
+	newV, oldV := vers[0], vers[1]
+	result := diff.CompareDocuments(oldV.ExtractedText, newV.ExtractedText)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, diff.ToHTML(result))
+}
+
+// handleAPIReanalyze заново запускает агента «Монитор» на двух последних
+// версиях документа и возвращает свежий ИИ-вердикт (важность, суть, стадии).
+// При отсутствии настроенного агента отрабатывает эвристика анализатора.
+func (s *Server) handleAPIReanalyze(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.versionStore == nil {
+		jsonResp(w, false, "", "хранилище версий не подключено")
+		return
+	}
+	doc, _ := s.store.Get(r.Context(), id)
+	ev := changes.Event{
+		EntityType: changes.EntityDocument,
+		EntityID:   id,
+		Title:      doc.Title,
+		Category:   doc.Category,
+		Kind:       changes.KindUpdated,
+	}
+
+	// aiStore передаём только если он реально подключён — иначе типизированный
+	// nil-указатель в интерфейсе ModelStore привёл бы к панике в анализаторе.
+	var modelStore relevance.ModelStore
+	if s.aiStore != nil {
+		modelStore = s.aiStore
+	}
+	analyzer := relevance.NewAnalyzer(s.versionStore, modelStore)
+	res, err := analyzer.Analyze(r.Context(), ev)
+	if err != nil {
+		jsonResp(w, false, "", "анализ не выполнен: "+err.Error())
+		return
+	}
+
+	// Сохраняем свежий вердикт в ленту изменений (best-effort): дописываем его в
+	// самое свежее событие документа, чтобы он пережил перезагрузку страницы.
+	persisted := s.persistVerdict(r.Context(), id, res)
+
+	stages := make([]string, 0, len(res.Stages))
+	for _, st := range res.Stages {
+		stages = append(stages, string(st))
+	}
+	resp := map[string]interface{}{
+		"ok":            true,
+		"severity":      string(res.Severity),
+		"severity_text": severityLabel(string(res.Severity)),
+		"summary":       res.Summary,
+		"stages":        stages,
+		"added":         res.DiffAdded,
+		"removed":       res.DiffRemoved,
+		"used_llm":      res.UsedLLM,
+		"persisted":     persisted,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// persistVerdict дописывает свежий вердикт анализатора в самое свежее событие
+// ленты по документу. Возвращает true, если вердикт сохранён. Работает только
+// с Postgres-лентой (у не-Postgres бэкендов постоянного хранилища ленты нет).
+func (s *Server) persistVerdict(ctx context.Context, docID string, res relevance.Result) bool {
+	ps, ok := s.changeStore.(*changes.PostgresStore)
+	if !ok {
+		return false
+	}
+	ev, found, err := ps.LatestByEntity(ctx, changes.EntityDocument, docID)
+	if err != nil || !found {
+		return false
+	}
+	if err := ps.Enrich(ctx, ev.ID, res.ToEnrichment()); err != nil {
+		return false
+	}
+	return true
 }
 
 // handleAPIDiff отдаёт результат сравнения в JSON.
@@ -1931,36 +2184,8 @@ func (s *Server) handleAPIDiff(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// renderDiff загружает документы, сравнивает и показывает HTML-результат.
-func (s *Server) renderDiff(w http.ResponseWriter, r *http.Request, id1, id2 string) {
-	text1, _, err := s.extractDocText(r.Context(), id1)
-	if err != nil {
-		s.renderDiffPage(w, r, id1, id2, "", "Документ 1: "+err.Error())
-		return
-	}
-	text2, _, err := s.extractDocText(r.Context(), id2)
-	if err != nil {
-		s.renderDiffPage(w, r, id1, id2, "", "Документ 2: "+err.Error())
-		return
-	}
-
-	result := diff.CompareDocuments(text1, text2)
-	htmlContent := diff.ToHTML(result)
-	s.renderDiffPage(w, r, id1, id2, htmlContent, "")
-}
-
-// renderDiffPage рисует страницу diff с формой и результатом.
-func (s *Server) renderDiffPage(w http.ResponseWriter, r *http.Request, id1, id2, diffHTML, errMsg string) {
-	docs, _ := s.store.List(r.Context(), store.Filter{})
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
-
-	data := diffPageData{
-		Docs:     docs,
-		Doc1ID:   id1,
-		Doc2ID:   id2,
-		DiffHTML: diffHTML,
-		Error:    errMsg,
-	}
+// renderDiffPage рисует страницу автоматического сравнения версий.
+func (s *Server) renderDiffPage(w http.ResponseWriter, data diffPageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
 		log.Println("[admin] diff шаблон:", err)
@@ -2748,16 +2973,19 @@ func (s *Server) handleAPIChanges(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------------------
 
 type sitePagesPageData struct {
-	Rows      []sitePageRow
-	Query     string
-	Section   string
-	Status    string
-	DateFrom  string
-	DateTo    string
-	Sections  []string
-	Total     int
-	LastCrawl time.Time
-	HasStore  bool
+	Rows         []sitePageRow
+	Query        string
+	Section      string
+	Status       string
+	DateFrom     string
+	DateTo       string
+	Sections     []string
+	AllTags      []string        // все теги для фильтра множественного выбора
+	SelectedTags []string        // выбранные теги
+	SelectedSet  map[string]bool // для отметки checkbox в шаблоне
+	Total        int
+	LastCrawl    time.Time
+	HasStore     bool
 }
 
 type sitePageRow struct {
@@ -2767,22 +2995,43 @@ type sitePageRow struct {
 	Section     string
 	Status      string
 	StatusLabel string
+	Tags        []string
 	LastChanged time.Time
 }
 
+// relRow — ссылка на связанную страницу (по тегам или семантически).
+type relRow struct {
+	ID      string
+	URL     string
+	Title   string
+	Section string
+	Shared  int // число общих тегов (для связи по тегам)
+}
+
 type sitePageViewData struct {
-	ID          string
-	URL         string
-	Title       string
-	Section     string
-	Status      string
-	StatusLabel string
-	Summary     string
-	Text        string
-	HasText     bool
-	FirstSeen   time.Time
-	LastSeen    time.Time
-	LastChanged time.Time
+	ID              string
+	URL             string
+	Title           string
+	Section         string
+	Status          string
+	StatusLabel     string
+	Summary         string
+	Text            string
+	HasText         bool
+	FirstSeen       time.Time
+	LastSeen        time.Time
+	LastChanged     time.Time
+	Enriched        bool
+	AISummary       string
+	Goals           string
+	Theses          []string
+	Conclusions     string
+	Tags            []string
+	RelatedByTags   []relRow
+	RelatedSemantic []relRow
+	CanEdit         bool   // доступны ли ручные действия (переаннотировать/править)
+	TagsCSV         string // теги через запятую (для формы правки)
+	ThesesText      string // тезисы по строкам (для textarea правки)
 }
 
 // sitePageStatusLabel — человекочитаемый статус страницы сайта.
@@ -2805,6 +3054,7 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	dateFrom := r.URL.Query().Get("date_from")
 	dateTo := r.URL.Query().Get("date_to")
+	selectedTags := normalizeTagParams(r.URL.Query()["tags"])
 
 	var pages []*sitepages.Page
 	if s.sitePages != nil {
@@ -2815,12 +3065,16 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Список разделов для выпадающего фильтра (по всем страницам, до фильтрации).
+	// Списки разделов и тегов для фильтров (по всем страницам, до фильтрации).
 	sectionSet := map[string]bool{}
+	tagSet := map[string]bool{}
 	var lastCrawl time.Time
 	for _, p := range pages {
 		if p.Section != "" {
 			sectionSet[p.Section] = true
+		}
+		for _, t := range p.Tags {
+			tagSet[t] = true
 		}
 		if p.LastSeen.After(lastCrawl) {
 			lastCrawl = p.LastSeen
@@ -2868,6 +3122,10 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		if !until.IsZero() && p.LastChanged.After(until) {
 			continue
 		}
+		// Фильтр по тегам: страница должна содержать ВСЕ выбранные теги (AND).
+		if len(selectedTags) > 0 && !hasAllTags(p.Tags, selectedTags) {
+			continue
+		}
 		rows = append(rows, sitePageRow{
 			ID:          p.ID,
 			URL:         p.URL,
@@ -2875,6 +3133,7 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 			Section:     p.Section,
 			Status:      p.Status,
 			StatusLabel: sitePageStatusLabel(p.Status),
+			Tags:        p.Tags,
 			LastChanged: p.LastChanged,
 		})
 	}
@@ -2885,17 +3144,31 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Strings(sections)
 
+	allTags := make([]string, 0, len(tagSet))
+	for t := range tagSet {
+		allTags = append(allTags, t)
+	}
+	sort.Strings(allTags)
+
+	selectedSet := make(map[string]bool, len(selectedTags))
+	for _, t := range selectedTags {
+		selectedSet[t] = true
+	}
+
 	data := sitePagesPageData{
-		Rows:      rows,
-		Query:     query,
-		Section:   section,
-		Status:    status,
-		DateFrom:  dateFrom,
-		DateTo:    dateTo,
-		Sections:  sections,
-		Total:     len(rows),
-		LastCrawl: lastCrawl,
-		HasStore:  s.sitePages != nil,
+		Rows:         rows,
+		Query:        query,
+		Section:      section,
+		Status:       status,
+		DateFrom:     dateFrom,
+		DateTo:       dateTo,
+		Sections:     sections,
+		AllTags:      allTags,
+		SelectedTags: selectedTags,
+		SelectedSet:  selectedSet,
+		Total:        len(rows),
+		LastCrawl:    lastCrawl,
+		HasStore:     s.sitePages != nil,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2939,12 +3212,133 @@ func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
 		FirstSeen:   p.FirstSeen,
 		LastSeen:    p.LastSeen,
 		LastChanged: p.LastChanged,
+		Enriched:    p.Enriched(),
+		AISummary:   p.AISummary,
+		Goals:       p.Goals,
+		Theses:      p.Theses,
+		Conclusions: p.Conclusions,
+		Tags:        p.Tags,
+		CanEdit:     s.sitePageOps != nil,
+		TagsCSV:     strings.Join(p.Tags, ", "),
+		ThesesText:  strings.Join(p.Theses, "\n"),
+	}
+
+	// Связанные страницы по общим тегам (из БД).
+	if len(p.Tags) > 0 {
+		if rel, err := s.sitePages.RelatedByTags(r.Context(), p.ID, p.Tags, 6); err == nil {
+			for _, rp := range rel {
+				data.RelatedByTags = append(data.RelatedByTags, relRow{
+					ID: rp.ID, URL: rp.URL, Title: rp.Title, Section: rp.Section, Shared: rp.Shared,
+				})
+			}
+		}
+	}
+	// Семантически близкие страницы (из Qdrant, если подключён поиск).
+	if s.sitePageSim != nil {
+		if hits, err := s.sitePageSim.Related(r.Context(), p, 6); err == nil {
+			for _, h := range hits {
+				data.RelatedSemantic = append(data.RelatedSemantic, relRow{
+					ID: sitepages.IDForURL(h.URL), URL: h.URL, Title: h.Title, Section: h.Section,
+				})
+			}
+		}
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "sitepage-view-layout", data); err != nil {
 		log.Println("[admin] sitepage-view шаблон:", err)
 	}
+}
+
+// handleSitePageReannotate перезапускает ИИ-аннотирование одной страницы и
+// переиндексирует её. Доступно только при подключённых ручных операциях.
+func (s *Server) handleSitePageReannotate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePageOps == nil {
+		http.Error(w, "ручные операции над страницами не подключены", http.StatusServiceUnavailable)
+		return
+	}
+	if _, err := s.sitePageOps.ReannotateOne(r.Context(), id); err != nil {
+		http.Error(w, "ошибка аннотирования: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/sitepages/"+id, http.StatusSeeOther)
+}
+
+// handleSitePageSaveAnnotation сохраняет ручную правку аннотации куратором.
+func (s *Server) handleSitePageSaveAnnotation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePageOps == nil {
+		http.Error(w, "ручные операции над страницами не подключены", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "некорректная форма", http.StatusBadRequest)
+		return
+	}
+	ann := sitepages.Annotation{
+		Tags:        splitCSV(r.FormValue("tags")),
+		Summary:     strings.TrimSpace(r.FormValue("ai_summary")),
+		Goals:       strings.TrimSpace(r.FormValue("goals")),
+		Theses:      splitLines(r.FormValue("theses")),
+		Conclusions: strings.TrimSpace(r.FormValue("conclusions")),
+	}
+	if err := s.sitePageOps.SaveAnnotation(r.Context(), id, ann); err != nil {
+		http.Error(w, "ошибка сохранения: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/sitepages/"+id, http.StatusSeeOther)
+}
+
+// splitCSV разбивает строку «a, b, c» в список без пустых элементов.
+func splitCSV(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// splitLines разбивает многострочный ввод (textarea) в список непустых строк.
+func splitLines(raw string) []string {
+	var out []string
+	for _, l := range strings.Split(raw, "\n") {
+		if l = strings.TrimSpace(strings.TrimRight(l, "\r")); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// normalizeTagParams чистит и дедуплицирует теги из query-параметров (?tags=…).
+func normalizeTagParams(raw []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range raw {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// hasAllTags сообщает, содержит ли страница все указанные теги (регистронезависимо).
+func hasAllTags(pageTags, want []string) bool {
+	set := make(map[string]bool, len(pageTags))
+	for _, t := range pageTags {
+		set[strings.ToLower(t)] = true
+	}
+	for _, w := range want {
+		if !set[strings.ToLower(w)] {
+			return false
+		}
+	}
+	return true
 }
 
 // handleAPISitePages отдаёт страницы сайта в JSON (для интеграций).

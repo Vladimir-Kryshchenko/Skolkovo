@@ -452,9 +452,11 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
     <button onclick="runAction('scrape', this)" title="Проверить сайт Сколково и добавить новые документы (RSS-каталог)">Обновить из источников</button>
     <button onclick="runAction('index', this)" title="Перестроить поисковый индекс по всем действующим документам">Переиндексировать поиск</button>
     <button onclick="runAction('sync', this)" title="Полное обновление: загрузка документов и новостей + переиндексация поиска">Полное обновление</button>
+    <button onclick="runAction('fetch', this)" title="Скачать тела файлов (PDF/DOCX) для документов без файла на сервере. Идёт через активный прокси/обход WAF — настройте прокси на странице «Прокси», иначе WAF режет дата-центровый IP (403)">Скачать файлы</button>
     <button onclick="runAction('approve-all', this)" style="background:#00875a;color:#fff" title="Одобрить все документы «на проверке» и запустить их индексацию в RAG — документы с метаданными попадут в поиск даже без локального файла">✓ Одобрить все ({{.PendingCount}})</button>
     <button onclick="runAction('seed-local', this)" title="Добавить в поиск локальные .md-файлы из папки документов">Локальные файлы</button>
     <button onclick="runAction('navindex', this)" title="Пересобрать карту навигации сайта для чат-бота">Карта навигации</button>
+    <a href="/proxy" class="btn" title="Настройка прокси для обхода WAF dochub (нужно, чтобы скачивались тела файлов)" style="padding:5px 10px">Прокси</a>
     <div class="header-divider"></div>
     <span class="header-user" title="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
     <a href="/logout" title="Выйти из системы" style="padding: 5px 10px">Выход</a>
@@ -821,9 +823,38 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 .diff-result { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .diff-result iframe { width: 100%; height: 70vh; border: none; }
 .diff-summary { display: flex; gap: 16px; margin-bottom: 12px; }
-.diff-stat { padding: 8px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; }
+.diff-stat { padding: 4px 10px; border-radius: 6px; font-size: 12.5px; font-weight: 600; }
 .diff-stat.added { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .diff-stat.removed { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+/* Автоматическая лента сравнения версий */
+.intro { font-size: 13.5px; color: var(--text-secondary); margin-bottom: 10px; }
+.hint { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary); border-radius: var(--radius); padding: 10px 14px; font-size: 13px; }
+.hint a { color: var(--primary); font-weight: 600; }
+.empty { color: var(--text-secondary); font-size: 14px; text-align: center; padding: 24px 12px; }
+.diff-card { border-left: 4px solid var(--border); }
+.diff-card.sev-info { border-left-color: var(--primary); }
+.diff-card.sev-warning { border-left-color: #d68a00; }
+.diff-card.sev-critical { border-left-color: var(--red); }
+.diff-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.diff-card-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.doc-title { font-weight: 600; font-size: 15px; color: var(--text); }
+.cat { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: var(--surface-alt); color: var(--text-secondary); }
+.sev-badge { font-size: 11px; font-weight: 700; padding: 3px 10px; border-radius: 12px; white-space: nowrap; text-transform: uppercase; letter-spacing: .3px; }
+.sev-badge.sev-info { background: var(--primary-light); color: var(--primary); }
+.sev-badge.sev-warning { background: #fff4e0; color: #d68a00; }
+.sev-badge.sev-critical { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.sev-badge.sev-none { background: var(--surface-alt); color: var(--text-secondary); }
+.diff-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 12.5px; color: var(--text-secondary); margin-bottom: 10px; }
+.diff-meta .vpair { font-weight: 500; color: var(--text); }
+.ai-summary { font-size: 13.5px; color: var(--text); background: var(--surface-alt); border-radius: 6px; padding: 10px 14px; margin-bottom: 10px; }
+.stages { font-size: 12.5px; color: var(--text-secondary); margin-bottom: 10px; }
+.stage { display: inline-block; background: var(--primary-light); color: var(--primary); border-radius: 10px; padding: 2px 8px; font-size: 11px; margin: 0 2px; }
+.diff-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn-ghost { background: transparent; color: var(--text-secondary); border: 1px solid var(--border); }
+.btn-ghost:hover { background: var(--surface-alt); color: var(--text); }
+.reanalyze-result { font-size: 12.5px; color: var(--text); }
+.diff-frame-wrap { margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.diff-frame-wrap iframe { width: 100%; height: 65vh; border: none; display: block; }
 .spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 /* Tooltip */
@@ -880,48 +911,75 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 <div class="card">
   <h2>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
-    Сравнение версий документов
+    Автоматическое сравнение версий документов
   </h2>
-  <form method="post" action="/diff" id="diffForm">
-    <div class="form-row">
-      <div class="form-group">
-        <label for="doc1">Документ 1</label>
-        <select name="doc1" id="doc1" required title="Выберите первый документ для сравнения">
-          <option value="">— выберите —</option>
-          {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc1ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
-        </select>
-      </div>
-      <div class="form-group">
-        <label for="doc2">Документ 2</label>
-        <select name="doc2" id="doc2" required title="Выберите второй документ для сравнения">
-          <option value="">— выберите —</option>
-          {{range .Docs}}<option value="{{.ID}}" {{if eq .ID $.Doc2ID}}selected{{end}}>{{.Title}} [{{.ID}}]</option>{{end}}
-        </select>
-      </div>
-      <button type="submit" class="btn btn-primary" id="compareBtn" title="Сравнить выбранные документы">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M12 22v-8.3a4 4 0 0 0-1.172-2.872L3 3"/><path d="m15 9 6-6"/></svg>
-        Сравнить
-      </button>
-    </div>
-  </form>
+  <p class="intro">Сравнение редакций выполняется <b>автоматически</b>: как только в источнике появляется новая версия документа, ИИ-агент «Монитор» сопоставляет её с предыдущей, оценивает важность изменений и описывает их суть. Ручной выбор документов не требуется.</p>
+  {{if not .HasAI}}<div class="hint">Агент «Монитор» не настроен — пока показываются статистика правок и эвристическая оценка. Включить полноценный ИИ-анализ можно в разделе <a href="/ai/agents">ИИ → Агенты</a>.</div>{{end}}
   {{if .Error}}<div class="error-box">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
     {{.Error}}
   </div>{{end}}
 </div>
-{{if .DiffHTML}}
-<div class="card">
-  <h2>
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-    Результат сравнения
-  </h2>
-  <div class="diff-result">
-    {{.DiffHTML}}
+{{if .Unavailable}}
+<div class="card"><div class="empty">История версий недоступна: требуется Postgres-бэкенд с хранилищем версий документов.</div></div>
+{{else if not .Cards}}
+<div class="card"><div class="empty">Пока нет документов с несколькими редакциями. Как только в источнике появится новая версия документа, её автоматическое сравнение с предыдущей появится здесь.</div></div>
+{{else}}
+{{range .Cards}}
+<div class="card diff-card sev-{{.Severity}}">
+  <div class="diff-card-head">
+    <div class="diff-card-title">
+      <span class="doc-title">{{.Title}}</span>
+      {{if .Category}}<span class="cat">{{.Category}}</span>{{end}}
+    </div>
+    {{if .Severity}}<span class="sev-badge sev-{{.Severity}}">{{.SeverityText}}</span>{{else}}<span class="sev-badge sev-none">Без ИИ-оценки</span>{{end}}
+  </div>
+  <div class="diff-meta">
+    <span class="vpair">Версия {{.OldNo}} ({{.OldAt}}) → {{.NewNo}} ({{.NewAt}})</span>
+    <span class="diff-stat added">+{{.Added}}</span>
+    <span class="diff-stat removed">−{{.Removed}}</span>
+    <span class="vcount">всего версий: {{.VersionCount}}</span>
+    {{if .AnalyzedAt}}<span class="analyzed-at">анализ: {{.AnalyzedAt}}</span>{{end}}
+  </div>
+  {{if .Summary}}<div class="ai-summary"><b>Что изменилось:</b> {{.Summary}}</div>{{end}}
+  {{if .Stages}}<div class="stages">Затронутые стадии:{{range .Stages}} <span class="stage">{{.}}</span>{{end}}</div>{{end}}
+  <div class="diff-actions">
+    <button class="btn btn-ghost" onclick="toggleDiff('{{.DocID}}', this)" title="Показать построчный дифф двух последних версий">Показать полный дифф</button>
+    <button class="btn btn-primary" onclick="reanalyze('{{.DocID}}', this)" title="Запустить ИИ-агента «Монитор» заново на свежих версиях">Переанализировать (ИИ)</button>
+    <span class="reanalyze-result" id="ra-{{.DocID}}"></span>
+  </div>
+  <div class="diff-frame-wrap" id="frame-{{.DocID}}" style="display:none">
+    <iframe data-src="/diff/{{.DocID}}/full" title="Полный дифф: {{.Title}}"></iframe>
   </div>
 </div>
 {{end}}
+{{end}}
 </main>
 <script>
+function toggleDiff(id, btn) {
+  var wrap = document.getElementById('frame-' + id);
+  var ifr = wrap.querySelector('iframe');
+  if (wrap.style.display === 'none') {
+    if (!ifr.getAttribute('src')) { ifr.setAttribute('src', ifr.getAttribute('data-src')); }
+    wrap.style.display = 'block'; btn.textContent = 'Скрыть дифф';
+  } else { wrap.style.display = 'none'; btn.textContent = 'Показать полный дифф'; }
+}
+async function reanalyze(id, btn) {
+  var out = document.getElementById('ra-' + id);
+  var orig = btn.innerHTML; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>';
+  if (out) out.textContent = '';
+  try {
+    var r = await fetch('/api/diff/' + encodeURIComponent(id) + '/analyze', { method: 'POST' });
+    var j = await r.json();
+    if (j.ok && out) {
+      var sev = j.severity || 'none';
+      out.innerHTML = '<span class="sev-badge sev-' + sev + '">' + escapeHtml(j.severity_text || '—') + '</span> ' +
+        escapeHtml(j.summary || '') + ' <em>(' + (j.used_llm ? 'ИИ' : 'эвристика') + ', +' + j.added + ' −' + j.removed + ')</em>';
+    } else if (out) { out.textContent = 'Ошибка: ' + (j.error || 'неизвестно'); }
+  } catch(e) { if (out) out.textContent = 'Ошибка сети: ' + e.message; }
+  finally { btn.disabled = false; btn.innerHTML = orig; }
+}
+function escapeHtml(s) { var d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; }
 async function runAction(action, btn) {
   var orig = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span>';
@@ -1613,6 +1671,49 @@ tbody tr:hover { background: var(--surface-alt); }
 .card-head h2 { font-size: 22px; font-weight: 700; color: var(--text); }
 [data-tooltip] { position: relative; }
 [data-tooltip]:hover::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none; }
+/* ── Теги ── */
+.sp-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.sp-tag { display: inline-flex; align-items: center; background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary); border-radius: 12px; padding: 1px 9px; font-size: 11px; font-weight: 600; }
+.sp-tag.muted { background: var(--gray-bg); color: var(--text-secondary); border-color: var(--border); }
+/* ── Мультиселект тегов ── */
+.ms { position: relative; }
+.ms-toggle { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 13px; font-family: var(--font); cursor: pointer; text-align: left; }
+.ms-toggle .ms-count { background: var(--primary); color: #fff; border-radius: 10px; font-size: 11px; font-weight: 700; padding: 0 7px; }
+.ms-panel { display: none; position: absolute; z-index: 200; top: calc(100% + 4px); left: 0; right: 0; max-height: 300px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.18); padding: 6px; min-width: 220px; }
+.ms-panel.open { display: block; }
+.ms-search { width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; margin-bottom: 6px; background: var(--surface); color: var(--text); font-family: var(--font); }
+.ms-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.ms-opt:hover { background: var(--surface-alt); }
+.ms-opt input { width: auto; margin: 0; }
+.ms-empty { padding: 8px; font-size: 12px; color: var(--text-secondary); }
+/* ── ИИ-аннотация ── */
+.ai-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 16px 0; }
+@media (max-width: 768px) { .ai-grid { grid-template-columns: 1fr; } }
+.ai-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; box-shadow: var(--shadow-sm); }
+.ai-card.span2 { grid-column: 1 / -1; }
+.ai-card h3 { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--text-secondary); margin-bottom: 8px; }
+.ai-card p { font-size: 14px; line-height: 1.6; }
+.ai-card ul { margin: 0; padding-left: 18px; }
+.ai-card li { font-size: 14px; line-height: 1.6; margin-bottom: 4px; }
+.ai-empty { background: var(--surface-alt); border: 1px dashed var(--border); border-radius: var(--radius); padding: 14px 18px; font-size: 13px; color: var(--text-secondary); margin: 16px 0; }
+.rel-list { display: flex; flex-direction: column; gap: 6px; }
+.rel-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-alt); font-size: 13px; }
+.rel-item .rel-sec { color: var(--text-secondary); font-size: 11px; }
+.rel-shared { background: var(--primary-light); color: var(--primary); border-radius: 10px; font-size: 11px; font-weight: 700; padding: 0 7px; white-space: nowrap; }
+/* ── Ручные действия куратора ── */
+.sp-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 16px; }
+.btn-success { background: var(--green); color: #fff; }
+.btn-success:hover { filter: brightness(1.08); }
+.sp-edit { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); margin-bottom: 16px; }
+.sp-edit > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; font-size: 13px; color: var(--text); list-style: none; }
+.sp-edit > summary::-webkit-details-marker { display: none; }
+.sp-edit > summary::before { content: '✎  '; }
+.sp-edit-body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
+.sp-edit-body label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 2px; display: block; }
+.sp-edit-body input, .sp-edit-body textarea { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-family: var(--font); background: var(--surface); color: var(--text); outline: none; }
+.sp-edit-body input:focus, .sp-edit-body textarea:focus { border-color: var(--primary); }
+.sp-edit-body textarea { resize: vertical; min-height: 70px; }
+.sp-edit-hint { font-size: 11px; color: var(--text-secondary); }
 @media (max-width: 768px) { header { padding: 0 16px; } main { padding: 16px; } .filter-row { flex-direction: column; } .filter-group { min-width: 100%; } table { font-size: 12px; } }
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>{{end}}
@@ -1641,6 +1742,9 @@ tbody tr:hover { background: var(--surface-alt); }
 
 {{define "sp-theme-script"}}<script>
 function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);}
+function spToggleMs(e){e.stopPropagation();var p=document.getElementById('ms-panel');if(p)p.classList.toggle('open');}
+function spFilterMs(v){v=(v||'').toLowerCase();var opts=document.querySelectorAll('#ms-panel .ms-opt');for(var i=0;i<opts.length;i++){var t=opts[i].textContent.toLowerCase();opts[i].style.display=t.indexOf(v)>=0?'':'none';}}
+document.addEventListener('click',function(e){var ms=document.getElementById('ms-tags');var p=document.getElementById('ms-panel');if(ms&&p&&!ms.contains(e.target))p.classList.remove('open');});
 </script>{{end}}
 
 {{/* ===== СПИСОК СТРАНИЦ САЙТА ===== */}}
@@ -1697,6 +1801,23 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
           <option value="gone"{{if eq .Status "gone"}} selected{{end}}>Недоступна</option>
         </select>
       </div>
+      {{if .AllTags}}
+      <div class="filter-group">
+        <label>Теги</label>
+        <div class="ms" id="ms-tags">
+          <button type="button" class="ms-toggle" onclick="spToggleMs(event)" data-tooltip="Фильтр по тегам (страница содержит все выбранные)">
+            <span class="ms-label">{{if .SelectedTags}}Выбрано тегов{{else}}Все теги{{end}}</span>
+            {{if .SelectedTags}}<span class="ms-count">{{len .SelectedTags}}</span>{{else}}<span style="color:var(--text-secondary)">▾</span>{{end}}
+          </button>
+          <div class="ms-panel" id="ms-panel">
+            <input type="text" class="ms-search" placeholder="Фильтр тегов…" oninput="spFilterMs(this.value)" onclick="event.stopPropagation()">
+            {{range .AllTags}}
+            <label class="ms-opt"><input type="checkbox" name="tags" value="{{.}}"{{if index $.SelectedSet .}} checked{{end}}><span>{{.}}</span></label>
+            {{end}}
+          </div>
+        </div>
+      </div>
+      {{end}}
       <div class="filter-group">
         <label for="date_from">Изменено от</label>
         <input type="date" id="date_from" name="date_from" value="{{.DateFrom}}">
@@ -1730,6 +1851,7 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
     <td>
       <div style="font-weight:600"><a href="/sitepages/{{.ID}}" title="Открыть в просмотрщике">{{.Title}}</a></div>
       <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">{{.URL}}</div>
+      {{if .Tags}}<div class="sp-tags">{{range .Tags}}<span class="sp-tag muted">{{.}}</span>{{end}}</div>{{end}}
     </td>
     <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
     <td style="font-size:12px;white-space:nowrap" title="{{.LastChanged.Format "02.01.2006 15:04:05"}}">{{.LastChanged.Format "02.01.2006"}}</td>
@@ -1782,6 +1904,75 @@ function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('
   <span>Найдено: <b>{{.FirstSeen.Format "02.01.2006"}}</b></span>
   <span>URL: <a href="{{.URL}}" target="_blank" rel="noopener" style="font-family:monospace;word-break:break-all">{{.URL}}</a></span>
 </div>
+
+{{if .Tags}}<div class="sp-tags" style="margin-bottom:16px">{{range .Tags}}<span class="sp-tag">{{.}}</span>{{end}}</div>{{end}}
+
+{{if .Enriched}}
+<div class="ai-grid">
+  {{if .AISummary}}<div class="ai-card"><h3>Краткое описание</h3><p>{{.AISummary}}</p></div>{{end}}
+  {{if .Goals}}<div class="ai-card"><h3>Цели страницы</h3><p>{{.Goals}}</p></div>{{end}}
+  {{if .Theses}}<div class="ai-card span2"><h3>Важные тезисы</h3><ul>{{range .Theses}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+  {{if .Conclusions}}<div class="ai-card span2"><h3>Выводы</h3><p>{{.Conclusions}}</p></div>{{end}}
+</div>
+{{else}}
+<div class="ai-empty">ИИ-аннотация (теги, краткое описание, цели, тезисы, выводы) для этой страницы ещё не сформирована — она появится после ближайшего прогона агента «Аннотатор страниц».</div>
+{{end}}
+
+{{if .CanEdit}}
+<div class="sp-actions">
+  <form method="post" action="/sitepages/{{.ID}}/reannotate" style="margin:0">
+    <button type="submit" class="btn btn-success" data-tooltip="Заново сгенерировать аннотацию через ИИ">↻ Переаннотировать через ИИ</button>
+  </form>
+</div>
+<details class="sp-edit"{{if not .Enriched}} open{{end}}>
+  <summary>Править аннотацию вручную</summary>
+  <form method="post" action="/sitepages/{{.ID}}/annotation" class="sp-edit-body">
+    <div>
+      <label>Теги (через запятую)</label>
+      <input type="text" name="tags" value="{{.TagsCSV}}" placeholder="льготы, резиденты, гранты">
+    </div>
+    <div>
+      <label>Краткое описание</label>
+      <textarea name="ai_summary" placeholder="1–3 предложения о странице">{{.AISummary}}</textarea>
+    </div>
+    <div>
+      <label>Цели страницы</label>
+      <textarea name="goals" placeholder="Зачем эта страница пользователю">{{.Goals}}</textarea>
+    </div>
+    <div>
+      <label>Важные тезисы (по одному на строку)</label>
+      <textarea name="theses" placeholder="Тезис 1&#10;Тезис 2">{{.ThesesText}}</textarea>
+    </div>
+    <div>
+      <label>Выводы</label>
+      <textarea name="conclusions" placeholder="Главный практический вывод">{{.Conclusions}}</textarea>
+    </div>
+    <div class="sp-actions" style="margin:4px 0 0">
+      <button type="submit" class="btn btn-primary">Сохранить аннотацию</button>
+      <span class="sp-edit-hint">Сохранённое переиндексируется в RAG и не перезапишется автоаннотатором, пока не изменится содержимое страницы.</span>
+    </div>
+  </form>
+</details>
+{{end}}
+
+{{if .RelatedByTags}}
+<div class="ai-card" style="margin-bottom:16px">
+  <h3>Связанные страницы по общим тегам</h3>
+  <div class="rel-list">
+    {{range .RelatedByTags}}<div class="rel-item"><a href="/sitepages/{{.ID}}">{{.Title}}{{if .Section}} <span class="rel-sec">— {{.Section}}</span>{{end}}</a>{{if .Shared}}<span class="rel-shared">{{.Shared}} общих</span>{{end}}</div>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{if .RelatedSemantic}}
+<div class="ai-card" style="margin-bottom:16px">
+  <h3>Похожие страницы по смыслу</h3>
+  <div class="rel-list">
+    {{range .RelatedSemantic}}<div class="rel-item"><a href="/sitepages/{{.ID}}">{{.Title}}{{if .Section}} <span class="rel-sec">— {{.Section}}</span>{{end}}</a></div>{{end}}
+  </div>
+</div>
+{{end}}
+
 {{if .HasText}}
 <div class="text-pane">{{.Text}}</div>
 {{else}}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -279,6 +280,69 @@ func (s *Store) SeedQwenModels(ctx context.Context, apiKey string) error {
 		}
 	}
 	return nil
+}
+
+// EnabledAgentWithModel находит включённого агента указанного типа с привязанной
+// включённой моделью (с непустым API-ключом). Подходит для фоновых задач, которым
+// нужен «работающий» агент данного типа (паттерн consultantModel).
+func (s *Store) EnabledAgentWithModel(ctx context.Context, t AgentType) (Agent, Model, error) {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return Agent{}, Model{}, err
+	}
+	for _, ag := range agents {
+		if ag.AgentType != t || !ag.Enabled || ag.ModelID == "" {
+			continue
+		}
+		mdl, err := s.GetModel(ctx, ag.ModelID)
+		if err != nil || !mdl.Enabled || strings.TrimSpace(mdl.APIKey) == "" {
+			continue
+		}
+		return ag, mdl, nil
+	}
+	return Agent{}, Model{}, ErrNoUsableAgent
+}
+
+// ErrNoUsableAgent — нет включённого агента запрошенного типа с рабочей моделью.
+var ErrNoUsableAgent = errors.New("aimodels: нет включённого агента с рабочей моделью")
+
+// EnsurePageAnnotatorAgent идемпотентно создаёт агента-аннотатора страниц, если
+// его ещё нет. В отличие от SeedDefaultAgents (сидит только при нуле агентов),
+// безопасно вызывать на уже наполненной базе. Привязывает к первой включённой
+// модели; если моделей нет — создаёт выключенным (пользователь настроит в /ai/agents).
+func (s *Store) EnsurePageAnnotatorAgent(ctx context.Context) error {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ag := range agents {
+		if ag.AgentType == AgentPageAnnotator {
+			return nil // уже есть
+		}
+	}
+	modelID, enabled := "", false
+	if models, err := s.ListModels(ctx); err == nil {
+		for _, m := range models {
+			if m.Enabled {
+				modelID, enabled = m.ID, true
+				break
+			}
+		}
+		if modelID == "" && len(models) > 0 {
+			modelID = models[0].ID
+		}
+	}
+	_, err = s.CreateAgent(ctx, Agent{
+		Name:         "Аннотатор страниц сайта",
+		AgentType:    AgentPageAnnotator,
+		ModelID:      modelID,
+		SystemPrompt: DefaultSystemPrompts[AgentPageAnnotator],
+		Temperature:  0.3,
+		MaxTokens:    1024,
+		Enabled:      enabled, // включаем только если нашли рабочую модель
+		Description:  "Генерирует теги, краткое описание, цели, тезисы и выводы для страниц сайта",
+	})
+	return err
 }
 
 // SeedDefaultAgents создаёт стандартных агентов с дефолтными промптами,

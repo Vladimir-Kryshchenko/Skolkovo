@@ -29,9 +29,23 @@ CREATE TABLE IF NOT EXISTS site_pages (
     last_changed  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS text TEXT NOT NULL DEFAULT '';
+-- ИИ-обогащение (см. миграцию 010): теги, краткое описание, цели, тезисы, выводы.
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS tags         TEXT[]      NOT NULL DEFAULT '{}';
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS ai_summary   TEXT        NOT NULL DEFAULT '';
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS goals        TEXT        NOT NULL DEFAULT '';
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS theses       TEXT[]      NOT NULL DEFAULT '{}';
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS conclusions  TEXT        NOT NULL DEFAULT '';
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS enriched_at  TIMESTAMPTZ;
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS enrich_hash  TEXT        NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS idx_site_pages_section      ON site_pages (section);
 CREATE INDEX IF NOT EXISTS idx_site_pages_last_changed ON site_pages (last_changed DESC);
 CREATE INDEX IF NOT EXISTS idx_site_pages_status       ON site_pages (status);
+CREATE INDEX IF NOT EXISTS idx_site_pages_tags         ON site_pages USING GIN (tags);
+CREATE TABLE IF NOT EXISTS site_page_tags (
+    tag         TEXT        PRIMARY KEY,
+    usage_count INT         NOT NULL DEFAULT 0,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
 `
 
 // PostgresStore — хранилище страниц поверх PostgreSQL.
@@ -48,7 +62,8 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 }
 
 const selectCols = `SELECT id, url, title, summary, section, content_hash, status,
-       first_seen, last_seen, last_changed
+       first_seen, last_seen, last_changed,
+       tags, ai_summary, goals, theses, conclusions, enriched_at
 FROM site_pages`
 
 // Get возвращает страницу по ID или ErrNotFound.
@@ -101,14 +116,16 @@ UPDATE site_pages
 	return UpsertChanged, err
 }
 
-// GetWithText возвращает страницу вместе с полным текстом (для просмотрщика).
+// GetWithText возвращает страницу вместе с полным текстом и ИИ-полями (для просмотрщика).
 func (s *PostgresStore) GetWithText(ctx context.Context, id string) (*Page, error) {
 	row := s.pool.QueryRow(ctx, `SELECT id, url, title, summary, section, content_hash, status,
-       first_seen, last_seen, last_changed, text
+       first_seen, last_seen, last_changed, text,
+       tags, ai_summary, goals, theses, conclusions, enriched_at
 FROM site_pages WHERE id = $1`, id)
 	var p Page
 	err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
-		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.Text)
+		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.Text,
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -148,6 +165,152 @@ func (s *PostgresStore) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// ─── ИИ-обогащение ──────────────────────────────────────────────────────────
+
+// UpdateEnrichment сохраняет результат аннотирования страницы ИИ и фиксирует
+// enrich_hash = текущий content_hash (чтобы переаннотировать только при
+// изменении контента). Базовые поля (title/text/...) не трогаются.
+func (s *PostgresStore) UpdateEnrichment(ctx context.Context, id string, a Annotation, contentHash string) error {
+	tags := a.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+	theses := a.Theses
+	if theses == nil {
+		theses = []string{}
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE site_pages
+   SET tags=$2, ai_summary=$3, goals=$4, theses=$5, conclusions=$6,
+       enriched_at=now(), enrich_hash=$7
+ WHERE id=$1`,
+		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash)
+	return err
+}
+
+const enrichSelect = `SELECT id, url, title, summary, section, content_hash, status,
+       first_seen, last_seen, last_changed, text
+FROM site_pages`
+
+// ListNeedingEnrichment возвращает действующие страницы, ещё не аннотированные
+// или аннотированные для устаревшего контента (enrich_hash <> content_hash),
+// вместе с полным текстом. limit<=0 — без ограничения (для бэкфилла всей базы).
+func (s *PostgresStore) ListNeedingEnrichment(ctx context.Context, limit int) ([]*Page, error) {
+	q := enrichSelect + `
+WHERE status = 'active' AND (enriched_at IS NULL OR enrich_hash <> content_hash)
+ORDER BY last_changed DESC`
+	return s.queryEnrich(ctx, q, limit)
+}
+
+// ListAllForEnrichment возвращает все действующие страницы с текстом (для
+// принудительной переаннотации `enrich --all`). limit<=0 — без ограничения.
+func (s *PostgresStore) ListAllForEnrichment(ctx context.Context, limit int) ([]*Page, error) {
+	q := enrichSelect + `
+WHERE status = 'active'
+ORDER BY last_changed DESC`
+	return s.queryEnrich(ctx, q, limit)
+}
+
+func (s *PostgresStore) queryEnrich(ctx context.Context, q string, limit int) ([]*Page, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx, q+` LIMIT $1`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, q)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Page
+	for rows.Next() {
+		p, err := scanPageWithText(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ─── Словарь тегов (гибрид: ИИ переиспользует существующие, новые пополняют) ──
+
+// ListTags возвращает теги словаря, самые частые — первыми.
+func (s *PostgresStore) ListTags(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT tag FROM site_page_tags ORDER BY usage_count DESC, tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// BumpTags добавляет теги в словарь (или увеличивает их usage_count).
+func (s *PostgresStore) BumpTags(ctx context.Context, tags []string) error {
+	for _, t := range tags {
+		if t == "" {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx, `
+INSERT INTO site_page_tags (tag, usage_count) VALUES ($1, 1)
+ON CONFLICT (tag) DO UPDATE SET usage_count = site_page_tags.usage_count + 1`, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// RelatedPage — лёгкая ссылка на связанную страницу (для блока «связанные»).
+type RelatedPage struct {
+	ID      string `json:"id"`
+	URL     string `json:"url"`
+	Title   string `json:"title"`
+	Section string `json:"section"`
+	Shared  int    `json:"shared,omitempty"` // число общих тегов (для связи по тегам)
+}
+
+// RelatedByTags возвращает действующие страницы с наибольшим числом общих тегов
+// (кроме самой страницы id). Использует GIN-индекс по tags (оператор &&).
+func (s *PostgresStore) RelatedByTags(ctx context.Context, id string, tags []string, limit int) ([]RelatedPage, error) {
+	if len(tags) == 0 {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 6
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT id, url, title, section,
+       cardinality(ARRAY(SELECT unnest(tags) INTERSECT SELECT unnest($2::text[]))) AS shared
+FROM site_pages
+WHERE id <> $1 AND status = 'active' AND tags && $2::text[]
+ORDER BY shared DESC, last_changed DESC
+LIMIT $3`, id, tags, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RelatedPage
+	for rows.Next() {
+		var r RelatedPage
+		if err := rows.Scan(&r.ID, &r.URL, &r.Title, &r.Section, &r.Shared); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 type scannable interface {
 	Scan(dest ...any) error
 }
@@ -155,7 +318,19 @@ type scannable interface {
 func scanPage(row scannable) (*Page, error) {
 	var p Page
 	if err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
-		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged); err != nil {
+		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged,
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt); err != nil {
+		return nil, err
+	}
+	return &p, nil
+}
+
+// scanPageWithText сканирует базовые поля + полный текст (для аннотирования и
+// просмотрщика); ИИ-поля здесь не нужны.
+func scanPageWithText(row scannable) (*Page, error) {
+	var p Page
+	if err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
+		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.Text); err != nil {
 		return nil, err
 	}
 	return &p, nil

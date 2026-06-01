@@ -36,4 +36,18 @@ type Page struct {
 	FirstSeen   time.Time `json:"first_seen"`
 	LastSeen    time.Time `json:"last_seen"`
 	LastChanged time.Time `json:"last_changed"`
+
+	// ИИ-обогащение (заполняется агентом «Аннотатор страниц», не краулером).
+	Tags        []string   `json:"tags,omitempty"`        // авто-теги (нормализованы против словаря)
+	AISummary   string     `json:"ai_summary,omitempty"`  // краткое описание (ИИ), отличается от Summary
+	Goals       string     `json:"goals,omitempty"`       // цели страницы (ИИ)
+	Theses      []string   `json:"theses,omitempty"`      // важные тезисы (ИИ)
+	Conclusions string     `json:"conclusions,omitempty"` // выводы (ИИ)
+	EnrichedAt  *time.Time `json:"enriched_at,omitempty"` // когда аннотировано (nil — ещё нет)
+	EnrichHash  string     `json:"-"`                     // content_hash на момент аннотирования
+}
+
+// Enriched сообщает, аннотирована ли страница ИИ для текущего контента.
+func (p *Page) Enriched() bool {
+	return p.EnrichedAt != nil
 }

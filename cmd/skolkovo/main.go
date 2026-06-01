@@ -198,9 +198,11 @@ func sitePagesSeeds(cfg config.Config) []string {
 // отдельную Qdrant-коллекцию (отдельно от файлов-документов):
 //
 //	sitepages crawl        — обойти сайт и обновить таблицу site_pages;
+//	sitepages enrich       — аннотировать ИИ страницы без аннотации (теги/описание/цели/тезисы/выводы);
+//	sitepages enrich --all — переаннотировать все действующие страницы заново;
 //	sitepages index        — переиндексировать все страницы в Qdrant;
 //	sitepages search <q>   — смоук-проверка поиска (search_site_pages);
-//	sitepages              — всё сразу (crawl + index).
+//	sitepages              — всё сразу (crawl + enrich + index).
 func cmdSitePages(cfg config.Config, args []string) error {
 	action := "all"
 	if len(args) > 0 {
@@ -240,7 +242,10 @@ func cmdSitePages(cfg config.Config, args []string) error {
 	}
 
 	doCrawl := action == "all" || action == "crawl"
+	doEnrich := action == "all" || action == "enrich"
 	doIndex := action == "all" || action == "index"
+	forceEnrich := action == "enrich" && len(args) > 1 &&
+		(args[1] == "--all" || args[1] == "all" || args[1] == "--force")
 
 	if doCrawl {
 		var rec changes.Recorder
@@ -258,6 +263,24 @@ func cmdSitePages(cfg config.Config, args []string) error {
 		}
 		log.Printf("[sitepages] обход: посещено %d, новых %d, изменено %d, без изменений %d, ошибок %d",
 			rep.Visited, rep.New, rep.Changed, rep.Unchanged, len(rep.Errors))
+	}
+
+	if doEnrich {
+		aiStore := aimodels.NewStore(ps.Pool())
+		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
+		enr := sitepages.NewEnricher(aiStore, pageStore, cfg.SitePagesEnrichDelay)
+		var pend []*sitepages.Page
+		if forceEnrich {
+			pend, err = pageStore.ListAllForEnrichment(ctx, 0)
+		} else {
+			pend, err = pageStore.ListNeedingEnrichment(ctx, 0)
+		}
+		if err != nil {
+			return fmt.Errorf("страницы для аннотирования: %w", err)
+		}
+		log.Printf("[sitepages] аннотирование: к обработке %d страниц", len(pend))
+		d, s, f := enr.EnrichBatch(ctx, pend)
+		log.Printf("[sitepages] аннотирование завершено: обогащено %d, пропущено %d, ошибок %d", d, s, f)
 	}
 
 	if doIndex {
@@ -1073,11 +1096,16 @@ func cmdAdmin(cfg config.Config) error {
 		// Страницы публичного сайта (раздел «Страницы сайта»: список + просмотрщик).
 		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			srv.WithSitePageStore(sps)
+			srv.WithSitePageSearcher(sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
+			enr := sitepages.NewEnricher(aimodels.NewStore(ps.Pool()), sps, cfg.SitePagesEnrichDelay)
+			srv.WithSitePageActions(sitepages.NewAdminService(sps, enr, newSitePagesIndexer(cfg)))
 		}
 		// Подключаем хранилища льгот и НПА.
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		srv.WithPreferenceStore(pss)
 		srv.WithNPAStore(pss)
+		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
+		srv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
 	}
 
 	// Подключаем AI-хранилище (только для Postgres-бэкенда).
@@ -1218,6 +1246,8 @@ func cmdServe(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		adminSrv.WithPreferenceStore(pss)
 		adminSrv.WithNPAStore(pss)
+		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
+		adminSrv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
 
 		// Лента изменений нужна странице /changes (в режиме serve её раньше
 		// не подключали — страница истории получалась пустой).
@@ -1235,6 +1265,9 @@ func cmdServe(cfg config.Config) error {
 		// Страницы публичного сайта (раздел «Страницы сайта»).
 		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			adminSrv.WithSitePageStore(sps)
+			adminSrv.WithSitePageSearcher(sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
+			enr := sitepages.NewEnricher(aimodels.NewStore(ps.Pool()), sps, cfg.SitePagesEnrichDelay)
+			adminSrv.WithSitePageActions(sitepages.NewAdminService(sps, enr, newSitePagesIndexer(cfg)))
 		}
 	}
 
@@ -1578,6 +1611,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	var healthStore health.Store
 	var changeStore changes.Recorder
 	var sitePageStore *sitepages.PostgresStore
+	var aiStore *aimodels.Store
 
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
@@ -1595,6 +1629,34 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			sitePageStore = sps
 		}
+		aiStore = aimodels.NewStore(ps.Pool())
+	}
+
+	// ИИ-обогащение страниц сайта (теги/описание/цели/тезисы/выводы). Безопасно,
+	// если агент «Аннотатор страниц» не настроен — аннотирование просто пропускается.
+	var sitePageEnricher *sitepages.Enricher
+	if cfg.SitePagesEnrichEnabled && aiStore != nil && sitePageStore != nil {
+		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
+		sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
+		// Стартовый бэкфилл: единожды аннотируем все ещё не обогащённые страницы.
+		go func() {
+			pend, err := sitePageStore.ListNeedingEnrichment(ctx, 0)
+			if err != nil || len(pend) == 0 {
+				return
+			}
+			log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц", len(pend))
+			d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+			log.Printf("[serve:sitepages] бэкфилл аннотаций завершён: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+			if d > 0 {
+				if pages, lerr := sitePageStore.ListAll(ctx); lerr == nil {
+					if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+						log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
+					} else {
+						log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
+					}
+				}
+			}
+		}()
 	}
 
 	// proxyResolver: активный прокси из админки, иначе статический PROXY_URL.
@@ -1752,6 +1814,13 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 					recordHealth("sitepages", rep.New+rep.Changed, nil)
 					// Инкрементально доиндексируем изменённые/новые страницы.
 					if rep.New+rep.Changed > 0 {
+						// Сначала аннотируем новые/изменённые страницы через ИИ.
+						if sitePageEnricher != nil {
+							if pend, perr := sitePageStore.ListNeedingEnrichment(ctx, rep.New+rep.Changed); perr == nil && len(pend) > 0 {
+								d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+								log.Printf("[serve:sitepages] аннотирование: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+							}
+						}
 						if pages, lerr := sitePageStore.ListRecent(ctx, rep.New+rep.Changed); lerr == nil {
 							if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
 								log.Printf("[serve:sitepages] индексация: %v", ierr)

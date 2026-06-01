@@ -85,6 +85,10 @@ type Config struct {
 	SitePagesSeeds    string // стартовые URL обхода через запятую
 	SitePagesMaxPages int    // лимит страниц за обход
 
+	// ИИ-обогащение страниц сайта (теги, описание, цели, тезисы, выводы)
+	SitePagesEnrichEnabled bool          // запускать аннотирование страниц через ИИ-агента
+	SitePagesEnrichDelay   time.Duration // пауза между LLM-запросами при аннотировании (троттлинг)
+
 	// Льготы резидентов (preferences)
 	PreferencesEnabled bool
 	PreferencesURL     string // основной URL страницы льгот
@@ -209,6 +213,10 @@ func Load() Config {
 		SitePagesEnabled:  envBool("SITEPAGES_ENABLED", true),
 		SitePagesSeeds:    env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
 		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 0), // 0 = без лимита
+
+		// ИИ-обогащение страниц сайта
+		SitePagesEnrichEnabled: envBool("SITEPAGES_ENRICH_ENABLED", true),
+		SitePagesEnrichDelay:   envDuration("SITEPAGES_ENRICH_DELAY", 1*time.Second),
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),

@@ -392,6 +392,12 @@ func pageID(rawURL string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// IDForURL — публичная обёртка над pageID: ID страницы по её URL (для ссылок на
+// просмотрщик из результатов семантического поиска, где известен только URL).
+func IDForURL(rawURL string) string {
+	return pageID(rawURL)
+}
+
 // normalizeURL приводит URL к каноничному виду: схема/хост в нижний регистр,
 // без query, фрагмента и хвостового «/».
 func normalizeURL(rawURL string) string {

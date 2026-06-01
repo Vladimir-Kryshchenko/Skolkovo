@@ -68,21 +68,6 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
 .flash { padding: 10px 14px; border-radius: var(--radius); margin-bottom: 16px; font-size: 13px; font-weight: 500; }
 .flash.ok { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .flash.err { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
-.role-switch { display: flex; gap: 8px; margin-bottom: 20px; }
-.role-option { flex: 1; padding: 14px 10px; border: 2px solid var(--border); border-radius: var(--radius); text-align: center; cursor: pointer; transition: all .15s; font-size: 13px; font-weight: 600; color: var(--text-secondary); background: var(--surface); }
-.role-option:hover { border-color: var(--primary); }
-.role-option.active { border-color: var(--primary); background: var(--primary-light); }
-.role-option input { display: none; }
-.role-badge { width: 32px; height: 32px; margin: 0 auto 8px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 700; color: #fff; }
-.role-option[data-role="admin"] .role-badge { background: var(--primary); }
-.role-option[data-role="user"] .role-badge { background: var(--green); }
-.role-option[data-role="viewer"] .role-badge { background: #7a5900; }
-.role-option.active[data-role="admin"] .role-badge { background: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.2); }
-.role-option.active[data-role="user"] .role-badge { background: var(--green); box-shadow: 0 0 0 3px rgba(0,134,83,.2); }
-.role-option.active[data-role="viewer"] .role-badge { background: #7a5900; box-shadow: 0 0 0 3px rgba(122,89,0,.2); }
-.role-label { font-size: 12px; font-weight: 600; }
-.role-option.active .role-label { color: var(--primary); }
-.role-desc { font-size: 10px; color: var(--text-secondary); margin-top: 2px; line-height: 1.3; }
 .footer { text-align: center; margin-top: 20px; font-size: 12px; color: var(--text-secondary); }
 .footer a { color: var(--primary); text-decoration: none; }
 .footer a:hover { text-decoration: underline; }
@@ -104,7 +89,6 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
 }
 @media (max-width: 480px) {
   .card { padding: 24px; }
-  .role-switch { flex-direction: column; }
 }
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
@@ -125,29 +109,6 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
   {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
   <form method="POST" action="/login">
     <div class="form-group">
-      <label for="role">Роль</label>
-      <div class="role-switch">
-        <label class="role-option active" data-role="admin" onclick="selectRole('admin', this)" title="Полный доступ: управление документами, настройка ИИ, индексация">
-          <input type="radio" name="role" value="admin" checked>
-          <div class="role-badge">А</div>
-          <div class="role-label">Администратор</div>
-          <div class="role-desc">Полный доступ</div>
-        </label>
-        <label class="role-option" data-role="user" onclick="selectRole('user', this)" title="Рабочий доступ: управление документами, без настроек системы">
-          <input type="radio" name="role" value="user">
-          <div class="role-badge">П</div>
-          <div class="role-label">Пользователь</div>
-          <div class="role-desc">Рабочий доступ</div>
-        </label>
-        <label class="role-option" data-role="viewer" onclick="selectRole('viewer', this)" title="Только просмотр: просмотр документов без возможности редактирования">
-          <input type="radio" name="role" value="viewer">
-          <div class="role-badge">Н</div>
-          <div class="role-label">Наблюдатель</div>
-          <div class="role-desc">Только просмотр</div>
-        </label>
-      </div>
-    </div>
-    <div class="form-group">
       <label for="username">Имя пользователя</label>
       <input type="text" id="username" name="username" placeholder="Введите логин" required autocomplete="username" title="Имя пользователя, выданное администратором">
     </div>
@@ -155,18 +116,13 @@ body { font-family: var(--font); background: var(--bg); min-height: 100vh; displ
       <label for="password">Пароль</label>
       <input type="password" id="password" name="password" placeholder="Введите пароль" required autocomplete="current-password" title="Пароль для входа в систему">
     </div>
-    <button type="submit" class="btn btn-primary" title="Войти в систему с выбранной ролью">Войти</button>
+    <button type="submit" class="btn btn-primary" title="Войти в систему">Войти</button>
   </form>
   <div class="footer">
     <a href="/" title="Вернуться на главную страницу">Вернуться на главную</a>
   </div>
 </div>
 <script>
-function selectRole(role, el) {
-  document.querySelectorAll('.role-option').forEach(function(o) { o.classList.remove('active'); });
-  el.classList.add('active');
-  el.querySelector('input').checked = true;
-}
 function toggleTheme() {
   var r = document.documentElement;
   var cur = r.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');

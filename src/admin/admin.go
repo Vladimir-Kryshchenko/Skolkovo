@@ -100,29 +100,16 @@ type Server struct {
 	authStore    *adminAuthStore
 }
 
-// envOrDefault возвращает значение переменной окружения или значение по умолчанию.
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 // New создаёт админку.
 func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 	fetchWait time.Duration, st store.Store, ragSvc *rag.Service) *Server {
 	authStore := newAdminAuthStore()
-	// Администратор — обязателен, задаётся через ENV (ADMIN_USER/ADMIN_PASSWORD).
+	// В админ-панель входит ТОЛЬКО администратор (ADMIN_USER/ADMIN_PASSWORD).
+	// Остальные пользователи работают с базой не через эту панель, а через
+	// MCP-сервер, Telegram-бот и ИИ-агентов (чат-виджет, портал, консультант).
+	// Платформа автономна: администратор лишь следит за стабильностью.
 	if user != "" && pass != "" {
 		authStore.AddUser(user, pass, "Администратор", RoleAdmin)
-	}
-	// Доп. учётки (редактор/наблюдатель) создаются ТОЛЬКО если их пароль задан
-	// через ENV. Никаких дефолтных слабых паролей — иначе это дыра в безопасности.
-	if p := os.Getenv("ADMIN_EDITOR_PASSWORD"); p != "" {
-		authStore.AddUser(envOrDefault("ADMIN_EDITOR_USER", "editor"), p, "Редактор", RoleUser)
-	}
-	if p := os.Getenv("ADMIN_VIEWER_PASSWORD"); p != "" {
-		authStore.AddUser(envOrDefault("ADMIN_VIEWER_USER", "viewer"), p, "Наблюдатель", RoleViewer)
 	}
 
 	// Инициализируем менеджер прокси и хранилище куки dochub.

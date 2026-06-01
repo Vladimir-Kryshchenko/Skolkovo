@@ -1634,8 +1634,10 @@ func sendDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
 // FAQ, Telegram-каналов, льгот и НПА.
 func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager) {
-	ticker := time.NewTicker(cfg.ScrapeInterval)
-	defer ticker.Stop()
+	// Первый прогон — сразу при старте serve (After(0)), далее каждый интервал.
+	// Иначе после рестарта источники (мероприятия/конкурсы/sitepages + скачивание
+	// тел по куке) не обновлялись бы до первого тика (6 ч по умолчанию).
+	tick := time.After(0)
 
 	var eventStore store.EventStore
 	var contestStore store.ContestStore
@@ -1715,8 +1717,9 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			// Полный headless-цикл: обход сайта (обход WAF) + скачивание тел файлов.
+		case <-tick:
+			tick = time.After(cfg.ScrapeInterval) // запланировать следующий прогон
+			// Скачивание тел файлов dochub (по куке) + обновление источников.
 			runScheduledCollect(ctx, cfg, st, svc, pm, recordHealth)
 
 			// Мероприятия

@@ -1521,6 +1521,7 @@ document.addEventListener('DOMContentLoaded', function() {
       <div class="health-body">
         <div class="health-name">{{.Label}}</div>
         <div class="health-meta">{{.StateLabel}} · {{.LastSuccess}}</div>
+        {{if .LastError}}<div class="health-err" title="{{.LastError}}" style="font-size:11px;color:var(--red,#7a0606);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⚠ {{.LastError}}</div>{{end}}
       </div>
     </div>
     {{end}}

@@ -1115,6 +1115,15 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 				func(m string) { log.Printf("[admin/api] %s", m) })
 			added := s.registerCookieDocs(ctx, docs)
 			log.Printf("[admin/api] скачивание по куке завершено: файлов %d, в реестр %d, ошибок %d (часть ошибок — «мёртвые» дубли /m/docs/, это норма)", len(docs), added, len(errs))
+			// Фиксируем результат в мониторинге свежести, чтобы провал (например,
+			// протухшая кука → 403 на всё) был виден в админке, а не только в логах.
+			var runErr error
+			if len(docs) == 0 && len(errs) > 0 {
+				runErr = fmt.Errorf("скачано 0 файлов, ошибок %d — вероятно, кука dochub протухла, обновите её: %s", len(errs), errs[0])
+			}
+			if s.healthStore != nil {
+				_ = s.healthStore.Record(ctx, "collect", len(docs), runErr)
+			}
 		}()
 		jsonResp(w, true, "Скачивание тел файлов по куке запущено в фоне (без браузера и прокси). Обновите страницу через пару минут.", "")
 		return
@@ -2709,6 +2718,7 @@ type sourceHealthRow struct {
 	StateLabel  string
 	LastSuccess string
 	Items       int
+	LastError   string // текст последней ошибки (показывается для failing/stale)
 }
 
 type changesStats struct {
@@ -3001,12 +3011,19 @@ func (s *Server) sourceHealthRows(ctx context.Context) []sourceHealthRow {
 		if src.LastSuccessAt != nil {
 			last = src.LastSuccessAt.Format("02.01.2006 15:04")
 		}
+		// Текст ошибки показываем только когда источник реально проблемный —
+		// чтобы админ видел ЧТО чинить, а не просто «ошибки».
+		lastErr := ""
+		if src.LastError != "" && (state == health.StatusFailing || state == health.StatusStale) {
+			lastErr = src.LastError
+		}
 		rows = append(rows, sourceHealthRow{
 			Label:       sourceLabel(src.Name),
 			State:       string(state),
 			StateLabel:  healthStateLabel(state),
 			LastSuccess: last,
 			Items:       src.ItemsLastRun,
+			LastError:   lastErr,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Label < rows[j].Label })

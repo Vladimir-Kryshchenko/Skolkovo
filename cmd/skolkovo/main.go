@@ -1479,39 +1479,6 @@ func cmdServe(cfg config.Config) error {
 				})
 			})
 		}
-
-		// ИИ-разметка документов (категория/подкатегория/теги) агентом «Аннотатор
-		// документов». Стартовый бэкфилл: размечаем действующие документы без
-		// разметки/с изменившимся файлом и переиндексируем (теги/подкатегория → payload).
-		if cfg.DocEnrichEnabled {
-			docAI := aimodels.NewStore(ps.Pool())
-			if err := docAI.EnsureDocAnnotatorAgent(ctx); err != nil {
-				log.Printf("[serve:docenrich] не удалось создать агента «Аннотатор документов»: %v", err)
-			}
-			docEnricher := docenrich.New(docAI, ps, cfg.DocEnrichDelay)
-			go func() {
-				pend, err := ps.ListNeedingEnrichment(ctx, 0)
-				if err != nil {
-					log.Printf("[serve:docenrich] выборка на разметку: %v", err)
-					return
-				}
-				if len(pend) == 0 {
-					return
-				}
-				log.Printf("[serve:docenrich] стартовый бэкфилл разметки: %d документов", len(pend))
-				d, s, f := docEnricher.EnrichBatch(ctx, pend)
-				log.Printf("[serve:docenrich] бэкфилл завершён: размечено %d, пропущено %d, ошибок %d", d, s, f)
-				if d > 0 {
-					reindexed := 0
-					for _, doc := range pend {
-						if _, ierr := svc.IndexDocument(ctx, doc.ID); ierr == nil {
-							reindexed++
-						}
-					}
-					log.Printf("[serve:docenrich] переиндексировано %d документов после разметки", reindexed)
-				}
-			}()
-		}
 	}
 
 	go func() {
@@ -2169,6 +2136,41 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 			runScheduledCollect(ctx, cfg, st, svc, pm, recordHealth)
 			return jobsched.RunResult{}, nil
 		})
+
+	// --- ИИ-разметка документов (категория, подкатегория, теги) ---
+	// Размечает действующие документы без разметки/с изменившимся файлом и
+	// переиндексирует их (теги/подкатегория → payload Qdrant). Учёт токенов ИИ
+	// привязан к прогону через run_id. Первый прогон — при старте (TriggerStartup).
+	if cfg.DocEnrichEnabled && aiStore != nil {
+		if pgDocs, ok := st.(*store.PostgresStore); ok {
+			if err := aiStore.EnsureDocAnnotatorAgent(ctx); err != nil {
+				log.Printf("[jobsched:doc_enrich] не удалось создать агента «Аннотатор документов»: %v", err)
+			}
+			docEnricher := docenrich.New(aiStore, pgDocs, cfg.DocEnrichDelay)
+			runner.Register("doc_enrich", "ИИ-разметка документов (категория, подкатегория, теги)", cfg.ScrapeInterval,
+				func(ctx context.Context) (jobsched.RunResult, error) {
+					pend, err := pgDocs.ListNeedingEnrichment(ctx, 0)
+					if err != nil {
+						recordHealth("doc_enrich", 0, err)
+						return jobsched.RunResult{}, err
+					}
+					if len(pend) == 0 {
+						recordHealth("doc_enrich", 0, nil)
+						return jobsched.RunResult{}, nil
+					}
+					d, s, f := docEnricher.EnrichBatch(ctx, pend)
+					reindexed := 0
+					for _, doc := range pend {
+						if _, ierr := svc.IndexDocument(ctx, doc.ID); ierr == nil {
+							reindexed++
+						}
+					}
+					recordHealth("doc_enrich", d, nil)
+					log.Printf("[jobsched:doc_enrich] размечено %d, пропущено %d, ошибок %d, переиндексировано %d", d, s, f, reindexed)
+					return jobsched.RunResult{ItemsNew: d, ItemsUpdated: f, ItemsTotal: len(pend)}, nil
+				})
+		}
+	}
 
 	// --- Мероприятия ---
 	if cfg.EventsSourceURL != "" && eventStore != nil {

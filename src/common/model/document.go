@@ -24,7 +24,15 @@ type Document struct {
 	FetchedAt    time.Time  `json:"fetched_at"`
 	Status       Status     `json:"status"`
 	Category     string     `json:"category,omitempty"`
-	VersionLabel string     `json:"version_label,omitempty"`
+	// Subcategory — уточняющая подкатегория (ИИ-разметка), опционально.
+	Subcategory string `json:"subcategory,omitempty"`
+	// Tags — авто-теги документа (ИИ), нормализованы против словаря document_tags.
+	Tags []string `json:"tags,omitempty"`
+	// EnrichedAt — когда документ последний раз размечен ИИ (nil — ещё не размечен).
+	EnrichedAt *time.Time `json:"enriched_at,omitempty"`
+	// EnrichHash — file_hash на момент ИИ-разметки; переразмечаем при изменении файла.
+	EnrichHash   string `json:"enrich_hash,omitempty"`
+	VersionLabel string `json:"version_label,omitempty"`
 	ValidFrom    *time.Time `json:"valid_from,omitempty"`
 	ValidTo      *time.Time `json:"valid_to,omitempty"`
 	Supersedes   string     `json:"supersedes,omitempty"`

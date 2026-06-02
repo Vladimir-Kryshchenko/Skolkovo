@@ -600,6 +600,18 @@ document.addEventListener('DOMContentLoaded', function() {
     </select>
   </div>
   <div class="filter-field">
+    <label title="Подкатегория (ИИ-разметка)">Подкатегория</label>
+    <select name="subcategory">
+      <option value="">Все</option>
+      {{range .Subcategories}}<option value="{{.}}"{{if eq . $.FilterSubcategory}} selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </div>
+  <div class="filter-field">
+    <label title="Теги через запятую (документ должен содержать все); ИИ-разметка">Теги</label>
+    <input type="text" name="tags" value="{{.FilterTags}}" placeholder="напр. налоги, отчётность" list="all-tags">
+    <datalist id="all-tags">{{range .AllTags}}<option value="{{.}}">{{end}}</datalist>
+  </div>
+  <div class="filter-field">
     <label title="Когда запись обновлялась в базе">Обновлено от</label>
     <input type="date" name="updated_from" value="{{.UpdatedFrom}}">
   </div>
@@ -652,6 +664,8 @@ document.addEventListener('DOMContentLoaded', function() {
       <input type="text" value="{{.Category}}" placeholder="категория"
              onchange="saveCategory('{{.ID}}', this.value, this)"
              style="width:140px" title="Категория документа. Нажмите Enter или уйдите с поля для сохранения">
+      {{if .Subcategory}}<div style="font-size:11px;color:var(--text-secondary);margin-top:3px" title="Подкатегория (ИИ-разметка)">⤷ {{.Subcategory}}</div>{{end}}
+      {{if .Tags}}<div style="margin-top:4px;display:flex;gap:3px;flex-wrap:wrap" title="Теги (ИИ-разметка)">{{range .Tags}}<span class="cat" style="font-size:10px">{{.}}</span>{{end}}</div>{{end}}
     </td>
     <td><span class="badge s-{{.Status}}">{{.Status}}</span></td>
     <td>

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -226,6 +227,20 @@ func FilterActive() map[string]any {
 			map[string]any{"key": "status", "match": map[string]any{"value": "действует"}},
 		},
 	}
+}
+
+// FilterActiveTags — действующие документы, содержащие ВСЕ указанные теги.
+// Пустой список тегов эквивалентен FilterActive.
+func FilterActiveTags(tags []string) map[string]any {
+	must := []any{
+		map[string]any{"key": "status", "match": map[string]any{"value": "действует"}},
+	}
+	for _, t := range tags {
+		if t = strings.TrimSpace(t); t != "" {
+			must = append(must, map[string]any{"key": "tags", "match": map[string]any{"value": t}})
+		}
+	}
+	return map[string]any{"must": must}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

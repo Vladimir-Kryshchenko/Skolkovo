@@ -93,6 +93,10 @@ type Config struct {
 	SitePagesEnrichEnabled bool          // запускать аннотирование страниц через ИИ-агента
 	SitePagesEnrichDelay   time.Duration // пауза между LLM-запросами при аннотировании (троттлинг)
 
+	// ИИ-разметка документов (категория, подкатегория, теги) через агента «Аннотатор документов»
+	DocEnrichEnabled bool          // запускать ИИ-разметку документов
+	DocEnrichDelay   time.Duration // пауза между LLM-запросами при разметке (троттлинг)
+
 	// Льготы резидентов (preferences)
 	PreferencesEnabled bool
 	PreferencesURL     string // основной URL страницы льгот
@@ -225,6 +229,8 @@ func Load() Config {
 		// ИИ-обогащение страниц сайта
 		SitePagesEnrichEnabled: envBool("SITEPAGES_ENRICH_ENABLED", true),
 		SitePagesEnrichDelay:   envDuration("SITEPAGES_ENRICH_DELAY", 1*time.Second),
+		DocEnrichEnabled:       envBool("DOC_ENRICH_ENABLED", true),
+		DocEnrichDelay:         envDuration("DOC_ENRICH_DELAY", 1*time.Second),
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),

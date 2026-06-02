@@ -77,6 +77,11 @@ services:
       # модель вручную в /ai/models и включите агента «Аннотатор страниц».
       SITEPAGES_ENRICH_ENABLED: ${SITEPAGES_ENRICH_ENABLED:-true}
       SITEPAGES_ENRICH_DELAY: ${SITEPAGES_ENRICH_DELAY:-1s}
+      # ИИ-разметка документов (категория/подкатегория/теги) агентом «Аннотатор
+      # документов». Требует настроенной LLM-модели (QWEN_API_KEY ниже или модель
+      # в /ai/models + включённый агент). На старте — бэкфилл действующих документов.
+      DOC_ENRICH_ENABLED: ${DOC_ENRICH_ENABLED:-true}
+      DOC_ENRICH_DELAY: ${DOC_ENRICH_DELAY:-1s}
       # Ключ Alibaba Cloud (Qwen): при наличии авто-сидятся модели и агенты —
       # включая «Аннотатор страниц». Без него ИИ-аннотирование и LLM-синтез
       # консультанта не работают (страницы остаются без тегов/аннотаций).

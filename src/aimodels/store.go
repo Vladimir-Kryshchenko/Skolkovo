@@ -345,6 +345,44 @@ func (s *Store) EnsurePageAnnotatorAgent(ctx context.Context) error {
 	return err
 }
 
+// EnsureDocAnnotatorAgent идемпотентно создаёт агента-аннотатора документов
+// (категория/подкатегория/теги), если его ещё нет. Привязывает к первой
+// включённой модели; если моделей нет — создаёт выключенным.
+func (s *Store) EnsureDocAnnotatorAgent(ctx context.Context) error {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return err
+	}
+	for _, ag := range agents {
+		if ag.AgentType == AgentDocAnnotator {
+			return nil // уже есть
+		}
+	}
+	modelID, enabled := "", false
+	if models, err := s.ListModels(ctx); err == nil {
+		for _, m := range models {
+			if m.Enabled {
+				modelID, enabled = m.ID, true
+				break
+			}
+		}
+		if modelID == "" && len(models) > 0 {
+			modelID = models[0].ID
+		}
+	}
+	_, err = s.CreateAgent(ctx, Agent{
+		Name:         "Аннотатор документов",
+		AgentType:    AgentDocAnnotator,
+		ModelID:      modelID,
+		SystemPrompt: DefaultSystemPrompts[AgentDocAnnotator],
+		Temperature:  0.2,
+		MaxTokens:    512,
+		Enabled:      enabled,
+		Description:  "Авто-проставляет категорию, подкатегорию и теги нормативным документам",
+	})
+	return err
+}
+
 // SeedDefaultAgents создаёт стандартных агентов с дефолтными промптами,
 // если агентов ещё нет.
 func (s *Store) SeedDefaultAgents(ctx context.Context, defaultModelID string) error {

@@ -76,6 +76,12 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 		if doc.Category != "" {
 			meta += " | " + doc.Category
 		}
+		if doc.Subcategory != "" {
+			meta += " | " + doc.Subcategory
+		}
+		if len(doc.Tags) > 0 {
+			meta += " | " + strings.Join(doc.Tags, ", ")
+		}
 		if doc.SourceURL != "" {
 			meta += " | " + doc.SourceURL
 		}
@@ -124,6 +130,8 @@ func (s *Service) IndexDocument(ctx context.Context, docID string) (int, error) 
 				"title":       doc.Title,
 				"source_url":  doc.SourceURL,
 				"category":    doc.Category,
+				"subcategory": doc.Subcategory,
+				"tags":        doc.Tags,
 				"status":      string(doc.Status),
 				"entity_type": "document",
 				"chunk_index": i,
@@ -269,18 +277,30 @@ func (s *Service) RemoveDocument(ctx context.Context, docID string) error {
 
 // Result — найденный фрагмент с метаданными документа.
 type Result struct {
-	DocumentID string  `json:"document_id"`
-	Title      string  `json:"title"`
-	SourceURL  string  `json:"source_url"`
-	Category   string  `json:"category"`
-	EntityType string  `json:"entity_type,omitempty"`
-	ChunkIndex int     `json:"chunk_index"`
-	Text       string  `json:"text"`
-	Score      float32 `json:"score"`
+	DocumentID  string   `json:"document_id"`
+	Title       string   `json:"title"`
+	SourceURL   string   `json:"source_url"`
+	Category    string   `json:"category"`
+	Subcategory string   `json:"subcategory,omitempty"`
+	Tags        []string `json:"tags,omitempty"`
+	EntityType  string   `json:"entity_type,omitempty"`
+	ChunkIndex  int      `json:"chunk_index"`
+	Text        string   `json:"text"`
+	Score       float32  `json:"score"`
 }
 
 // Search ищет релевантные фрагменты среди действующих документов.
 func (s *Service) Search(ctx context.Context, query string, limit int) ([]Result, error) {
+	return s.searchFiltered(ctx, query, limit, qdrant.FilterActive())
+}
+
+// SearchWithTags ищет среди действующих документов, содержащих ВСЕ указанные теги
+// (пустой список тегов эквивалентен Search).
+func (s *Service) SearchWithTags(ctx context.Context, query string, limit int, tags []string) ([]Result, error) {
+	return s.searchFiltered(ctx, query, limit, qdrant.FilterActiveTags(tags))
+}
+
+func (s *Service) searchFiltered(ctx context.Context, query string, limit int, filter map[string]any) ([]Result, error) {
 	if limit <= 0 {
 		limit = 5
 	}
@@ -291,21 +311,23 @@ func (s *Service) Search(ctx context.Context, query string, limit int) ([]Result
 	if len(vecs) == 0 {
 		return nil, fmt.Errorf("пустой эмбеддинг запроса")
 	}
-	hits, err := s.Qdr.Search(ctx, vecs[0], limit, qdrant.FilterActive())
+	hits, err := s.Qdr.Search(ctx, vecs[0], limit, filter)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Result, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, Result{
-			DocumentID: asString(h.Payload["document_id"]),
-			Title:      asString(h.Payload["title"]),
-			SourceURL:  asString(h.Payload["source_url"]),
-			Category:   asString(h.Payload["category"]),
-			EntityType: asString(h.Payload["entity_type"]),
-			ChunkIndex: asInt(h.Payload["chunk_index"]),
-			Text:       asString(h.Payload["text"]),
-			Score:      h.Score,
+			DocumentID:  asString(h.Payload["document_id"]),
+			Title:       asString(h.Payload["title"]),
+			SourceURL:   asString(h.Payload["source_url"]),
+			Category:    asString(h.Payload["category"]),
+			Subcategory: asString(h.Payload["subcategory"]),
+			Tags:        asStrings(h.Payload["tags"]),
+			EntityType:  asString(h.Payload["entity_type"]),
+			ChunkIndex:  asInt(h.Payload["chunk_index"]),
+			Text:        asString(h.Payload["text"]),
+			Score:       h.Score,
 		})
 	}
 	return out, nil
@@ -316,6 +338,23 @@ func asString(v any) string {
 		return s
 	}
 	return ""
+}
+
+// asStrings приводит payload-значение (Qdrant отдаёт массивы как []any) к []string.
+func asStrings(v any) []string {
+	switch arr := v.(type) {
+	case []string:
+		return arr
+	case []any:
+		out := make([]string, 0, len(arr))
+		for _, e := range arr {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 func asInt(v any) int {

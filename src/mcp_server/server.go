@@ -108,6 +108,7 @@ func (s *Server) buildMCP() *server.MCPServer {
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Поисковый запрос на естественном языке")),
+			mcp.WithString("tags", mcp.Description("Фильтр по тегам через запятую (документ должен содержать ВСЕ указанные теги); необязательно")),
 			mcp.WithNumber("limit", mcp.Description("Сколько фрагментов вернуть (по умолчанию 5)")),
 		),
 		s.handleSearch,
@@ -158,7 +159,13 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError("параметр query обязателен"), nil
 	}
 	limit := req.GetInt("limit", 5)
-	results, err := s.rag.Search(ctx, query, limit)
+	tags := splitTags(req.GetString("tags", ""))
+	var results []rag.Result
+	if len(tags) > 0 {
+		results, err = s.rag.SearchWithTags(ctx, query, limit, tags)
+	} else {
+		results, err = s.rag.Search(ctx, query, limit)
+	}
 	if err != nil {
 		return mcp.NewToolResultError("ошибка поиска: " + err.Error()), nil
 	}

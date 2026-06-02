@@ -251,14 +251,18 @@ type pageData struct {
 	Query          string
 	Flash          string
 	FlashKind      string
-	FilterStatus   string
-	FilterCategory string   // выбранная категория
-	UpdatedFrom    string   // fetched_at от (YYYY-MM-DD)
-	UpdatedTo      string   // fetched_at до
-	PublishedFrom  string   // published_at (загрузка на sk.ru) от
-	PublishedTo    string   // published_at до
-	Categories     []string // список категорий для выпадающего фильтра
-	BaseQS         string   // прочие фильтры без status — для ссылок-вкладок статусов
+	FilterStatus      string
+	FilterCategory    string   // выбранная категория
+	FilterSubcategory string   // выбранная подкатегория
+	FilterTags        string   // выбранные теги (через запятую) — для поля ввода
+	UpdatedFrom       string   // fetched_at от (YYYY-MM-DD)
+	UpdatedTo         string   // fetched_at до
+	PublishedFrom     string   // published_at (загрузка на sk.ru) от
+	PublishedTo       string   // published_at до
+	Categories        []string // список категорий для выпадающего фильтра
+	Subcategories     []string // список подкатегорий для выпадающего фильтра
+	AllTags           []string // словарь тегов (datalist для поля ввода)
+	BaseQS            string   // прочие фильтры без status — для ссылок-вкладок статусов
 	Tab            string
 	Settings       model.SchedulerSettings
 	Reports        []model.CollectorReport
@@ -624,6 +628,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
 	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	subcategory := strings.TrimSpace(r.URL.Query().Get("subcategory"))
+	tagsFilter := parseTagsCSV(r.URL.Query().Get("tags"))
 	updatedFrom := r.URL.Query().Get("updated_from")
 	updatedTo := r.URL.Query().Get("updated_to")
 	publishedFrom := r.URL.Query().Get("published_from")
@@ -649,6 +655,8 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 
 	var docs []docView
 	categorySet := map[string]bool{}
+	subcategorySet := map[string]bool{}
+	tagSet := map[string]bool{}
 	if tab == "documents" {
 		allDocs, err := s.store.List(r.Context(), store.Filter{})
 		if err != nil {
@@ -661,6 +669,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 			if d.Category != "" {
 				categorySet[d.Category] = true
 			}
+			if d.Subcategory != "" {
+				subcategorySet[d.Subcategory] = true
+			}
+			for _, t := range d.Tags {
+				tagSet[t] = true
+			}
 			if status != "" && d.Status != status {
 				continue
 			}
@@ -668,6 +682,12 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if category != "" && d.Category != category {
+				continue
+			}
+			if subcategory != "" && d.Subcategory != subcategory {
+				continue
+			}
+			if !docHasAllTags(d.Tags, tagsFilter) {
 				continue
 			}
 			if !updFrom.IsZero() && d.FetchedAt.Before(updFrom) {
@@ -700,11 +720,22 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		categories = append(categories, c)
 	}
 	sort.Strings(categories)
+	subcategories := make([]string, 0, len(subcategorySet))
+	for c := range subcategorySet {
+		subcategories = append(subcategories, c)
+	}
+	sort.Strings(subcategories)
+	allTags := make([]string, 0, len(tagSet))
+	for t := range tagSet {
+		allTags = append(allTags, t)
+	}
+	sort.Strings(allTags)
 
 	// base — прочие фильтры (без status) для ссылок-вкладок статусов.
 	base := url.Values{}
 	for k, v := range map[string]string{
-		"q": query, "category": category,
+		"q": query, "category": category, "subcategory": subcategory,
+		"tags":         strings.Join(tagsFilter, ","),
 		"updated_from": updatedFrom, "updated_to": updatedTo,
 		"published_from": publishedFrom, "published_to": publishedTo,
 	} {
@@ -750,14 +781,18 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Query:          query,
 		Flash:          r.URL.Query().Get("msg"),
 		FlashKind:      orDefault(r.URL.Query().Get("kind"), "ok"),
-		FilterStatus:   string(status),
-		FilterCategory: category,
-		UpdatedFrom:    updatedFrom,
-		UpdatedTo:      updatedTo,
-		PublishedFrom:  publishedFrom,
-		PublishedTo:    publishedTo,
-		Categories:     categories,
-		BaseQS:         base.Encode(),
+		FilterStatus:      string(status),
+		FilterCategory:    category,
+		FilterSubcategory: subcategory,
+		FilterTags:        strings.Join(tagsFilter, ", "),
+		UpdatedFrom:       updatedFrom,
+		UpdatedTo:         updatedTo,
+		PublishedFrom:     publishedFrom,
+		PublishedTo:       publishedTo,
+		Categories:        categories,
+		Subcategories:     subcategories,
+		AllTags:           allTags,
+		BaseQS:            base.Encode(),
 		Tab:            tab,
 		Settings:       settings,
 		Reports:        reports,
@@ -771,6 +806,34 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Println("[admin] шаблон:", err)
 	}
+}
+
+// parseTagsCSV разбивает "a, b, c" в нормализованный список тегов (нижний регистр).
+func parseTagsCSV(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if t := strings.ToLower(strings.TrimSpace(p)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// docHasAllTags сообщает, содержит ли документ все указанные теги (без учёта регистра).
+func docHasAllTags(docTags, want []string) bool {
+	for _, w := range want {
+		found := false
+		for _, t := range docTags {
+			if strings.EqualFold(t, w) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // handleStats отдаёт сводку в JSON (метрики актуальности базы).

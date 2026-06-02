@@ -1,0 +1,16 @@
+# Нормализация переводов строк. Без этого git-чекаут на Windows/после tar мог
+# менять EOL и ломать checksum уже применённых SQL-миграций (см. инцидент 2026-06-02).
+* text=auto eol=lf
+*.sql   text eol=lf
+*.go    text eol=lf
+*.sh    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+# Бинарные — не трогать.
+*.png   binary
+*.jpg   binary
+*.pdf   binary
+*.docx  binary
+*.xlsx  binary
+*.crt   binary
+*.key   binary

@@ -303,6 +303,38 @@ func (s *Store) EnabledAgentWithModel(ctx context.Context, t AgentType) (Agent, 
 	return Agent{}, Model{}, ErrNoUsableAgent
 }
 
+// EnabledAgentWithModels находит включённого агента указанного типа и возвращает
+// упорядоченный список моделей для вызова с авто-переключением: сначала привязанная
+// к агенту модель, затем остальные включённые модели с ключом (резерв при ошибке/
+// исчерпании лимита). Используется в фоновой массовой разметке (см. docenrich,
+// sitepages): если первая модель падает/упёрлась в лимит — пробуется следующая.
+func (s *Store) EnabledAgentWithModels(ctx context.Context, t AgentType) (Agent, []Model, error) {
+	agents, err := s.ListAgents(ctx)
+	if err != nil {
+		return Agent{}, nil, err
+	}
+	for _, ag := range agents {
+		if ag.AgentType != t || !ag.Enabled || ag.ModelID == "" {
+			continue
+		}
+		primary, err := s.GetModel(ctx, ag.ModelID)
+		if err != nil || !primary.Enabled || strings.TrimSpace(primary.APIKey) == "" {
+			continue
+		}
+		models := []Model{primary}
+		if all, err := s.ListModels(ctx); err == nil {
+			for _, m := range all {
+				if m.ID == primary.ID || !m.Enabled || strings.TrimSpace(m.APIKey) == "" {
+					continue
+				}
+				models = append(models, m)
+			}
+		}
+		return ag, models, nil
+	}
+	return Agent{}, nil, ErrNoUsableAgent
+}
+
 // ErrNoUsableAgent — нет включённого агента запрошенного типа с рабочей моделью.
 var ErrNoUsableAgent = errors.New("aimodels: нет включённого агента с рабочей моделью")
 

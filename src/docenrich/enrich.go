@@ -85,7 +85,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 	if len(docs) == 0 {
 		return 0, 0, 0
 	}
-	agent, mdl, err := e.AI.EnabledAgentWithModel(ctx, aimodels.AgentDocAnnotator)
+	agent, models, err := e.AI.EnabledAgentWithModels(ctx, aimodels.AgentDocAnnotator)
 	if err != nil {
 		e.skipOnce.Do(func() {
 			log.Printf("[docenrich] агент «Аннотатор документов» не настроен — разметка пропущена (%v)", err)
@@ -113,7 +113,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 			}
 		}
 
-		cls, err := e.annotate(ctx, chat, agent, mdl, d, known)
+		cls, err := e.annotate(ctx, chat, agent, models, d, known)
 		if err != nil {
 			failed++
 			log.Printf("[docenrich] %s (%s): %v", d.ID, d.Title, err)
@@ -136,14 +136,27 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 	return done, skipped, failed
 }
 
-// annotate выполняет один LLM-запрос и нормализует результат.
-func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.Agent, mdl aimodels.Model, d model.Document, known []string) (Classification, error) {
+// annotate выполняет LLM-запрос с авто-переключением моделей и нормализует
+// результат. Перебирает models по порядку (основная, затем резервные): при ошибке
+// вызова (сеть, лимит/квота, API-ошибка) переходит к следующей модели.
+func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.Agent, models []aimodels.Model, d model.Document, known []string) (Classification, error) {
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	raw, _, err := chat(cctx, mdl, agent, buildPrompt(d, known))
-	if err != nil {
-		return Classification{}, fmt.Errorf("LLM: %w", err)
+	prompt := buildPrompt(d, known)
+	var raw string
+	var lastErr error
+	for i, mdl := range models {
+		var err error
+		raw, _, err = chat(cctx, mdl, agent, prompt)
+		if err == nil {
+			break
+		}
+		lastErr = err
+		log.Printf("[docenrich] модель %s не справилась (%d/%d): %v — пробую следующую", mdl.ModelID, i+1, len(models), err)
+	}
+	if raw == "" && lastErr != nil {
+		return Classification{}, fmt.Errorf("LLM (все %d моделей): %w", len(models), lastErr)
 	}
 	cls, err := parseClassification(raw)
 	if err != nil {

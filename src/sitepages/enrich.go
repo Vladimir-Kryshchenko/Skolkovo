@@ -64,7 +64,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 	if len(pages) == 0 {
 		return 0, 0, 0
 	}
-	agent, model, err := e.Store.EnabledAgentWithModel(ctx, aimodels.AgentPageAnnotator)
+	agent, models, err := e.Store.EnabledAgentWithModels(ctx, aimodels.AgentPageAnnotator)
 	if err != nil {
 		e.skipOnce.Do(func() {
 			log.Printf("[sitepages/enrich] агент «Аннотатор страниц» не настроен — аннотирование пропущено (%v)", err)
@@ -92,7 +92,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 			}
 		}
 
-		ann, err := e.annotate(ctx, chat, agent, model, p, known)
+		ann, err := e.annotate(ctx, chat, agent, models, p, known)
 		if err != nil {
 			failed++
 			log.Printf("[sitepages/enrich] %s: %v", p.URL, err)
@@ -120,14 +120,27 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 	return done, skipped, failed
 }
 
-// annotate выполняет один LLM-запрос и нормализует результат.
-func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.Agent, model aimodels.Model, p *Page, known []string) (Annotation, error) {
+// annotate выполняет LLM-запрос с авто-переключением моделей и нормализует
+// результат. Перебирает models по порядку (основная, затем резервные): при ошибке
+// вызова (сеть, лимит/квота, API-ошибка) переходит к следующей модели.
+func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.Agent, models []aimodels.Model, p *Page, known []string) (Annotation, error) {
 	cctx, cancel := context.WithTimeout(ctx, 120*time.Second)
 	defer cancel()
 
-	raw, _, err := chat(cctx, model, agent, buildAnnotatePrompt(p, known))
-	if err != nil {
-		return Annotation{}, fmt.Errorf("LLM: %w", err)
+	prompt := buildAnnotatePrompt(p, known)
+	var raw string
+	var lastErr error
+	for i, model := range models {
+		var err error
+		raw, _, err = chat(cctx, model, agent, prompt)
+		if err == nil {
+			break
+		}
+		lastErr = err
+		log.Printf("[sitepages/enrich] модель %s не справилась (%d/%d): %v — пробую следующую", model.ModelID, i+1, len(models), err)
+	}
+	if raw == "" && lastErr != nil {
+		return Annotation{}, fmt.Errorf("LLM (все %d моделей): %w", len(models), lastErr)
 	}
 	ann, err := parseAnnotation(raw)
 	if err != nil {

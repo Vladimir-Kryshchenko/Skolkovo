@@ -429,30 +429,30 @@ func (s *Store) SeedDefaultAgents(ctx context.Context, defaultModelID string) er
 	defaults := []Agent{
 		{
 			Name: "Консультант Сколково", AgentType: AgentConsultant,
-			ModelID: defaultModelID,
+			ModelID:      defaultModelID,
 			SystemPrompt: DefaultSystemPrompts[AgentConsultant],
-			Temperature: 0.7, MaxTokens: 4096, Enabled: true,
+			Temperature:  0.7, MaxTokens: 4096, Enabled: true,
 			Description: "Отвечает на вопросы по документам и процедурам Сколково",
 		},
 		{
 			Name: "Валидатор документов", AgentType: AgentValidator,
-			ModelID: defaultModelID,
+			ModelID:      defaultModelID,
 			SystemPrompt: DefaultSystemPrompts[AgentValidator],
-			Temperature: 0.3, MaxTokens: 4096, Enabled: true,
+			Temperature:  0.3, MaxTokens: 4096, Enabled: true,
 			Description: "Проверяет документы на соответствие требованиям Сколково",
 		},
 		{
 			Name: "Монитор изменений", AgentType: AgentMonitor,
-			ModelID: defaultModelID,
+			ModelID:      defaultModelID,
 			SystemPrompt: DefaultSystemPrompts[AgentMonitor],
-			Temperature: 0.5, MaxTokens: 2048, Enabled: true,
+			Temperature:  0.5, MaxTokens: 2048, Enabled: true,
 			Description: "Анализирует изменения в нормативных документах",
 		},
 		{
 			Name: "Координатор резидентства", AgentType: AgentCoordinator,
-			ModelID: defaultModelID,
+			ModelID:      defaultModelID,
 			SystemPrompt: DefaultSystemPrompts[AgentCoordinator],
-			Temperature: 0.6, MaxTokens: 2048, Enabled: true,
+			Temperature:  0.6, MaxTokens: 2048, Enabled: true,
 			Description: "Рекомендует следующие шаги и помогает с планированием",
 		},
 	}

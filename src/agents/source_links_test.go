@@ -13,7 +13,7 @@ func TestIsWAFBlockedDocURL(t *testing.T) {
 		"https://dochub.sk.ru/foundation/documents/m/docs/24899.aspx":          true,
 		"https://dochub.sk.ru/m/docs/24873":                                    true,
 		"https://dochub.sk.ru/news/m/wiki/19409/download.aspx":                 false, // рабочий раздел
-		"https://sk.ru/events/123":                                            false,
+		"https://sk.ru/events/123":                                             false,
 		"":                                                                     false,
 	}
 	for in, want := range cases {

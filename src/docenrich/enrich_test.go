@@ -11,7 +11,7 @@ func TestCanonicalCategory(t *testing.T) {
 		"законодательные  акты":  "Законодательные акты", // регистр + лишние пробелы
 		"Утратившие силу":        "Утратившие силу",
 		"Произвольная категория": "", // не из списка
-		"":                       "",
+		"": "",
 	}
 	for in, want := range cases {
 		if got := canonicalCategory(in); got != want {

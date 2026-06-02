@@ -246,11 +246,11 @@ type stats struct {
 }
 
 type pageData struct {
-	Docs           []docView
-	Stats          stats
-	Query          string
-	Flash          string
-	FlashKind      string
+	Docs              []docView
+	Stats             stats
+	Query             string
+	Flash             string
+	FlashKind         string
 	FilterStatus      string
 	FilterCategory    string   // выбранная категория
 	FilterSubcategory string   // выбранная подкатегория
@@ -263,13 +263,13 @@ type pageData struct {
 	Subcategories     []string // список подкатегорий для выпадающего фильтра
 	AllTags           []string // словарь тегов (datalist для поля ввода)
 	BaseQS            string   // прочие фильтры без status — для ссылок-вкладок статусов
-	Tab            string
-	Settings       model.SchedulerSettings
-	Reports        []model.CollectorReport
-	Validation     *model.ValidationReport
-	NextRunStr     string
-	CurrentUser    *AdminSession
-	PendingCount   int // количество документов «на проверке» для кнопки «Одобрить все»
+	Tab               string
+	Settings          model.SchedulerSettings
+	Reports           []model.CollectorReport
+	Validation        *model.ValidationReport
+	NextRunStr        string
+	CurrentUser       *AdminSession
+	PendingCount      int // количество документов «на проверке» для кнопки «Одобрить все»
 }
 
 // loginPageData — данные для страницы входа.
@@ -776,11 +776,11 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{
-		Docs:           docs,
-		Stats:          st,
-		Query:          query,
-		Flash:          r.URL.Query().Get("msg"),
-		FlashKind:      orDefault(r.URL.Query().Get("kind"), "ok"),
+		Docs:              docs,
+		Stats:             st,
+		Query:             query,
+		Flash:             r.URL.Query().Get("msg"),
+		FlashKind:         orDefault(r.URL.Query().Get("kind"), "ok"),
 		FilterStatus:      string(status),
 		FilterCategory:    category,
 		FilterSubcategory: subcategory,
@@ -793,13 +793,13 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		Subcategories:     subcategories,
 		AllTags:           allTags,
 		BaseQS:            base.Encode(),
-		Tab:            tab,
-		Settings:       settings,
-		Reports:        reports,
-		Validation:     valRep,
-		NextRunStr:     nextRunStr,
-		CurrentUser:    sessionFromContext(r),
-		PendingCount:   st.Pending,
+		Tab:               tab,
+		Settings:          settings,
+		Reports:           reports,
+		Validation:        valRep,
+		NextRunStr:        nextRunStr,
+		CurrentUser:       sessionFromContext(r),
+		PendingCount:      st.Pending,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -3308,6 +3308,8 @@ type sitePageRow struct {
 	Section     string
 	Status      string
 	StatusLabel string
+	Category    string
+	Subcategory string
 	Tags        []string
 	LastChanged time.Time
 	Published   string // дата публикации на сайте Сколково (ГГГГ-форматированная) или «—»
@@ -3337,6 +3339,8 @@ type sitePageViewData struct {
 	LastChanged     time.Time
 	Published       string // дата публикации на сайте Сколково или «—»
 	Enriched        bool
+	Category        string
+	Subcategory     string
 	AISummary       string
 	Goals           string
 	Theses          []string
@@ -3484,6 +3488,8 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 			Section:     p.Section,
 			Status:      p.Status,
 			StatusLabel: sitePageStatusLabel(p.Status),
+			Category:    p.Category,
+			Subcategory: p.Subcategory,
 			Tags:        p.Tags,
 			LastChanged: p.LastChanged,
 			Published:   fmtPublished(p.PublishedAt),
@@ -3627,6 +3633,8 @@ func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
 		LastChanged: p.LastChanged,
 		Published:   fmtPublished(p.PublishedAt),
 		Enriched:    p.Enriched(),
+		Category:    p.Category,
+		Subcategory: p.Subcategory,
 		AISummary:   p.AISummary,
 		Goals:       p.Goals,
 		Theses:      p.Theses,

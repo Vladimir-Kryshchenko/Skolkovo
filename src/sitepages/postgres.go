@@ -68,7 +68,7 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 
 const selectCols = `SELECT id, url, title, summary, section, content_hash, status,
        first_seen, last_seen, last_changed, published_at,
-       tags, ai_summary, goals, theses, conclusions, enriched_at
+       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory
 FROM site_pages`
 
 // Get возвращает страницу по ID или ErrNotFound.
@@ -131,12 +131,12 @@ UPDATE site_pages
 func (s *PostgresStore) GetWithText(ctx context.Context, id string) (*Page, error) {
 	row := s.pool.QueryRow(ctx, `SELECT id, url, title, summary, section, content_hash, status,
        first_seen, last_seen, last_changed, published_at, text,
-       tags, ai_summary, goals, theses, conclusions, enriched_at
+       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory
 FROM site_pages WHERE id = $1`, id)
 	var p Page
 	err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
 		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt, &p.Text,
-		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt)
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -393,9 +393,10 @@ func (s *PostgresStore) UpdateEnrichment(ctx context.Context, id string, a Annot
 UPDATE site_pages
    SET tags=$2, ai_summary=$3, goals=$4, theses=$5, conclusions=$6,
        published_at=COALESCE(published_at, $8),
-       enriched_at=now(), enrich_hash=$7
+       enriched_at=now(), enrich_hash=$7,
+       category=$9, subcategory=$10
  WHERE id=$1`,
-		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash, published)
+		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash, published, a.Category, a.Subcategory)
 	return err
 }
 
@@ -530,7 +531,7 @@ func scanPage(row scannable) (*Page, error) {
 	var p Page
 	if err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
 		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt,
-		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt); err != nil {
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory); err != nil {
 		return nil, err
 	}
 	return &p, nil

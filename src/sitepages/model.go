@@ -44,6 +44,8 @@ type Page struct {
 	PublishedAt *time.Time `json:"published_at,omitempty"`
 
 	// ИИ-обогащение (заполняется агентом «Аннотатор страниц», не краулером).
+	Category    string     `json:"category,omitempty"`    // тематическая категория (ИИ), свободная
+	Subcategory string     `json:"subcategory,omitempty"` // уточняющая подкатегория (ИИ)
 	Tags        []string   `json:"tags,omitempty"`        // авто-теги (нормализованы против словаря)
 	AISummary   string     `json:"ai_summary,omitempty"`  // краткое описание (ИИ), отличается от Summary
 	Goals       string     `json:"goals,omitempty"`       // цели страницы (ИИ)

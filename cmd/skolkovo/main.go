@@ -2308,22 +2308,22 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 		if cfg.SitePagesEnrichEnabled && aiStore != nil {
 			_ = aiStore.EnsurePageAnnotatorAgent(ctx)
 			sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
-			// Стартовый бэкфилл: единожды аннотируем все ещё не обогащённые страницы.
+			// Стартовый бэкфилл: размечаем порцию (кап SitePagesEnrichMaxPerRun) ещё не
+			// обогащённых страниц и переиндексируем именно их. Остальной backlog добирается
+			// на периодических прогонах задания «sitepages» — без многочасового марафона.
 			go func() {
-				pend, err := sitePageStore.ListNeedingEnrichment(ctx, 0)
+				pend, err := sitePageStore.ListNeedingEnrichment(ctx, cfg.SitePagesEnrichMaxPerRun)
 				if err != nil || len(pend) == 0 {
 					return
 				}
-				log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц", len(pend))
+				log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц (кап %d)", len(pend), cfg.SitePagesEnrichMaxPerRun)
 				d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
-				log.Printf("[serve:sitepages] бэкфилл аннотаций завершён: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+				log.Printf("[serve:sitepages] бэкфилл аннотаций: обогащено %d, пропущено %d, ошибок %d", d, s, f)
 				if d > 0 {
-					if pages, lerr := sitePageStore.ListAll(ctx); lerr == nil {
-						if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
-							log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
-						} else {
-							log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
-						}
+					if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pend); ierr != nil {
+						log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
+					} else {
+						log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
 					}
 				}
 			}()
@@ -2353,14 +2353,25 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 						}
 					}
 				}
-				// Инкрементально доиндексируем изменённые/новые страницы.
-				if rep.New+rep.Changed > 0 {
-					if sitePageEnricher != nil {
-						if pend, perr := sitePageStore.ListNeedingEnrichment(ctx, rep.New+rep.Changed); perr == nil && len(pend) > 0 {
-							d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
-							log.Printf("[serve:sitepages] аннотирование: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+				// ИИ-разметка: каждый прогон размечаем порцию страниц, которым она нужна
+				// (новые/изменённые в приоритете — ORDER BY last_changed DESC, затем добор
+				// backlog), с капом SitePagesEnrichMaxPerRun, и переиндексируем именно их.
+				// Так полный охват 55k+ страниц набирается за серию прогонов, без марафона.
+				if sitePageEnricher != nil {
+					if pend, perr := sitePageStore.ListNeedingEnrichment(ctx, cfg.SitePagesEnrichMaxPerRun); perr == nil && len(pend) > 0 {
+						d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+						log.Printf("[serve:sitepages] аннотирование: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+						if d > 0 {
+							if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pend); ierr != nil {
+								log.Printf("[serve:sitepages] индексация после аннотирования: %v", ierr)
+							} else {
+								log.Printf("[serve:sitepages] проиндексировано %d страниц после аннотирования", n)
+							}
 						}
 					}
+				}
+				// Доиндексируем изменённые/новые страницы (на случай, если разметка выключена).
+				if rep.New+rep.Changed > 0 {
 					if pages, lerr := sitePageStore.ListRecent(ctx, rep.New+rep.Changed); lerr == nil {
 						if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
 							log.Printf("[serve:sitepages] индексация: %v", ierr)

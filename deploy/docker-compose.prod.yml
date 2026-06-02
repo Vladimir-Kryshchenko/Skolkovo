@@ -77,6 +77,9 @@ services:
       # модель вручную в /ai/models и включите агента «Аннотатор страниц».
       SITEPAGES_ENRICH_ENABLED: ${SITEPAGES_ENRICH_ENABLED:-true}
       SITEPAGES_ENRICH_DELAY: ${SITEPAGES_ENRICH_DELAY:-1s}
+      # Сколько страниц размечать за один прогон (кап для больших баз: backlog
+      # добирается порциями на периодических прогонах, без многочасового марафона).
+      SITEPAGES_ENRICH_MAX_PER_RUN: ${SITEPAGES_ENRICH_MAX_PER_RUN:-500}
       # ИИ-разметка документов (категория/подкатегория/теги) агентом «Аннотатор
       # документов». Требует настроенной LLM-модели (QWEN_API_KEY ниже или модель
       # в /ai/models + включённый агент). На старте — бэкфилл действующих документов.

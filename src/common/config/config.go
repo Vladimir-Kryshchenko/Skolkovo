@@ -89,9 +89,10 @@ type Config struct {
 	SitePagesRenderJS    bool   // обходить страницы через headless-браузер (JS-навигация)
 	SitePagesConcurrency int    // число параллельных загрузчиков при обходе (<=1 — последовательно)
 
-	// ИИ-обогащение страниц сайта (теги, описание, цели, тезисы, выводы)
-	SitePagesEnrichEnabled bool          // запускать аннотирование страниц через ИИ-агента
-	SitePagesEnrichDelay   time.Duration // пауза между LLM-запросами при аннотировании (троттлинг)
+	// ИИ-обогащение страниц сайта (категория, подкатегория, теги, описание, цели, тезисы, выводы)
+	SitePagesEnrichEnabled   bool          // запускать аннотирование страниц через ИИ-агента
+	SitePagesEnrichDelay     time.Duration // пауза между LLM-запросами при аннотировании (троттлинг)
+	SitePagesEnrichMaxPerRun int           // сколько страниц размечать за один прогон (0 — без лимита); кап для больших баз
 
 	// ИИ-разметка документов (категория, подкатегория, теги) через агента «Аннотатор документов»
 	DocEnrichEnabled bool          // запускать ИИ-разметку документов
@@ -227,10 +228,11 @@ func Load() Config {
 		SitePagesConcurrency: envInt("SITEPAGES_CONCURRENCY", 4),
 
 		// ИИ-обогащение страниц сайта
-		SitePagesEnrichEnabled: envBool("SITEPAGES_ENRICH_ENABLED", true),
-		SitePagesEnrichDelay:   envDuration("SITEPAGES_ENRICH_DELAY", 1*time.Second),
-		DocEnrichEnabled:       envBool("DOC_ENRICH_ENABLED", true),
-		DocEnrichDelay:         envDuration("DOC_ENRICH_DELAY", 1*time.Second),
+		SitePagesEnrichEnabled:   envBool("SITEPAGES_ENRICH_ENABLED", true),
+		SitePagesEnrichDelay:     envDuration("SITEPAGES_ENRICH_DELAY", 1*time.Second),
+		SitePagesEnrichMaxPerRun: envInt("SITEPAGES_ENRICH_MAX_PER_RUN", 500),
+		DocEnrichEnabled:         envBool("DOC_ENRICH_ENABLED", true),
+		DocEnrichDelay:           envDuration("DOC_ENRICH_DELAY", 1*time.Second),
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),

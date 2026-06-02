@@ -7,7 +7,7 @@ on:
   pull_request:
 
 env:
-  GO_VERSION: '1.25'
+  GO_VERSION: '1.26'
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
@@ -28,6 +28,10 @@ jobs:
         uses: golangci/golangci-lint-action@v6
         with:
           version: latest
+          # Собираем golangci-lint проектным тулчейном (Go 1.26): предсобранные
+          # бинарники строятся более старым Go и падают на модуле go 1.26
+          # ("language version used to build golangci-lint is lower than targeted").
+          install-mode: goinstall
           args: --timeout=5m
 
       - name: go vet

@@ -1821,6 +1821,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
     <td>
       <div style="font-weight:600"><a href="/sitepages/{{.ID}}" title="Открыть в просмотрщике">{{.Title}}</a></div>
       <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">{{.URL}}</div>
+      {{if .Category}}<div style="font-size:11px;margin-top:3px" title="Категория / подкатегория (ИИ)">🗂 {{.Category}}{{if .Subcategory}} ⤷ {{.Subcategory}}{{end}}</div>{{end}}
       {{if .Tags}}<div class="sp-tags">{{range .Tags}}<span class="sp-tag muted">{{.}}</span>{{end}}</div>{{end}}
     </td>
     <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
@@ -1887,6 +1888,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
   <span>URL: <a href="{{.URL}}" target="_blank" rel="noopener" style="font-family:monospace;word-break:break-all">{{.URL}}</a></span>
 </div>
 
+{{if .Category}}<div style="margin-bottom:10px" title="Категория / подкатегория (ИИ)">🗂 <b>{{.Category}}</b>{{if .Subcategory}} ⤷ {{.Subcategory}}{{end}}</div>{{end}}
 {{if .Tags}}<div class="sp-tags" style="margin-bottom:16px">{{range .Tags}}<span class="sp-tag">{{.}}</span>{{end}}</div>{{end}}
 
 {{if .Enriched}}

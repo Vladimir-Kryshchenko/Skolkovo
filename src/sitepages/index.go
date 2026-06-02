@@ -90,6 +90,8 @@ func (ix *Indexer) Reindex(ctx context.Context, pages []*Page) (int, error) {
 				"summary":      summary,
 				"section":      p.Section,
 				"status":       p.Status,
+				"category":     p.Category,
+				"subcategory":  p.Subcategory,
 				"tags":         p.Tags,
 				"goals":        p.Goals,
 				"theses":       p.Theses,
@@ -223,9 +225,16 @@ func toHits(hits []qdrant.SearchHit) []Hit {
 // краткое описание (ИИ, иначе meta) + цели + тезисы + выводы. Если страница ещё
 // не аннотирована — деградирует до title + summary.
 func indexText(p *Page) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 6)
 	if p.Title != "" {
 		parts = append(parts, p.Title)
+	}
+	if p.Category != "" {
+		cat := p.Category
+		if p.Subcategory != "" {
+			cat += " / " + p.Subcategory
+		}
+		parts = append(parts, cat)
 	}
 	if p.AISummary != "" {
 		parts = append(parts, p.AISummary)

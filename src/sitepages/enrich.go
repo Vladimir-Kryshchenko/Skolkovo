@@ -24,6 +24,8 @@ const maxTheses = 8
 // Annotation — структурированная аннотация страницы, которую возвращает ИИ.
 // JSON-теги совпадают с форматом ответа в системном промпте AgentPageAnnotator.
 type Annotation struct {
+	Category    string   `json:"category"`
+	Subcategory string   `json:"subcategory"`
 	Tags        []string `json:"tags"`
 	Summary     string   `json:"summary"`
 	Goals       string   `json:"goals"`
@@ -131,6 +133,8 @@ func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.A
 	if err != nil {
 		return Annotation{}, err
 	}
+	ann.Category = strings.TrimSpace(ann.Category)
+	ann.Subcategory = strings.TrimSpace(ann.Subcategory)
 	ann.Tags = normalizeTags(ann.Tags, known, maxTags)
 	ann.Theses = cleanList(ann.Theses, maxTheses)
 	ann.Summary = strings.TrimSpace(ann.Summary)
@@ -165,8 +169,11 @@ func buildAnnotatePrompt(p *Page, known []string) string {
 	b.WriteString("\n\nДополнительно найди в тексте дату публикации страницы на сайте " +
 		"(когда материал опубликован/размещён) и верни её в поле published_date в формате " +
 		"ГГГГ-ММ-ДД. Если даты на странице нет — верни пустую строку. Не выдумывай дату.")
+	b.WriteString("\n\nТакже определи тематическую КАТЕГОРИЮ страницы (1–3 слова, " +
+		"например «Новости», «Резидентам», «Услуги», «Мероприятия», «О Фонде») и более " +
+		"узкую ПОДКАТЕГОРИЮ (если уместно, иначе пустую строку).")
 	b.WriteString("\n\nВерни строго JSON по заданному формату " +
-		`{"tags":[...],"summary":"...","goals":"...","theses":[...],"conclusions":"...","published_date":"ГГГГ-ММ-ДД"}.`)
+		`{"category":"...","subcategory":"...","tags":[...],"summary":"...","goals":"...","theses":[...],"conclusions":"...","published_date":"ГГГГ-ММ-ДД"}.`)
 	return b.String()
 }
 
@@ -270,6 +277,8 @@ func mergeKnown(known, add []string) []string {
 // applyAnnotation проставляет ИИ-поля в страницу (для переиндексации того же среза).
 func applyAnnotation(p *Page, a Annotation) {
 	now := time.Now()
+	p.Category = a.Category
+	p.Subcategory = a.Subcategory
 	p.Tags = a.Tags
 	p.AISummary = a.Summary
 	p.Goals = a.Goals

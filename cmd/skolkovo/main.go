@@ -1479,6 +1479,39 @@ func cmdServe(cfg config.Config) error {
 				})
 			})
 		}
+
+		// ИИ-разметка документов (категория/подкатегория/теги) агентом «Аннотатор
+		// документов». Стартовый бэкфилл: размечаем действующие документы без
+		// разметки/с изменившимся файлом и переиндексируем (теги/подкатегория → payload).
+		if cfg.DocEnrichEnabled {
+			docAI := aimodels.NewStore(ps.Pool())
+			if err := docAI.EnsureDocAnnotatorAgent(ctx); err != nil {
+				log.Printf("[serve:docenrich] не удалось создать агента «Аннотатор документов»: %v", err)
+			}
+			docEnricher := docenrich.New(docAI, ps, cfg.DocEnrichDelay)
+			go func() {
+				pend, err := ps.ListNeedingEnrichment(ctx, 0)
+				if err != nil {
+					log.Printf("[serve:docenrich] выборка на разметку: %v", err)
+					return
+				}
+				if len(pend) == 0 {
+					return
+				}
+				log.Printf("[serve:docenrich] стартовый бэкфилл разметки: %d документов", len(pend))
+				d, s, f := docEnricher.EnrichBatch(ctx, pend)
+				log.Printf("[serve:docenrich] бэкфилл завершён: размечено %d, пропущено %d, ошибок %d", d, s, f)
+				if d > 0 {
+					reindexed := 0
+					for _, doc := range pend {
+						if _, ierr := svc.IndexDocument(ctx, doc.ID); ierr == nil {
+							reindexed++
+						}
+					}
+					log.Printf("[serve:docenrich] переиндексировано %d документов после разметки", reindexed)
+				}
+			}()
+		}
 	}
 
 	go func() {
@@ -1868,36 +1901,6 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 				}
 			}
 		}()
-	}
-
-	// ИИ-разметка документов (категория/подкатегория/теги) через агента «Аннотатор
-	// документов». Безопасно, если агент не настроен — разметка пропускается.
-	// Стартовый бэкфилл: размечаем действующие документы без разметки/с изменившимся
-	// файлом и переиндексируем их (теги/подкатегория попадают в payload Qdrant).
-	if cfg.DocEnrichEnabled && aiStore != nil {
-		if pgDocs, ok := st.(*store.PostgresStore); ok {
-			_ = aiStore.EnsureDocAnnotatorAgent(ctx)
-			docEnricher := docenrich.New(aiStore, pgDocs, cfg.DocEnrichDelay)
-			go func() {
-				pend, err := pgDocs.ListNeedingEnrichment(ctx, 0)
-				if err != nil || len(pend) == 0 {
-					return
-				}
-				log.Printf("[serve:docenrich] стартовый бэкфилл разметки: %d документов", len(pend))
-				d, s, f := docEnricher.EnrichBatch(ctx, pend)
-				log.Printf("[serve:docenrich] бэкфилл завершён: размечено %d, пропущено %d, ошибок %d", d, s, f)
-				if d > 0 {
-					rsvc := newRAG(cfg, st, nil)
-					reindexed := 0
-					for _, doc := range pend {
-						if _, ierr := rsvc.IndexDocument(ctx, doc.ID); ierr == nil {
-							reindexed++
-						}
-					}
-					log.Printf("[serve:docenrich] переиндексировано %d документов после разметки", reindexed)
-				}
-			}()
-		}
 	}
 
 	// proxyResolver: активный прокси из админки, иначе статический PROXY_URL.

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -150,9 +151,11 @@ func (s *PostgresStore) ListNeedingEnrichment(ctx context.Context, limit int) ([
 	q := selectCols + `
 WHERE status = 'действует'
   AND (enriched_at IS NULL OR enrich_hash <> file_hash)
-ORDER BY fetched_at DESC
-LIMIT CASE WHEN $1 <= 0 THEN NULL ELSE $1 END`
-	rows, err := s.pool.Query(ctx, q, limit)
+ORDER BY fetched_at DESC`
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
 		return nil, err
 	}

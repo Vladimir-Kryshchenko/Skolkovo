@@ -2432,7 +2432,8 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 
 	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey).
 		WithLLM(aimodels.NewStore(pool)).
-		WithNavigation(navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
+		WithNavigation(navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))).
+		WithSourceLinks(os.Getenv("DOC_PUBLIC_BASE_URL"))
 	validator := agents.NewValidatorAgent(ragSvc, pcs)
 	monitor := agents.NewMonitorAgent(agents.MonitorStores{
 		DocStore:      st,
@@ -2509,7 +2510,8 @@ func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
 
 	// Консультант общий для всех ботов: RAG глобален, LLM-синтез из настроек.
 	consultant := agents.NewConsultantAgent(newRAG(cfg, st, nil), "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
-	consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool()))
+	consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool())).
+		WithSourceLinks(os.Getenv("DOC_PUBLIC_BASE_URL"))
 
 	mgr := tgbot.NewBotManager(
 		pcs, botStores, consultant,

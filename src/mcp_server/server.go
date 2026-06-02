@@ -268,6 +268,9 @@ func (s *Server) ListenAndServe() error {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"baza-skolkovo-mcp"}`))
 	})
+	// /files/{id} — открытая отдача скачанной копии документа (см. files.go).
+	// Нужна для кликабельных ссылок на источники в ответах консультанта.
+	mux.HandleFunc("/files/", s.handleDocumentFile)
 	// Порядок обёрток: аудит (внешний, кладёт auditInfo в контекст) →
 	// middleware (внутренний, заполняет tenant_id и проверяет ключ).
 	mux.Handle("/mcp", AuditMiddleware(s.audit, s.middleware(streamSrv)))

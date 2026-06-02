@@ -74,6 +74,9 @@ type ConsultantAgent struct {
 	ai         LLMProvider  // опционально: LLM-синтез ответа
 	nav        NavSearcher  // опционально: навигация по сайту (get_navigation)
 	chat       chatFunc
+	// fileBaseURL — публичный базовый URL для ссылок на скачанные копии документов
+	// (<base>/files/{id}). Пусто — копии не отдаём, только фолбэк на категорию.
+	fileBaseURL string
 }
 
 // NewConsultantAgent создаёт агента-консультанта.
@@ -97,6 +100,17 @@ func (a *ConsultantAgent) WithLLM(ai LLMProvider) *ConsultantAgent {
 // «как открыть…» консультант дополняет ответ подсказкой «где это и как попасть».
 func (a *ConsultantAgent) WithNavigation(ns NavSearcher) *ConsultantAgent {
 	a.nav = ns
+	return a
+}
+
+// WithSourceLinks включает «умные» ссылки на источники. publicFileBaseURL —
+// внешний базовый URL, по которому доступен эндпоинт отдачи скачанных копий
+// (<base>/files/{id}, обслуживается MCP-сервером). При наличии копии документа
+// ссылка ведёт на неё; иначе заблокированные WAF ссылки на тело документа dochub
+// (/m/docs/) заменяются открытой страницей-листингом категории. Пустой base
+// отключает копии — остаётся только фолбэк на категорию. См. source_links.go.
+func (a *ConsultantAgent) WithSourceLinks(publicFileBaseURL string) *ConsultantAgent {
+	a.fileBaseURL = strings.TrimSpace(publicFileBaseURL)
 	return a
 }
 
@@ -171,7 +185,7 @@ func (a *ConsultantAgent) Ask(ctx context.Context, question, clientID string) (C
 		sources = append(sources, DocumentReference{
 			DocumentID: r.DocumentID,
 			Title:      r.Title,
-			SourceURL:  r.SourceURL,
+			SourceURL:  a.bestSourceURL(ctx, r),
 			Score:      r.Score,
 		})
 	}

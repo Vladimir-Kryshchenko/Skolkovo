@@ -100,6 +100,7 @@ type auditInfo struct {
 	APIKey     string
 	RemoteAddr string
 	TenantID   string
+	ClientID   string
 }
 
 // auditInfoFromCtx извлекает информацию об аудите из контекста.
@@ -169,6 +170,7 @@ func AuditMiddleware(logger *AuditLogger, next http.Handler) http.Handler {
 
 			entry := AuditEntry{
 				TenantID:   info.TenantID,
+				ClientID:   info.ClientID,
 				APIKeyPfx:  apiKeyPrefix(apiKey),
 				ToolName:   extractToolName(r),
 				RemoteAddr: r.RemoteAddr,

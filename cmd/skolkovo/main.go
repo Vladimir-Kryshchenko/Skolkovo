@@ -58,6 +58,7 @@ import (
 	"baza-skolkovo/src/fetcher"
 	"baza-skolkovo/src/generator"
 	"baza-skolkovo/src/health"
+	"baza-skolkovo/src/jobsched"
 	"baza-skolkovo/src/mailer"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
@@ -1204,7 +1205,7 @@ func enableTenantAuth(srv *mcpserver.Server, st store.Store) {
 		return
 	}
 	pcs := store.NewPostgresClientStore(ps.Pool())
-	srv.WithTenantAuth(pcs).WithAudit(mcpserver.NewAuditLogger(ps.Pool()))
+	srv.WithTenantAuth(pcs).WithClientAuth(pcs).WithAudit(mcpserver.NewAuditLogger(ps.Pool()))
 }
 
 func cmdAdmin(cfg config.Config) error {
@@ -1445,6 +1446,36 @@ func cmdServe(cfg config.Config) error {
 		}
 	}
 
+	// --- Планировщик заданий (расписание per-source + журнал + учёт токенов ИИ) ---
+	// Только Postgres-бэкенд. Заменяет жёсткие горутины pipeline.Schedule и
+	// scheduleNewModules; на не-Postgres бэкенде используется прежний путь (ниже).
+	var jobRunner *jobsched.Runner
+	if ps, ok := st.(*store.PostgresStore); ok {
+		if js, err := jobsched.NewStore(ctx, ps.Pool()); err != nil {
+			log.Printf("[serve] планировщик заданий недоступен: %v", err)
+		} else {
+			adminSrv.WithJobStore(js)
+			jobRunner = buildJobRunner(ctx, cfg, st, svc, pm, js)
+			adminSrv.WithJobRunner(jobRunner)
+			// Учёт расхода токенов ИИ-агентов → ai_usage_log (best-effort).
+			aimodels.SetUsageRecorder(func(ev aimodels.UsageEvent) {
+				_ = js.RecordUsage(context.Background(), jobsched.AIUsage{
+					RunID:            ev.RunID,
+					AgentType:        string(ev.AgentType),
+					ModelID:          ev.ModelID,
+					Provider:         string(ev.Provider),
+					ModelLabel:       ev.ModelLabel,
+					PromptTokens:     ev.Usage.PromptTokens,
+					CompletionTokens: ev.Usage.CompletionTokens,
+					TotalTokens:      ev.Usage.TotalTokens,
+					DurationMs:       ev.Duration.Milliseconds(),
+					Success:          ev.Success,
+					Error:            ev.Err,
+				})
+			})
+		}
+	}
+
 	go func() {
 		if err := mcpSrv.ListenAndServe(); err != nil {
 			log.Printf("[mcp] остановлен: %v", err)
@@ -1530,7 +1561,12 @@ func cmdServe(cfg config.Config) error {
 		}
 		return cfg.ProxyURL
 	}
-	go newPipeline(cfg, st, svc, proxyResolver).Schedule(ctx, cfg.ScrapeInterval)
+	// Конвейер документов/новостей. На Postgres-бэкенде он зарегистрирован как
+	// задание "documents" внутри jobRunner (см. buildJobRunner); запускаем здесь
+	// только на не-Postgres бэкенде (fallback без планировщика).
+	if jobRunner == nil {
+		go newPipeline(cfg, st, svc, proxyResolver).Schedule(ctx, cfg.ScrapeInterval)
+	}
 
 	// --- Telegram-нотификатор консультанту ---
 	tgNotifier := notify.NewTelegramNotifier(
@@ -1569,8 +1605,15 @@ func cmdServe(cfg config.Config) error {
 		}()
 	}
 
-	// --- Планировщик для новых модулей ---
-	go scheduleNewModules(ctx, cfg, st, svc, pm)
+	// --- Планировщик заданий ---
+	// На Postgres-бэкенде расписание ведёт настраиваемый из админки jobRunner
+	// (документы, источники, страницы сайта — каждое со своим интервалом и журналом).
+	// Иначе — прежний путь с единым SCRAPE_INTERVAL.
+	if jobRunner != nil {
+		go jobRunner.Run(ctx)
+	} else {
+		go scheduleNewModules(ctx, cfg, st, svc, pm)
+	}
 
 	// --- Ежедневная сводка консультанту ---
 	if tgNotifier.Enabled() {
@@ -2014,6 +2057,293 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	}
 }
 
+// buildJobRunner собирает планировщик заданий: регистрирует конвейер документов,
+// скачивание тел файлов, парсинг источников (мероприятия, конкурсы, FAQ, резиденты,
+// Telegram, льготы, НПА) и обход страниц сайта — каждое как отдельное задание со
+// своим интервалом (настраивается в админке /jobs) и журналом прогонов.
+//
+// Логика прогонов перенесена из scheduleNewModules; отличие — вместо одного общего
+// цикла с фиксированным SCRAPE_INTERVAL каждый источник запускается планировщиком
+// по своему расписанию, а результат фиксируется в scheduler_runs.
+func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager, js *jobsched.Store) *jobsched.Runner {
+	runner := jobsched.NewRunner(js, cfg.ScrapeInterval)
+
+	// proxyResolver: активный прокси из админки, иначе статический PROXY_URL.
+	proxyResolver := func() string {
+		if u := pm.GetActiveURL(); u != "" {
+			return u
+		}
+		return cfg.ProxyURL
+	}
+
+	var eventStore store.EventStore
+	var contestStore store.ContestStore
+	var faqStore store.FAQStore
+	var tgStore store.TelegramStore
+	var residentStore store.ResidentStore
+	var healthStore health.Store
+	var changeStore changes.Recorder
+	var sitePageStore *sitepages.PostgresStore
+	var aiStore *aimodels.Store
+
+	if ps, ok := st.(*store.PostgresStore); ok {
+		pss := store.NewPostgresSourceStore(ps.Pool())
+		eventStore = pss
+		contestStore = pss
+		faqStore = pss
+		tgStore = pss
+		residentStore = pss
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			healthStore = hs
+		}
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			changeStore = cs
+		}
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			sitePageStore = sps
+		}
+		aiStore = aimodels.NewStore(ps.Pool())
+	}
+
+	// recordHealth фиксирует результат прогона источника (no-op без Postgres).
+	recordHealth := func(source string, items int, runErr error) {
+		if healthStore == nil {
+			return
+		}
+		_ = healthStore.Record(ctx, source, items, runErr)
+	}
+
+	httpCl := &http.Client{Timeout: 60 * time.Second}
+
+	// --- Конвейер документов и новостей ---
+	pipe := newPipeline(cfg, st, svc, proxyResolver)
+	runner.Register("documents", "Документы (dochub.sk.ru) и новости", cfg.ScrapeInterval,
+		func(ctx context.Context) (jobsched.RunResult, error) {
+			err := pipe.RunOnce(ctx)
+			// RunOnce ведёт собственный учёт в source_health (documents/news);
+			// счётчики прогона остаются нулевыми, статус/длительность — в журнале.
+			return jobsched.RunResult{}, err
+		})
+
+	// --- Скачивание тел файлов dochub (по куке) + обновление источников ---
+	runner.Register("fetch_bodies", "Скачивание тел файлов dochub", cfg.ScrapeInterval,
+		func(ctx context.Context) (jobsched.RunResult, error) {
+			runScheduledCollect(ctx, cfg, st, svc, pm, recordHealth)
+			return jobsched.RunResult{}, nil
+		})
+
+	// --- Мероприятия ---
+	if cfg.EventsSourceURL != "" && eventStore != nil {
+		runner.Register("events", "Мероприятия", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				evCfg := events.EventsConfig{RSSURL: cfg.EventsRSSURL, SourceURL: cfg.EventsSourceURL}
+				parsed, err := events.ParseEvents(ctx, evCfg, httpCl)
+				if err != nil {
+					recordHealth("events", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				res, ingErr := events.IngestEvents(ctx, parsed, eventStore, nil, changeStore)
+				recordHealth("events", res.New+res.Updated, ingErr)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, ingErr
+			})
+	}
+
+	// --- Конкурсы ---
+	if cfg.ContestsURL != "" && contestStore != nil {
+		runner.Register("contests", "Конкурсы и гранты", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				cCfg := contests.ContestsConfig{ContestsURL: cfg.ContestsURL, GrantsURL: cfg.GrantsURL}
+				parsed, err := contests.ParseContests(ctx, cCfg, httpCl)
+				if err != nil {
+					recordHealth("contests", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				res, ingErr := contests.IngestContests(ctx, parsed, contestStore, nil, changeStore)
+				recordHealth("contests", res.New+res.Updated, ingErr)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, ingErr
+			})
+	}
+
+	// --- FAQ ---
+	if cfg.FAQURL != "" && faqStore != nil {
+		runner.Register("faq", "FAQ", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				fCfg := faq.FAQConfig{FAQURL: cfg.FAQURL}
+				parsed, err := faq.ParseFAQ(ctx, fCfg, httpCl)
+				if err != nil {
+					recordHealth("faq", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				res, ingErr := faq.IngestFAQ(ctx, parsed, faqStore, nil, changeStore)
+				recordHealth("faq", res.New+res.Updated, ingErr)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, ingErr
+			})
+	}
+
+	// --- Реестр резидентов ---
+	if cfg.ResidentsEnabled && cfg.ResidentsURL != "" && residentStore != nil {
+		runner.Register("residents", "Реестр резидентов", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				parsed, err := residents.ParseResidents(ctx, residents.Config{SourceURL: cfg.ResidentsURL}, httpCl)
+				if err != nil {
+					recordHealth("residents", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				res, ingErr := residents.IngestResidents(ctx, parsed, residentStore, changeStore)
+				recordHealth("residents", res.New+res.Updated, ingErr)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, ingErr
+			})
+	}
+
+	// --- Telegram ---
+	if cfg.TelegramChannels != "" && tgStore != nil {
+		runner.Register("telegram", "Telegram-каналы", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				var active []string
+				for _, ch := range strings.Split(cfg.TelegramChannels, ",") {
+					if ch = strings.TrimSpace(ch); ch != "" {
+						active = append(active, ch)
+					}
+				}
+				if len(active) == 0 {
+					return jobsched.RunResult{}, nil
+				}
+				tCfg := telegram.TelegramConfig{Channels: active, APIURL: cfg.TelegramRssHubURL}
+				parsed, err := telegram.FetchAllChannels(ctx, tCfg, httpCl)
+				if err != nil {
+					recordHealth("telegram", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				res, ingErr := telegram.IngestPosts(ctx, parsed, tgStore)
+				recordHealth("telegram", res.New, ingErr)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsTotal: res.New}, ingErr
+			})
+	}
+
+	// --- Льготы резидентов ---
+	if cfg.PreferencesEnabled {
+		runner.Register("preferences", "Льготы резидентов", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				prefCfg := preferences.PreferencesConfig{SourceURL: cfg.PreferencesURL, Category: "Льготы"}
+				mon := preferences.New(prefCfg, st)
+				res, err := mon.Run(ctx, changeStore)
+				if err != nil {
+					recordHealth("preferences", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				recordHealth("preferences", res.New+res.Updated, nil)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, nil
+			})
+	}
+
+	// --- НПА ---
+	if cfg.RegulationsEnabled {
+		runner.Register("regulations", "Нормативно-правовые акты", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				regCfg := regulations.RegulationsConfig{SourceURL: cfg.RegulationsSearchURL, Category: "НПА"}
+				mon := regulations.New(regCfg, st)
+				res, err := mon.Run(ctx, changeStore)
+				if err != nil {
+					recordHealth("regulations", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				recordHealth("regulations", res.New+res.Updated, nil)
+				return jobsched.RunResult{ItemsNew: res.New, ItemsUpdated: res.Updated, ItemsTotal: res.New + res.Updated}, nil
+			})
+	}
+
+	// --- Страницы публичного сайта (обход + ИИ-аннотирование + индексация) ---
+	if cfg.SitePagesEnabled && sitePageStore != nil {
+		// JS-рендерер (chromedp) — создаём один раз на всё время работы планировщика.
+		var sitePageRenderer sitepages.Renderer
+		if cfg.SitePagesRenderJS {
+			rndr, closeRndr := newChromeRenderer(cfg.ChromePath, cfg.ProxyURL, cfg.ScrapeDelay)
+			sitePageRenderer = rndr
+			go func() { <-ctx.Done(); closeRndr() }()
+			log.Printf("[serve:sitepages] JS-рендеринг включён (headless-браузер)")
+		}
+
+		// ИИ-обогащение страниц (теги/описание/цели/тезисы/выводы).
+		var sitePageEnricher *sitepages.Enricher
+		if cfg.SitePagesEnrichEnabled && aiStore != nil {
+			_ = aiStore.EnsurePageAnnotatorAgent(ctx)
+			sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
+			// Стартовый бэкфилл: единожды аннотируем все ещё не обогащённые страницы.
+			go func() {
+				pend, err := sitePageStore.ListNeedingEnrichment(ctx, 0)
+				if err != nil || len(pend) == 0 {
+					return
+				}
+				log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц", len(pend))
+				d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+				log.Printf("[serve:sitepages] бэкфилл аннотаций завершён: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+				if d > 0 {
+					if pages, lerr := sitePageStore.ListAll(ctx); lerr == nil {
+						if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+							log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
+						} else {
+							log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
+						}
+					}
+				}
+			}()
+		}
+
+		runner.Register("sitepages", "Страницы публичного сайта", cfg.ScrapeInterval,
+			func(ctx context.Context) (jobsched.RunResult, error) {
+				cr := sitepages.New(sitePagesSeeds(cfg), sitePageStore)
+				cr.MaxPages = cfg.SitePagesMaxPages
+				cr.MaxPerPath = cfg.SitePagesMaxPerPath
+				cr.Concurrency = cfg.SitePagesConcurrency
+				cr.Delay = cfg.ScrapeDelay
+				cr.Changes = changeStore
+				cr.UseDynamicProxy(proxyResolver)
+				cr.Renderer = sitePageRenderer
+				rep, err := cr.Run(ctx)
+				if err != nil {
+					recordHealth("sitepages", 0, err)
+					return jobsched.RunResult{}, err
+				}
+				recordHealth("sitepages", rep.New+rep.Changed, nil)
+				// Убираем из индекса страницы, ставшие недоступными (404/410).
+				if rep.Gone > 0 {
+					if gone, gerr := sitePageStore.ListGone(ctx); gerr == nil && len(gone) > 0 {
+						if _, derr := newSitePagesIndexer(cfg).Reindex(ctx, gone); derr != nil {
+							log.Printf("[serve:sitepages] очистка недоступных из индекса: %v", derr)
+						}
+					}
+				}
+				// Инкрементально доиндексируем изменённые/новые страницы.
+				if rep.New+rep.Changed > 0 {
+					if sitePageEnricher != nil {
+						if pend, perr := sitePageStore.ListNeedingEnrichment(ctx, rep.New+rep.Changed); perr == nil && len(pend) > 0 {
+							d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+							log.Printf("[serve:sitepages] аннотирование: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+						}
+					}
+					if pages, lerr := sitePageStore.ListRecent(ctx, rep.New+rep.Changed); lerr == nil {
+						if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+							log.Printf("[serve:sitepages] индексация: %v", ierr)
+						} else {
+							log.Printf("[serve:sitepages] проиндексировано %d страниц", n)
+						}
+					}
+				}
+				return jobsched.RunResult{
+					ItemsNew:     rep.New,
+					ItemsUpdated: rep.Changed,
+					ItemsTotal:   rep.New + rep.Changed,
+					Details: map[string]any{
+						"visited": rep.Visited,
+						"gone":    rep.Gone,
+					},
+				}, nil
+			})
+	}
+
+	return runner
+}
+
 // registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство,
 // источники, навигацию по сайту).
 func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.Config) {
@@ -2059,6 +2389,13 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.
 		log.Printf("[mcp] get_source_health недоступен: %v", err)
 	} else {
 		mcpserver.RegisterHealthTools(mcpSrv, hs)
+	}
+
+	// Журнал запусков планировщика и учёт токенов ИИ: get_scheduler_runs / get_ai_usage.
+	if js, err := jobsched.NewStore(ctx, pool); err != nil {
+		log.Printf("[mcp] get_scheduler_runs/get_ai_usage недоступны: %v", err)
+	} else {
+		mcpserver.RegisterSchedulerTools(mcpSrv, js)
 	}
 }
 

@@ -132,7 +132,8 @@ func validateTenant(t *model.Tenant) error {
 	if strings.TrimSpace(t.Name) == "" {
 		return fmt.Errorf("Name: %w", ErrEmptyField)
 	}
-	if strings.TrimSpace(t.APIKey) == "" {
+	// Достаточно открытого ключа (стор выведет hash) ИЛИ уже готового хэша.
+	if strings.TrimSpace(t.APIKey) == "" && strings.TrimSpace(t.APIKeyHash) == "" {
 		return fmt.Errorf("APIKey: %w", ErrEmptyField)
 	}
 	return nil

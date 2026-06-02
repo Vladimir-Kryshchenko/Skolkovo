@@ -13,6 +13,7 @@ import (
 
 type keyCacheEntry struct {
 	tenantID string
+	clientID string
 	ok       bool
 	expires  time.Time
 }
@@ -34,22 +35,22 @@ func newKeyCache(ttl time.Duration) *keyCache {
 	}
 }
 
-// get возвращает (tenantID, ok, hit). hit=false означает промах кэша
+// get возвращает (tenantID, clientID, ok, hit). hit=false означает промах кэша
 // (нет записи или истёк TTL) — вызывающий должен сходить в БД.
-func (c *keyCache) get(key string) (tenantID string, ok bool, hit bool) {
+func (c *keyCache) get(key string) (tenantID, clientID string, ok bool, hit bool) {
 	c.mu.RLock()
 	e, found := c.m[key]
 	c.mu.RUnlock()
 	if !found || c.now().After(e.expires) {
-		return "", false, false
+		return "", "", false, false
 	}
-	return e.tenantID, e.ok, true
+	return e.tenantID, e.clientID, e.ok, true
 }
 
 // set кладёт результат проверки ключа в кэш.
-func (c *keyCache) set(key, tenantID string, ok bool) {
+func (c *keyCache) set(key, tenantID, clientID string, ok bool) {
 	c.mu.Lock()
-	c.m[key] = keyCacheEntry{tenantID: tenantID, ok: ok, expires: c.now().Add(c.ttl)}
+	c.m[key] = keyCacheEntry{tenantID: tenantID, clientID: clientID, ok: ok, expires: c.now().Add(c.ttl)}
 	c.mu.Unlock()
 }
 

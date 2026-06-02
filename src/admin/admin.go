@@ -92,6 +92,8 @@ type Server struct {
 	rag          *rag.Service
 	schedStore   *scheduler.Store
 	reportStore  *scheduler.ReportStore
+	jobStore     *jobsched.Store    // планировщик заданий: расписание, журнал, токены ИИ (опц.)
+	jobRunner    *jobsched.Runner   // движок планировщика для ручного запуска (опц.)
 	aiStore      *aimodels.Store    // ИИ-модели и агенты (опционально, требует Postgres)
 	navIndexer   *navindex.Indexer  // Переиндексация навигации по сайту (опционально)
 	proxyManager *ProxyManager      // Управление прокси

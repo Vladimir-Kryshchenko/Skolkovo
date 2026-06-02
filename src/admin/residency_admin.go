@@ -3,6 +3,8 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -62,6 +64,8 @@ func RegisterResidencyRoutes(mux *http.ServeMux, stores Stores) *http.ServeMux {
 	mux.HandleFunc("GET /clients", s.handleClientsList)
 	mux.HandleFunc("GET /clients/{id}", s.handleClientCard)
 	mux.HandleFunc("POST /clients/{id}/stage", s.handleClientStageTransition)
+	mux.HandleFunc("POST /clients/{id}/generate-key", s.handleClientGenerateKey)
+	mux.HandleFunc("POST /clients/{id}/revoke-key", s.handleClientRevokeKey)
 
 	// Чек-листы
 	mux.HandleFunc("GET /checklists", s.handleChecklists)
@@ -75,6 +79,9 @@ func RegisterResidencyRoutes(mux *http.ServeMux, stores Stores) *http.ServeMux {
 	// Тенанты
 	mux.HandleFunc("GET /tenants", s.handleTenants)
 	mux.HandleFunc("POST /tenants", s.handleTenantCreate)
+	mux.HandleFunc("POST /tenants/{id}/regenerate-key", s.handleTenantRegenerateKey)
+	mux.HandleFunc("POST /tenants/{id}/telegram-token", s.handleTenantTelegramToken)
+	mux.HandleFunc("POST /tenants/{id}/toggle-active", s.handleTenantToggleActive)
 
 	// Мероприятия (контроль парсинга)
 	mux.HandleFunc("GET /events-admin", s.handleEventsAdmin)
@@ -214,6 +221,8 @@ type clientCardData struct {
 	Flash       string
 	FlashKind   string
 	StageLabels map[model.ResidencyStage]string
+	// RevealKey — полный личный ключ клиента для одноразового показа после генерации.
+	RevealKey string
 }
 
 func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +255,9 @@ func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Reques
 		Flash:       r.URL.Query().Get("msg"),
 		FlashKind:   orDefault(r.URL.Query().Get("kind"), "ok"),
 		StageLabels: stageLabels,
+	}
+	if key, ok := keyReveals.take(r.URL.Query().Get("reveal_nonce")); ok {
+		data.RevealKey = key
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -306,6 +318,57 @@ func (s *ResidencyServer) handleClientStageTransition(w http.ResponseWriter, r *
 
 	residencyRedirect(w, r, "/clients/"+id,
 		fmt.Sprintf("Стадия изменена: %s → %s", transition.FromStage, transition.ToStage), "ok")
+}
+
+// handleClientGenerateKey генерирует (или ротирует) личный MCP API-ключ клиента.
+func (s *ResidencyServer) handleClientGenerateKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	client, err := s.stores.ClientStore.GetClient(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/clients", "Клиент не найден", "err")
+		return
+	}
+
+	newKey := generateAPIKey()
+	client.APIKey = newKey // стор сохранит только hash+prefix
+	client.UpdatedAt = time.Now()
+	if err := s.stores.ClientStore.UpdateClient(ctx, client); err != nil {
+		residencyRedirect(w, r, "/clients/"+id, "Ошибка генерации ключа: "+err.Error(), "err")
+		return
+	}
+
+	w.Header().Set("Cache-Control", "no-store")
+	nonce := keyReveals.put(newKey)
+	http.Redirect(w, r, "/clients/"+id+"?reveal_nonce="+url.QueryEscape(nonce)+
+		"&msg="+url.QueryEscape("Личный ключ клиента создан. Скопируйте — позже он будет скрыт.")+"&kind=ok",
+		http.StatusSeeOther)
+}
+
+// handleClientRevokeKey отзывает личный ключ клиента (очищает hash+prefix).
+func (s *ResidencyServer) handleClientRevokeKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	client, err := s.stores.ClientStore.GetClient(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/clients", "Клиент не найден", "err")
+		return
+	}
+
+	// Явно очищаем хэш/префикс: deriveClientKey не трогает их при пустом APIKey,
+	// поэтому сбрасываем напрямую перед UpdateClient.
+	client.APIKey = ""
+	client.APIKeyHash = ""
+	client.APIKeyPrefix = ""
+	client.UpdatedAt = time.Now()
+	if err := s.stores.ClientStore.UpdateClient(ctx, client); err != nil {
+		residencyRedirect(w, r, "/clients/"+id, "Ошибка отзыва ключа: "+err.Error(), "err")
+		return
+	}
+
+	residencyRedirect(w, r, "/clients/"+id, "Личный ключ клиента отозван", "ok")
 }
 
 // autoReportingDeadline создаёт дедлайн квартальной отчётности при переходе на
@@ -499,6 +562,8 @@ type tenantsPageData struct {
 	Tenants   []*model.Tenant
 	Flash     string
 	FlashKind string
+	// RevealKey — полный API-ключ для одноразового показа (после создания/ротации).
+	RevealKey string
 }
 
 func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) {
@@ -523,6 +588,10 @@ func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) 
 		Flash:     r.URL.Query().Get("msg"),
 		FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
 	}
+	// Одноразовый показ свежесгенерированного ключа по nonce.
+	if key, ok := keyReveals.take(r.URL.Query().Get("reveal_nonce")); ok {
+		data.RevealKey = key
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tenantsTmpl.Execute(w, data); err != nil {
@@ -537,11 +606,15 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	apiKey := strings.TrimSpace(r.FormValue("api_key"))
-
-	if name == "" || apiKey == "" {
-		residencyRedirect(w, r, "/tenants", "Имя и API-ключ обязательны", "err")
+	if name == "" {
+		residencyRedirect(w, r, "/tenants", "Название обязательно", "err")
 		return
+	}
+
+	// API-ключ можно задать вручную, но обычно генерируется автоматически.
+	apiKey := strings.TrimSpace(r.FormValue("api_key"))
+	if apiKey == "" {
+		apiKey = generateAPIKey()
 	}
 
 	ctx := r.Context()
@@ -568,7 +641,118 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	residencyRedirect(w, r, "/tenants", "Тенант создан: "+name, "ok")
+	// Показываем полный ключ один раз (в БД он хранится только как hash+prefix).
+	s.redirectTenantReveal(w, r, apiKey, "Тенант создан: "+name+". Скопируйте API-ключ — позже он будет скрыт.")
+}
+
+// handleTenantRegenerateKey ротирует MCP API-ключ тенанта.
+func (s *ResidencyServer) handleTenantRegenerateKey(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	now := time.Now()
+	newKey := generateAPIKey()
+	tenant.APIKey = newKey
+	tenant.KeyRotatedAt = &now
+
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка ротации ключа: "+err.Error(), "err")
+		return
+	}
+
+	s.redirectTenantReveal(w, r, newKey, "Ключ обновлён. Старый ключ больше не действует — скопируйте новый.")
+}
+
+// handleTenantTelegramToken сохраняет/сбрасывает токен Telegram-бота тенанта.
+func (s *ResidencyServer) handleTenantTelegramToken(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	token := strings.TrimSpace(r.FormValue("telegram_token"))
+	tenant.TelegramBotToken = token
+	if token == "" {
+		// Токен убран — сбрасываем и кэш @username (бот будет остановлен менеджером).
+		tenant.TelegramBotUsername = ""
+	}
+
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка сохранения токена: "+err.Error(), "err")
+		return
+	}
+
+	msg := "Токен Telegram-бота сохранён. Бот поднимется в течение минуты."
+	if token == "" {
+		msg = "Токен Telegram-бота убран. Бот будет остановлен."
+	}
+	residencyRedirect(w, r, "/tenants", msg, "ok")
+}
+
+// handleTenantToggleActive включает/выключает тенанта.
+func (s *ResidencyServer) handleTenantToggleActive(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	tenant.Active = !tenant.Active
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка обновления: "+err.Error(), "err")
+		return
+	}
+
+	state := "активирован"
+	if !tenant.Active {
+		state = "деактивирован"
+	}
+	residencyRedirect(w, r, "/tenants", "Тенант "+state+": "+tenant.Name, "ok")
+}
+
+// redirectTenantReveal перенаправляет на /tenants с одноразовым показом ключа.
+// Открытый ключ кладётся в keyReveals под nonce; в URL попадает только nonce.
+func (s *ResidencyServer) redirectTenantReveal(w http.ResponseWriter, r *http.Request, apiKey, msg string) {
+	w.Header().Set("Cache-Control", "no-store")
+	nonce := keyReveals.put(apiKey)
+	target := "/tenants?reveal_nonce=" + url.QueryEscape(nonce) +
+		"&msg=" + url.QueryEscape(msg) + "&kind=ok"
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// generateAPIKey генерирует сильный MCP API-ключ вида sk_skolkovo_<32 hex>.
+func generateAPIKey() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand практически не падает; на всякий случай — UUID без дефисов.
+		return "sk_skolkovo_" + strings.ReplaceAll(generateUUID(), "-", "")
+	}
+	return "sk_skolkovo_" + hex.EncodeToString(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -1185,6 +1369,19 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
+<script>
+function copyText(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.textContent).then(function(){var b=event.target;var t=b.textContent;b.textContent='✓';setTimeout(function(){b.textContent=t},1200);});}
+</script>
+
+{{if .RevealKey}}
+<div class="card" style="border:2px solid var(--yellow);background:var(--yellow-bg)">
+  <h3>🔑 Личный ключ клиента — сохраните сейчас</h3>
+  <p class="meta" style="margin-bottom:8px">Ключ показывается один раз. В базе хранится только его хэш — позже посмотреть нельзя, только перевыпустить.</p>
+  <code id="reveal-key" style="font-size:14px;padding:6px 10px;background:var(--surface);border-radius:4px;user-select:all">{{.RevealKey}}</code>
+  <button type="button" class="btn btn-primary btn-sm" onclick="copyText('reveal-key')" data-tooltip="Скопировать ключ">⧉ Копировать</button>
+</div>
+{{end}}
+
 <div class="grid-2">
   <div class="card">
     <h3>Основная информация</h3>
@@ -1216,6 +1413,25 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
       </div>
       <button type="submit" class="btn btn-primary" data-tooltip="Перевести клиента на выбранную стадию">Перевести</button>
     </form>
+  </div>
+</div>
+
+<div class="card">
+  <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.778-7.778zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>Подключение к MCP (личный ключ агента)</h3>
+  <p class="meta" style="margin-bottom:10px">Личный API-ключ позволяет клиенту подключить своего агента/приложение к MCP-серверу под собственным идентификатором (вызовы атрибутируются клиенту в аудите).</p>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <div>
+      <div class="meta">Текущий ключ</div>
+      {{if .Client.APIKeyPrefix}}<code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Идентификатор ключа (не секрет)">{{.Client.APIKeyPrefix}}…</code>{{else}}<span class="meta">не выдан</span>{{end}}
+    </div>
+    <form method="POST" action="/clients/{{.Client.ID}}/generate-key" {{if .Client.APIKeyPrefix}}onsubmit="return confirm('Перевыпустить ключ? Старый перестанет работать.')"{{end}} style="display:inline">
+      <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Сгенерировать/перевыпустить личный ключ клиента">{{if .Client.APIKeyPrefix}}↻ Перевыпустить{{else}}Сгенерировать ключ{{end}}</button>
+    </form>
+    {{if .Client.APIKeyPrefix}}
+    <form method="POST" action="/clients/{{.Client.ID}}/revoke-key" onsubmit="return confirm('Отозвать ключ клиента?')" style="display:inline">
+      <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Отозвать личный ключ">Отозвать</button>
+    </form>
+    {{end}}
   </div>
 </div>
 
@@ -1498,19 +1714,29 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
+<script>
+function copyText(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.textContent).then(function(){var b=event.target;var t=b.textContent;b.textContent='✓';setTimeout(function(){b.textContent=t},1200);});}
+function submitToken(form,hasToken){var v=form.telegram_token.value.trim();if(v===''&&hasToken){return confirm('Очистить токен и остановить бота тенанта?');}return true;}
+</script>
+
+{{if .RevealKey}}
+<div class="card" style="border:2px solid var(--yellow);background:var(--yellow-bg)">
+  <h3>🔑 Новый API-ключ — сохраните сейчас</h3>
+  <p class="meta" style="margin-bottom:8px">Ключ показывается один раз. В базе хранится только его хэш — позже посмотреть нельзя, только перевыпустить.</p>
+  <code id="reveal-key" style="font-size:14px;padding:6px 10px;background:var(--surface);border-radius:4px;user-select:all">{{.RevealKey}}</code>
+  <button type="button" class="btn btn-primary btn-sm" onclick="copyText('reveal-key')" data-tooltip="Скопировать ключ">⧉ Копировать</button>
+</div>
+{{end}}
+
 <div class="card">
   <h3>Создать тенант</h3>
+  <p class="meta" style="margin-bottom:12px">Тенант — организация-заказчик. После создания получит собственный MCP API-ключ для подключения своей системы/агента и может подключить свой Telegram-бот.</p>
   <form method="POST" action="/tenants">
-    <div class="grid-2">
-      <div class="form-group">
-        <label>Название</label>
-        <input type="text" name="name" placeholder="Название организации" required data-tooltip="Название организации-тенанта">
-      </div>
-      <div class="form-group">
-        <label>API-ключ</label>
-        <input type="text" name="api_key" placeholder="sk-xxxxxxxxxxxxxxxx" required data-tooltip="API-ключ для доступа тенанта">
-      </div>
+    <div class="form-group">
+      <label>Название</label>
+      <input type="text" name="name" placeholder="Название организации" required data-tooltip="Название организации-тенанта">
     </div>
+    <p class="meta" style="margin:-4px 0 12px">API-ключ будет сгенерирован автоматически и показан один раз.</p>
     <button type="submit" class="btn btn-primary" data-tooltip="Создать нового тенанта">Создать</button>
   </form>
 </div>
@@ -1521,18 +1747,41 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
   <thead>
     <tr>
       <th>Название</th>
-      <th>API-ключ</th>
+      <th>MCP API-ключ</th>
+      <th>Telegram-бот</th>
       <th>Активен</th>
       <th>Создан</th>
+      <th>Действия</th>
     </tr>
   </thead>
   <tbody>
   {{range .Tenants}}
   <tr>
     <td><strong>{{.Name}}</strong></td>
-    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="API-ключ показан частично">{{maskAPI .APIKey}}</code></td>
+    <td>
+      <code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Идентификатор ключа (не секрет); полный ключ виден только при создании/ротации">{{if .APIKeyPrefix}}{{.APIKeyPrefix}}…{{else if .APIKey}}{{maskAPI .APIKey}}{{else}}—{{end}}</code>
+    </td>
+    <td>
+      {{if .TelegramBotUsername}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Бот запущен">@{{.TelegramBotUsername}}</span>
+      {{else if .TelegramBotToken}}<span class="badge" style="background:var(--yellow-bg);color:var(--yellow)" data-tooltip="Токен задан, бот запускается">токен задан</span>
+      {{else}}<span class="meta">не задан</span>{{end}}
+    </td>
     <td>{{if .Active}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Тенант активен">Да</span>{{else}}<span class="badge" style="background:var(--gray-bg);color:var(--gray)" data-tooltip="Тенант отключён">Нет</span>{{end}}</td>
     <td class="meta">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>
+    <td>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <form method="POST" action="/tenants/{{.ID}}/regenerate-key" onsubmit="return confirm('Сгенерировать новый ключ? Старый перестанет работать.')" style="display:inline">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Ротация MCP-ключа">↻ ключ</button>
+        </form>
+        <form method="POST" action="/tenants/{{.ID}}/toggle-active" style="display:inline">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Включить/выключить тенанта">{{if .Active}}выкл.{{else}}вкл.{{end}}</button>
+        </form>
+        <form method="POST" action="/tenants/{{.ID}}/telegram-token" onsubmit="return submitToken(this, {{if .TelegramBotToken}}true{{else}}false{{end}})" style="display:flex;gap:4px;align-items:center">
+          <input type="text" name="telegram_token" placeholder="{{if .TelegramBotToken}}задан · новый/пусто=стоп{{else}}токен @BotFather{{end}}" style="width:160px;font-size:12px;padding:4px 6px" data-tooltip="Введите токен, чтобы поднять бота тенанта; отправьте пустым — чтобы остановить">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Сохранить токен бота">Бот</button>
+        </form>
+      </div>
+    </td>
   </tr>
   {{end}}
   </tbody>

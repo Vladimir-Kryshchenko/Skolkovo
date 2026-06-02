@@ -33,6 +33,12 @@ type TenantKeyValidator interface {
 	GetTenantByAPIKey(ctx context.Context, apiKey string) (*model.Tenant, error)
 }
 
+// ClientKeyValidator проверяет личные API-ключи клиентов-резидентов
+// (*store.PostgresClientStore ему удовлетворяет).
+type ClientKeyValidator interface {
+	GetClientByAPIKey(ctx context.Context, apiKey string) (*model.Client, error)
+}
+
 // Server — HTTP-обёртка над MCP с авторизацией и лимитом запросов.
 type Server struct {
 	rag      *rag.Service
@@ -43,7 +49,9 @@ type Server struct {
 	mcpSrv   *server.MCPServer // кэшированный MCPServer (ленивая инициализация)
 
 	// tenants — валидатор per-tenant ключей (nil → только глобальный apiKey).
-	tenants  TenantKeyValidator
+	tenants TenantKeyValidator
+	// clients — валидатор личных ключей клиентов-резидентов (nil → не проверяются).
+	clients  ClientKeyValidator
 	keyCache *keyCache
 	// audit — аудит-логгер MCP-запросов (nil → аудит отключён).
 	audit *AuditLogger
@@ -64,7 +72,19 @@ func New(addr, apiKey string, rateRPS int, ragSvc *rag.Service, st store.Store) 
 // Глобальный apiKey при этом продолжает работать (проверяется первым).
 func (s *Server) WithTenantAuth(v TenantKeyValidator) *Server {
 	s.tenants = v
-	s.keyCache = newKeyCache(60 * time.Second)
+	if s.keyCache == nil {
+		s.keyCache = newKeyCache(60 * time.Second)
+	}
+	return s
+}
+
+// WithClientAuth включает проверку личных API-ключей клиентов-резидентов.
+// Проверяются после глобального и tenant-ключей; tenant_id атрибутируется тенанту клиента.
+func (s *Server) WithClientAuth(v ClientKeyValidator) *Server {
+	s.clients = v
+	if s.keyCache == nil {
+		s.keyCache = newKeyCache(60 * time.Second)
+	}
 	return s
 }
 
@@ -273,15 +293,15 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		}
 		// Авторизация требуется, если задан глобальный ключ ИЛИ включена
 		// per-tenant проверка. Если оба отсутствуют — сервер открыт.
-		if s.apiKey != "" || s.tenants != nil {
-			tenantID, ok := s.resolveAuth(r)
+		if s.apiKey != "" || s.tenants != nil || s.clients != nil {
+			tenantID, clientID, ok := s.resolveAuth(r)
 			if !ok {
 				log.Printf("[mcp] 401 %s unauthorized", ip)
 				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
-			if tenantID != "" {
-				setAuditTenant(r.Context(), tenantID)
+			if tenantID != "" || clientID != "" {
+				setAuditIdentity(r.Context(), tenantID, clientID)
 			}
 		}
 		log.Printf("[mcp] %s %s %s", ip, r.Method, r.URL.Path)
@@ -315,40 +335,53 @@ func extractAPIKey(r *http.Request) string {
 	return ""
 }
 
-// resolveAuth проверяет API-ключ запроса. Возвращает (tenantID, ok):
-//   - глобальный apiKey → ("", true) [совместимость; tenant не атрибутируется];
-//   - валидный ключ активного тенанта → (tenant.ID, true);
-//   - иначе → ("", false).
+// resolveAuth проверяет API-ключ запроса. Возвращает (tenantID, clientID, ok):
+//   - глобальный apiKey → ("", "", true) [совместимость; не атрибутируется];
+//   - ключ активного тенанта → (tenant.ID, "", true);
+//   - личный ключ клиента → (client.TenantID, client.ID, true);
+//   - иначе → ("", "", false).
 //
-// Per-tenant результаты кэшируются (положительные и отрицательные) на короткий TTL.
-func (s *Server) resolveAuth(r *http.Request) (tenantID string, ok bool) {
+// Результаты кэшируются (положительные и отрицательные) на короткий TTL.
+func (s *Server) resolveAuth(r *http.Request) (tenantID, clientID string, ok bool) {
 	key := extractAPIKey(r)
 	if key == "" {
-		return "", false
+		return "", "", false
 	}
 	// Глобальный ключ проверяется первым — обратная совместимость.
 	if s.apiKey != "" && key == s.apiKey {
-		return "", true
+		return "", "", true
 	}
-	if s.tenants == nil {
-		return "", false
+	if s.tenants == nil && s.clients == nil {
+		return "", "", false
 	}
-	if tid, found, hit := s.keyCache.get(key); hit {
-		return tid, found
+	if tid, cid, found, hit := s.keyCache.get(key); hit {
+		return tid, cid, found
 	}
-	t, err := s.tenants.GetTenantByAPIKey(r.Context(), key)
-	if err != nil || t == nil || !t.Active {
-		s.keyCache.set(key, "", false)
-		return "", false
+
+	// 1) Ключ тенанта.
+	if s.tenants != nil {
+		if t, err := s.tenants.GetTenantByAPIKey(r.Context(), key); err == nil && t != nil && t.Active {
+			s.keyCache.set(key, t.ID, "", true)
+			return t.ID, "", true
+		}
 	}
-	s.keyCache.set(key, t.ID, true)
-	return t.ID, true
+	// 2) Личный ключ клиента-резидента.
+	if s.clients != nil {
+		if c, err := s.clients.GetClientByAPIKey(r.Context(), key); err == nil && c != nil {
+			s.keyCache.set(key, c.TenantID, c.ID, true)
+			return c.TenantID, c.ID, true
+		}
+	}
+
+	s.keyCache.set(key, "", "", false)
+	return "", "", false
 }
 
-// setAuditTenant проставляет tenant_id в аудит-информацию запроса (если она есть).
-func setAuditTenant(ctx context.Context, tenantID string) {
+// setAuditIdentity проставляет tenant_id/client_id в аудит-информацию запроса.
+func setAuditIdentity(ctx context.Context, tenantID, clientID string) {
 	if info := auditInfoFromCtx(ctx); info != nil {
 		info.TenantID = tenantID
+		info.ClientID = clientID
 	}
 }
 

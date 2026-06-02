@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"baza-skolkovo/src/aimodels"
@@ -45,7 +46,10 @@ type chatFunc func(ctx context.Context, m aimodels.Model, a aimodels.Agent, user
 type Enricher struct {
 	Store *aimodels.Store // конфигурация ИИ-моделей и агентов
 	Pages *PostgresStore  // хранилище страниц (сохранение аннотаций, словарь тегов)
-	Delay time.Duration   // пауза между LLM-запросами (троттлинг провайдера)
+	Delay time.Duration   // пауза между LLM-запросами (троттлинг, для последовательного режима)
+	// Concurrency — число параллельных воркеров разметки (1 — последовательно).
+	// Контролируемый параллелизм: ограничивает одновременные запросы к LLM.
+	Concurrency int
 
 	chat     chatFunc
 	skipOnce sync.Once // лог «агент не настроен» — не чаще одного раза
@@ -56,10 +60,14 @@ func NewEnricher(store *aimodels.Store, pages *PostgresStore, delay time.Duratio
 	return &Enricher{Store: store, Pages: pages, Delay: delay, chat: aimodels.ChatWithAgent}
 }
 
-// EnrichBatch аннотирует страницы последовательно (с паузой Delay между
-// запросами), устойчиво к ошибкам отдельной страницы. Если включённого агента
-// «Аннотатор страниц» с рабочей моделью нет — пропускает весь батч.
-// Возвращает счётчики: обогащено / пропущено / с ошибкой.
+// EnrichBatch аннотирует страницы пулом из Concurrency воркеров (контролируемый
+// параллелизм; 1 — последовательно), устойчиво к ошибкам отдельной страницы.
+// Если включённого агента «Аннотатор страниц» с рабочей моделью нет — пропускает
+// весь батч. Возвращает счётчики: обогащено / пропущено / с ошибкой.
+//
+// Словарь тегов known берётся снимком на весь батч (read-only при параллельной
+// обработке — без гонок); новые теги попадают в словарь через BumpTags и
+// переиспользуются на следующем батче.
 func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skipped, failed int) {
 	if len(pages) == 0 {
 		return 0, 0, 0
@@ -77,47 +85,54 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 	if chat == nil {
 		chat = aimodels.ChatWithAgent
 	}
+	conc := e.Concurrency
+	if conc < 1 {
+		conc = 1
+	}
 
-	for i, p := range pages {
+	var doneN, failedN int64
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+
+	for _, p := range pages {
 		select {
 		case <-ctx.Done():
-			return done, skipped, failed
-		default:
+			wg.Wait()
+			return int(doneN), 0, int(failedN)
+		case sem <- struct{}{}:
 		}
-		if i > 0 && e.Delay > 0 {
-			select {
-			case <-ctx.Done():
-				return done, skipped, failed
-			case <-time.After(e.Delay):
-			}
-		}
+		wg.Add(1)
+		go func(p *Page) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		ann, err := e.annotate(ctx, chat, agent, models, p, known)
-		if err != nil {
-			failed++
-			log.Printf("[sitepages/enrich] %s: %v", p.URL, err)
-			continue
-		}
-		// Запасной источник даты публикации: если разметка её не дала, берём
-		// распознанную ИИ из текста (в БД проставится лишь при отсутствии).
-		var published *time.Time
-		if p.PublishedAt == nil {
-			if t, ok := parseAnyDate(ann.PublishedDate); ok {
-				published = &t
-				p.PublishedAt = &t
+			ann, err := e.annotate(ctx, chat, agent, models, p, known)
+			if err != nil {
+				atomic.AddInt64(&failedN, 1)
+				log.Printf("[sitepages/enrich] %s: %v", p.URL, err)
+				return
 			}
-		}
-		if err := e.Pages.UpdateEnrichment(ctx, p.ID, ann, p.ContentHash, published); err != nil {
-			failed++
-			log.Printf("[sitepages/enrich] сохранение %s: %v", p.URL, err)
-			continue
-		}
-		_ = e.Pages.BumpTags(ctx, ann.Tags)
-		known = mergeKnown(known, ann.Tags) // следующие страницы переиспользуют новые теги
-		applyAnnotation(p, ann)             // для последующей переиндексации того же среза
-		done++
+			// Запасной источник даты публикации: если разметка её не дала, берём
+			// распознанную ИИ из текста (в БД проставится лишь при отсутствии).
+			var published *time.Time
+			if p.PublishedAt == nil {
+				if t, ok := parseAnyDate(ann.PublishedDate); ok {
+					published = &t
+					p.PublishedAt = &t
+				}
+			}
+			if err := e.Pages.UpdateEnrichment(ctx, p.ID, ann, p.ContentHash, published); err != nil {
+				atomic.AddInt64(&failedN, 1)
+				log.Printf("[sitepages/enrich] сохранение %s: %v", p.URL, err)
+				return
+			}
+			_ = e.Pages.BumpTags(ctx, ann.Tags)
+			applyAnnotation(p, ann) // для последующей переиндексации того же среза
+			atomic.AddInt64(&doneN, 1)
+		}(p)
 	}
-	return done, skipped, failed
+	wg.Wait()
+	return int(doneN), 0, int(failedN)
 }
 
 // annotate выполняет LLM-запрос с авто-переключением моделей и нормализует
@@ -269,22 +284,6 @@ func cleanList(items []string, max int) []string {
 		}
 	}
 	return out
-}
-
-// mergeKnown добавляет новые (нормализованные) теги к словарю в памяти.
-func mergeKnown(known, add []string) []string {
-	set := make(map[string]bool, len(known))
-	for _, k := range known {
-		set[strings.ToLower(k)] = true
-	}
-	for _, t := range add {
-		lt := strings.ToLower(strings.TrimSpace(t))
-		if lt != "" && !set[lt] {
-			set[lt] = true
-			known = append(known, lt)
-		}
-	}
-	return known
 }
 
 // applyAnnotation проставляет ИИ-поля в страницу (для переиндексации того же среза).

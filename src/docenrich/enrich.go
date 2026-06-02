@@ -15,6 +15,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"baza-skolkovo/src/aimodels"
@@ -56,7 +57,9 @@ type chatFunc func(ctx context.Context, m aimodels.Model, a aimodels.Agent, user
 type Enricher struct {
 	AI    *aimodels.Store      // конфигурация ИИ-моделей и агентов
 	Store *store.PostgresStore // реестр документов (UpdateClassification, словарь тегов)
-	Delay time.Duration        // пауза между LLM-запросами (троттлинг провайдера)
+	Delay time.Duration        // пауза между LLM-запросами (троттлинг, для последовательного режима)
+	// Concurrency — число параллельных воркеров разметки (1 — последовательно).
+	Concurrency int
 
 	chat     chatFunc
 	skipOnce sync.Once
@@ -98,42 +101,49 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 	if chat == nil {
 		chat = aimodels.ChatWithAgent
 	}
+	conc := e.Concurrency
+	if conc < 1 {
+		conc = 1
+	}
 
-	for i, d := range docs {
+	var doneN, failedN int64
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+
+	for _, d := range docs {
 		select {
 		case <-ctx.Done():
-			return done, skipped, failed
-		default:
+			wg.Wait()
+			return int(doneN), 0, int(failedN)
+		case sem <- struct{}{}:
 		}
-		if i > 0 && e.Delay > 0 {
-			select {
-			case <-ctx.Done():
-				return done, skipped, failed
-			case <-time.After(e.Delay):
-			}
-		}
+		wg.Add(1)
+		go func(d model.Document) {
+			defer wg.Done()
+			defer func() { <-sem }()
 
-		cls, err := e.annotate(ctx, chat, agent, models, d, known)
-		if err != nil {
-			failed++
-			log.Printf("[docenrich] %s (%s): %v", d.ID, d.Title, err)
-			continue
-		}
-		// Категория: принимаем только из канонического списка, иначе оставляем прежнюю.
-		category := canonicalCategory(cls.Category)
-		if category == "" {
-			category = d.Category
-		}
-		if err := e.Store.UpdateClassification(ctx, d.ID, category, cls.Subcategory, cls.Tags, d.FileHash); err != nil {
-			failed++
-			log.Printf("[docenrich] сохранение %s: %v", d.ID, err)
-			continue
-		}
-		_ = e.Store.BumpTags(ctx, cls.Tags)
-		known = mergeKnown(known, cls.Tags)
-		done++
+			cls, err := e.annotate(ctx, chat, agent, models, d, known)
+			if err != nil {
+				atomic.AddInt64(&failedN, 1)
+				log.Printf("[docenrich] %s (%s): %v", d.ID, d.Title, err)
+				return
+			}
+			// Категория: принимаем только из канонического списка, иначе оставляем прежнюю.
+			category := canonicalCategory(cls.Category)
+			if category == "" {
+				category = d.Category
+			}
+			if err := e.Store.UpdateClassification(ctx, d.ID, category, cls.Subcategory, cls.Tags, d.FileHash); err != nil {
+				atomic.AddInt64(&failedN, 1)
+				log.Printf("[docenrich] сохранение %s: %v", d.ID, err)
+				return
+			}
+			_ = e.Store.BumpTags(ctx, cls.Tags)
+			atomic.AddInt64(&doneN, 1)
+		}(d)
 	}
-	return done, skipped, failed
+	wg.Wait()
+	return int(doneN), 0, int(failedN)
 }
 
 // annotate выполняет LLM-запрос с авто-переключением моделей и нормализует
@@ -268,22 +278,6 @@ func normalizeTags(tags, known []string, max int) []string {
 		out = []string{}
 	}
 	return out
-}
-
-// mergeKnown добавляет новые (нормализованные) теги к словарю в памяти.
-func mergeKnown(known, add []string) []string {
-	set := make(map[string]bool, len(known))
-	for _, k := range known {
-		set[strings.ToLower(k)] = true
-	}
-	for _, t := range add {
-		lt := strings.ToLower(strings.TrimSpace(t))
-		if lt != "" && !set[lt] {
-			set[lt] = true
-			known = append(known, lt)
-		}
-	}
-	return known
 }
 
 func firstN(ss []string, n int) []string {

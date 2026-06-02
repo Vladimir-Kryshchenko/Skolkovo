@@ -303,6 +303,7 @@ func cmdSitePages(cfg config.Config, args []string) error {
 		aiStore := aimodels.NewStore(ps.Pool())
 		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
 		enr := sitepages.NewEnricher(aiStore, pageStore, cfg.SitePagesEnrichDelay)
+		enr.Concurrency = cfg.SitePagesEnrichConcurrency
 		var pend []*sitepages.Page
 		if forceEnrich {
 			pend, err = pageStore.ListAllForEnrichment(ctx, 0)
@@ -1849,6 +1850,7 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	if cfg.SitePagesEnrichEnabled && aiStore != nil && sitePageStore != nil {
 		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
 		sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
+		sitePageEnricher.Concurrency = cfg.SitePagesEnrichConcurrency
 		// Стартовый бэкфилл: единожды аннотируем все ещё не обогащённые страницы.
 		go func() {
 			pend, err := sitePageStore.ListNeedingEnrichment(ctx, 0)
@@ -2147,6 +2149,7 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 				log.Printf("[jobsched:doc_enrich] не удалось создать агента «Аннотатор документов»: %v", err)
 			}
 			docEnricher := docenrich.New(aiStore, pgDocs, cfg.DocEnrichDelay)
+			docEnricher.Concurrency = cfg.DocEnrichConcurrency
 			runner.Register("doc_enrich", "ИИ-разметка документов (категория, подкатегория, теги)", cfg.ScrapeInterval,
 				func(ctx context.Context) (jobsched.RunResult, error) {
 					pend, err := pgDocs.ListNeedingEnrichment(ctx, 0)
@@ -2308,6 +2311,7 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 		if cfg.SitePagesEnrichEnabled && aiStore != nil {
 			_ = aiStore.EnsurePageAnnotatorAgent(ctx)
 			sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
+			sitePageEnricher.Concurrency = cfg.SitePagesEnrichConcurrency
 			// Стартовый бэкфилл: непрерывно размечаем backlog порциями (по
 			// SitePagesEnrichMaxPerRun) до полного исчерпания, переиндексируя каждую
 			// порцию. Работает в фоне отдельной горутиной — не блокирует раннер заданий

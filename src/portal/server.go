@@ -680,39 +680,11 @@ func sanitizeFilename(name string) string {
 }
 
 func stageProgress(stage model.ResidencyStage) int {
-	stages := []model.ResidencyStage{
-		model.StageApplication,
-		model.StageExamination,
-		model.StageDecision,
-		model.StageContract,
-		model.StageResident,
-		model.StageReporting,
-		model.StageExtension,
-		model.StageExit,
-	}
-	for i, s := range stages {
-		if s == stage {
-			return int(float64(i+1) / float64(len(stages)) * 100)
-		}
-	}
-	return 0
+	return model.StageProgress(stage)
 }
 
 func stageLabel(stage model.ResidencyStage) string {
-	labels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
-	if l, ok := labels[stage]; ok {
-		return l
-	}
-	return string(stage)
+	return model.StageLabel(stage)
 }
 
 func deadlineStatusClass(d *model.Deadline) string {
@@ -727,16 +699,7 @@ func deadlineStatusClass(d *model.Deadline) string {
 }
 
 func docStatusLabel(d *model.ClientDocument) string {
-	labels := map[model.ClientDocStatus]string{
-		model.DocPending:   "Ожидает",
-		model.DocSubmitted: "Отправлен",
-		model.DocApproved:  "Утверждён",
-		model.DocRejected:  "Отклонён",
-	}
-	if l, ok := labels[d.Status]; ok {
-		return l
-	}
-	return string(d.Status)
+	return model.DocStatusLabel(d.Status)
 }
 
 func docStatusClass(d *model.ClientDocument) string {

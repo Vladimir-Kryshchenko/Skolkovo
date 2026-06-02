@@ -183,28 +183,9 @@ func urgencyOrder(u string) int {
 	}
 }
 
-// stageLabel возвращает читаемое название стадии.
+// stageLabel возвращает читаемое название стадии (единый источник — model.StageLabel).
 func stageLabel(s model.ResidencyStage) string {
-	switch s {
-	case model.StageApplication:
-		return "Подача заявки"
-	case model.StageExamination:
-		return "Экспертиза"
-	case model.StageDecision:
-		return "Решение"
-	case model.StageContract:
-		return "Договор"
-	case model.StageResident:
-		return "Резидент"
-	case model.StageReporting:
-		return "Отчётность"
-	case model.StageExtension:
-		return "Продление"
-	case model.StageExit:
-		return "Выход"
-	default:
-		return string(s)
-	}
+	return model.StageLabel(s)
 }
 
 // RegisterConsultantRoutes регистрирует маршруты консультантского дашборда.

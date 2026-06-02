@@ -5,12 +5,14 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/html"
@@ -39,6 +41,25 @@ type Store interface {
 	Upsert(ctx context.Context, p *Page) (string, error)
 }
 
+// goneMarker — необязательная способность хранилища помечать страницу как
+// недоступную (404/410). Проверяется через type-assertion, чтобы не ломать
+// тестовые заглушки, реализующие только Upsert.
+type goneMarker interface {
+	MarkGone(ctx context.Context, id string) (changed bool, err error)
+}
+
+// Renderer — необязательный JS-рендерер (реализуется через chromedp в main).
+// Если задан, HTML страницы берётся через него: для разделов, где ссылки и
+// контент подставляются JavaScript-ом и не видны при простом HTTP-запросе.
+type Renderer interface {
+	Render(ctx context.Context, url string) ([]byte, error)
+}
+
+// statusError — HTTP-ответ с не-200 статусом (нужен для детекции 404/410).
+type statusError struct{ code int }
+
+func (e *statusError) Error() string { return fmt.Sprintf("статус %d", e.code) }
+
 // Report — итог одного обхода.
 type Report struct {
 	StartedAt time.Time
@@ -46,6 +67,7 @@ type Report struct {
 	New       int
 	Changed   int
 	Unchanged int
+	Gone      int // страниц помечено недоступными (404/410)
 	Errors    []string
 }
 
@@ -56,11 +78,22 @@ type Crawler struct {
 	HTTP     *http.Client
 	Delay    time.Duration
 	MaxPages int
+	// MaxPerPath ограничивает число query-вариантов одного пути (host+path) в
+	// очереди — защита от «бесконечных» пространств (календари, фасетные фильтры),
+	// когда query-параметры значимы для пагинации. 0 — без ограничения.
+	MaxPerPath int
+	// Concurrency — число параллельных загрузчиков (волновой BFS). <=1 —
+	// последовательный обход. Скачивание идёт параллельно, разбор/сохранение —
+	// под общей блокировкой. Delay применяется к каждому запросу (вежливость).
+	Concurrency int
 	// Changes — необязательная лента изменений: при появлении/изменении страницы
 	// фиксируется событие с EntityType = changes.EntitySitePage.
 	Changes changes.Recorder
 	// GetProxyURL — необязательный резолвер активного прокси (на каждый запрос).
 	GetProxyURL func() string
+	// Renderer — необязательный JS-рендерер (chromedp). Если задан, HTML берётся
+	// через него (статус всё равно проверяется обычным HTTP — для детекции 404).
+	Renderer Renderer
 }
 
 // New создаёт краулер с разумными значениями по умолчанию.
@@ -68,11 +101,13 @@ type Crawler struct {
 // страниц в пределах разрешённых хостов).
 func New(seeds []string, st Store) *Crawler {
 	return &Crawler{
-		Seeds:    seeds,
-		Store:    st,
-		HTTP:     &http.Client{Timeout: 60 * time.Second},
-		Delay:    3 * time.Second,
-		MaxPages: 0,
+		Seeds:       seeds,
+		Store:       st,
+		HTTP:        &http.Client{Timeout: 60 * time.Second},
+		Delay:       3 * time.Second,
+		MaxPages:    0,
+		MaxPerPath:  1000, // запас для пагинации, но защита от бесконечных календарей
+		Concurrency: 1,    // по умолчанию последовательно (детерминированно для тестов)
 	}
 }
 
@@ -119,71 +154,200 @@ func (c *Crawler) Run(ctx context.Context) (*Report, error) {
 	rep := &Report{StartedAt: time.Now()}
 	unlimited := c.MaxPages <= 0 // 0 = без лимита страниц
 
-	// Допустимые хосты — хосты стартовых URL.
+	// Допустимые хосты и origin-ы (scheme://host) стартовых URL.
 	allowedHosts := map[string]bool{}
-	var queue []string
+	originSet := map[string]bool{}
+	var origins []string
 	for _, seed := range c.Seeds {
-		seed = strings.TrimSpace(seed)
-		if seed == "" {
-			continue
-		}
-		if u, err := url.Parse(seed); err == nil && u.Host != "" {
+		if u, err := url.Parse(strings.TrimSpace(seed)); err == nil && u.Host != "" {
 			allowedHosts[strings.ToLower(u.Host)] = true
-			queue = append(queue, seed)
+			origin := strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+			if !originSet[origin] {
+				originSet[origin] = true
+				origins = append(origins, origin)
+			}
 		}
 	}
-	if len(queue) == 0 {
+	if len(allowedHosts) == 0 {
 		return rep, fmt.Errorf("нет валидных стартовых URL")
 	}
 
-	visited := map[string]bool{}
-	for len(queue) > 0 && (unlimited || rep.Visited < c.MaxPages) {
+	var (
+		queue    []string
+		visited  = map[string]bool{}
+		enqueued = map[string]bool{}
+		perPath  = map[string]int{}
+		capped   = map[string]bool{}
+	)
+	// enqueue ставит URL в очередь, если он в разрешённом хосте, не файл, ещё не
+	// посещён/не в очереди и не превышен лимит query-вариантов пути.
+	enqueue := func(raw string) {
+		u, err := url.Parse(raw)
+		if err != nil || !allowedHosts[strings.ToLower(u.Host)] {
+			return
+		}
+		if fileExts[strings.ToLower(path.Ext(u.Path))] {
+			return
+		}
+		norm := normalizeURL(raw)
+		if visited[norm] || enqueued[norm] {
+			return
+		}
+		if c.MaxPerPath > 0 {
+			pk := pathKey(raw)
+			if perPath[pk] >= c.MaxPerPath {
+				if !capped[pk] {
+					capped[pk] = true
+					rep.Errors = append(rep.Errors, fmt.Sprintf(
+						"лимит query-вариантов пути достигнут (%d), часть страниц %s пропущена", c.MaxPerPath, pk))
+				}
+				return
+			}
+			perPath[pk]++
+		}
+		enqueued[norm] = true
+		queue = append(queue, raw)
+	}
+
+	for _, seed := range c.Seeds {
+		enqueue(strings.TrimSpace(seed))
+	}
+	// Засеваем очередь из sitemap.xml (и robots.txt → Sitemap) каждого origin —
+	// так находятся страницы-сироты, на которые нет внутренних ссылок.
+	for _, loc := range c.discoverFromSitemaps(ctx, origins) {
+		enqueue(loc)
+	}
+
+	// Волновой BFS: на каждой волне страницы скачиваются параллельно (до
+	// Concurrency загрузчиков), а разбор/сохранение/постановка ссылок в очередь —
+	// под общей блокировкой. Следующая волна — собранные ссылки текущей.
+	conc := c.Concurrency
+	if conc < 1 {
+		conc = 1
+	}
+	var mu sync.Mutex
+	sem := make(chan struct{}, conc)
+
+	frontier := queue
+	queue = nil // дальше queue служит буфером для enqueue под блокировкой
+	for len(frontier) > 0 {
 		select {
 		case <-ctx.Done():
 			return rep, ctx.Err()
 		default:
 		}
-
-		pageURL := queue[0]
-		queue = queue[1:]
-		norm := normalizeURL(pageURL)
-		if visited[norm] {
-			continue
+		if !unlimited && rep.Visited >= c.MaxPages {
+			break
 		}
-		visited[norm] = true
-
-		data, err := c.fetch(ctx, pageURL)
-		if err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", pageURL, err))
-			continue
-		}
-		rep.Visited++
-
-		page, links := c.parse(data, pageURL)
-		if err := c.save(ctx, page, rep); err != nil {
-			rep.Errors = append(rep.Errors, fmt.Sprintf("сохранение %s: %v", pageURL, err))
+		// Ограничиваем волну остатком бюджета MaxPages.
+		batch := frontier
+		if !unlimited {
+			if rem := c.MaxPages - rep.Visited; rem < len(batch) {
+				batch = batch[:rem]
+			}
 		}
 
-		// Ставим в очередь ссылки в пределах разрешённых хостов (без файлов).
-		base, _ := url.Parse(pageURL)
-		for _, href := range links {
-			abs := resolve(base, href)
-			if abs == "" {
+		var next []string
+		var wg sync.WaitGroup
+		for _, pageURL := range batch {
+			norm := normalizeURL(pageURL)
+			mu.Lock()
+			if visited[norm] {
+				mu.Unlock()
 				continue
 			}
-			u, err := url.Parse(abs)
-			if err != nil || !allowedHosts[strings.ToLower(u.Host)] {
-				continue
-			}
-			if fileExts[strings.ToLower(path.Ext(u.Path))] {
-				continue
-			}
-			if !visited[normalizeURL(abs)] {
-				queue = append(queue, abs)
-			}
+			visited[norm] = true
+			mu.Unlock()
+
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(pageURL string) {
+				defer wg.Done()
+				defer func() { <-sem }()
+
+				data, err := c.fetch(ctx, pageURL) // сеть — вне блокировки
+				if err != nil {
+					var se *statusError
+					gone := errors.As(err, &se) && (se.code == http.StatusNotFound || se.code == http.StatusGone)
+					mu.Lock()
+					if gone { // окончательный 404/410 — помечаем недоступной
+						c.markGone(ctx, pageURL, rep)
+					}
+					rep.Errors = append(rep.Errors, fmt.Sprintf("%s: %v", pageURL, err))
+					mu.Unlock()
+					return
+				}
+				// JS-рендеринг (если подключён) — тоже вне блокировки.
+				if c.Renderer != nil {
+					if rendered, rerr := c.Renderer.Render(ctx, pageURL); rerr == nil && len(rendered) > 0 {
+						data = rendered
+					} else if rerr != nil {
+						mu.Lock()
+						rep.Errors = append(rep.Errors, fmt.Sprintf("render %s: %v", pageURL, rerr))
+						mu.Unlock()
+					}
+				}
+				page, links := c.parse(data, pageURL) // разбор HTML — вне блокировки
+				base, _ := url.Parse(pageURL)
+
+				mu.Lock()
+				rep.Visited++
+				if err := c.save(ctx, page, rep); err != nil {
+					rep.Errors = append(rep.Errors, fmt.Sprintf("сохранение %s: %v", pageURL, err))
+				}
+				before := len(queue)
+				for _, href := range links {
+					if abs := resolve(base, href); abs != "" {
+						enqueue(abs) // добавляет уникальные ссылки в queue-буфер
+					}
+				}
+				next = append(next, queue[before:]...) // переносим новинки в след. волну
+				queue = queue[:before]
+				mu.Unlock()
+			}(pageURL)
 		}
+		wg.Wait()
+		frontier = next
 	}
 	return rep, nil
+}
+
+// FetchPublished загружает одну страницу (с JS-рендерингом, если он включён) и
+// возвращает извлечённую дату публикации на сайте, либо nil, если её не нашлось.
+// Используется командой бэкфилла для уже сохранённых страниц без даты — без
+// записи текста/хэша, только дата. Сетевые ошибки/404 возвращаются как есть.
+func (c *Crawler) FetchPublished(ctx context.Context, pageURL string) (*time.Time, error) {
+	data, err := c.fetch(ctx, pageURL)
+	if err != nil {
+		return nil, err
+	}
+	if c.Renderer != nil {
+		if rendered, rerr := c.Renderer.Render(ctx, pageURL); rerr == nil && len(rendered) > 0 {
+			data = rendered
+		}
+	}
+	page, _ := c.parse(data, pageURL)
+	return page.PublishedAt, nil
+}
+
+// markGone помечает ранее сохранённую страницу недоступной (404/410) и фиксирует
+// это в ленте изменений. Если хранилище не умеет MarkGone — тихо пропускает.
+func (c *Crawler) markGone(ctx context.Context, pageURL string, rep *Report) {
+	gm, ok := c.Store.(goneMarker)
+	if !ok {
+		return
+	}
+	changed, err := gm.MarkGone(ctx, pageID(pageURL))
+	if err != nil {
+		rep.Errors = append(rep.Errors, fmt.Sprintf("пометка gone %s: %v", pageURL, err))
+		return
+	}
+	if changed {
+		rep.Gone++
+		c.recordChange(ctx,
+			&Page{ID: pageID(pageURL), URL: pageURL, Section: sectionFromURL(pageURL)},
+			changes.KindRemoved, "Страница сайта стала недоступна (404/410)")
+	}
 }
 
 // save фиксирует страницу в хранилище и (при новизне/изменении) — в ленте.
@@ -263,7 +427,7 @@ func (c *Crawler) fetchOnce(ctx context.Context, u string) (body []byte, retryab
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		retryable = resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests
-		return nil, retryable, fmt.Errorf("статус %d", resp.StatusCode)
+		return nil, retryable, &statusError{code: resp.StatusCode}
 	}
 	// Ограничиваем размер тела (страницы, не файлы) — 4 МБ достаточно.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
@@ -292,8 +456,10 @@ func (c *Crawler) parse(data []byte, pageURL string) (*Page, []string) {
 	var title, metaDesc string
 	var links []string
 	var textBuf strings.Builder
+	var sig publishedSignals // кандидаты на дату публикации (см. published.go)
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
+		collectPublishedSignal(n, &sig)
 		switch {
 		case n.Type == html.ElementNode && n.Data == "title" && title == "":
 			title = strings.TrimSpace(nodeText(n))
@@ -341,6 +507,8 @@ func (c *Crawler) parse(data []byte, pageURL string) (*Page, []string) {
 	}
 	// Полный видимый текст — для чтения в просмотрщике админки (с разумным лимитом).
 	page.Text = truncate(bodyText, maxTextLen)
+	// Дата публикации на сайте Сколково (из разметки/видимой надписи; см. published.go).
+	page.PublishedAt = sig.resolve()
 	sum := sha256.Sum256([]byte(bodyText))
 	page.ContentHash = hex.EncodeToString(sum[:])
 	return page, links
@@ -398,8 +566,18 @@ func IDForURL(rawURL string) string {
 	return pageID(rawURL)
 }
 
-// normalizeURL приводит URL к каноничному виду: схема/хост в нижний регистр,
-// без query, фрагмента и хвостового «/».
+// trackingParams — рекламные/сессионные query-метки: их отбрасываем при
+// нормализации, чтобы utm-хвосты не плодили дубликаты одной страницы.
+var trackingParams = map[string]bool{
+	"utm_source": true, "utm_medium": true, "utm_campaign": true,
+	"utm_term": true, "utm_content": true, "gclid": true, "fbclid": true,
+	"yclid": true, "_openstat": true, "_ga": true, "mc_cid": true, "mc_eid": true,
+}
+
+// normalizeURL приводит URL к каноничному виду: схема/хост в нижний регистр, без
+// фрагмента и хвостового «/». Значимые query-параметры (пагинация ?page=N,
+// фильтры) СОХРАНЯЮТСЯ и канонизируются по порядку — иначе вторые и последующие
+// страницы листингов недостижимы. Рекламные метки (utm_* и т.п.) отбрасываются.
 func normalizeURL(rawURL string) string {
 	u, err := url.Parse(strings.TrimSpace(rawURL))
 	if err != nil || u.Host == "" {
@@ -407,12 +585,29 @@ func normalizeURL(rawURL string) string {
 	}
 	u.Scheme = strings.ToLower(u.Scheme)
 	u.Host = strings.ToLower(u.Host)
-	u.RawQuery = ""
 	u.Fragment = ""
 	if len(u.Path) > 1 {
 		u.Path = strings.TrimRight(u.Path, "/")
 	}
+	if u.RawQuery != "" {
+		q := u.Query()
+		for k := range q {
+			if trackingParams[strings.ToLower(k)] {
+				q.Del(k)
+			}
+		}
+		u.RawQuery = q.Encode() // Encode сортирует ключи — канонический порядок
+	}
 	return u.String()
+}
+
+// pathKey — host+path без query (для лимита query-вариантов одного пути).
+func pathKey(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return rawURL
+	}
+	return strings.ToLower(u.Host) + strings.TrimRight(u.Path, "/")
 }
 
 // sectionFromURL выводит человекочитаемый раздел из пути URL: сегменты пути

@@ -82,9 +82,12 @@ type Config struct {
 	ClassifierEnabled bool
 
 	// Страницы публичного сайта (sitepages) — отдельный от файлов слой знаний
-	SitePagesEnabled  bool
-	SitePagesSeeds    string // стартовые URL обхода через запятую
-	SitePagesMaxPages int    // лимит страниц за обход
+	SitePagesEnabled     bool
+	SitePagesSeeds       string // стартовые URL обхода через запятую
+	SitePagesMaxPages    int    // лимит страниц за обход
+	SitePagesMaxPerPath  int    // лимит query-вариантов одного пути (0 — без лимита)
+	SitePagesRenderJS    bool   // обходить страницы через headless-браузер (JS-навигация)
+	SitePagesConcurrency int    // число параллельных загрузчиков при обходе (<=1 — последовательно)
 
 	// ИИ-обогащение страниц сайта (теги, описание, цели, тезисы, выводы)
 	SitePagesEnrichEnabled bool          // запускать аннотирование страниц через ИИ-агента
@@ -212,9 +215,12 @@ func Load() Config {
 		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
 
 		// Страницы публичного сайта
-		SitePagesEnabled:  envBool("SITEPAGES_ENABLED", true),
-		SitePagesSeeds:    env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
-		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 0), // 0 = без лимита
+		SitePagesEnabled:     envBool("SITEPAGES_ENABLED", true),
+		SitePagesSeeds:       env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
+		SitePagesMaxPages:    envInt("SITEPAGES_MAX_PAGES", 0),       // 0 = без лимита
+		SitePagesMaxPerPath:  envInt("SITEPAGES_MAX_PER_PATH", 1000), // 0 = без лимита; запас под пагинацию
+		SitePagesRenderJS:    envBool("SITEPAGES_RENDER_JS", false),
+		SitePagesConcurrency: envInt("SITEPAGES_CONCURRENCY", 4),
 
 		// ИИ-обогащение страниц сайта
 		SitePagesEnrichEnabled: envBool("SITEPAGES_ENRICH_ENABLED", true),

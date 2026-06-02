@@ -86,7 +86,7 @@ type Server struct {
 	sitePages    SitePageReader
 	sitePageSim  SitePageRelated // семантически похожие страницы (опционально)
 	sitePageOps  SitePageActions // ручное переаннотирование/правка (опционально)
-	versionStore VersionStore // история версий документов (для /diff); опционально
+	versionStore VersionStore    // история версий документов (для /diff); опционально
 	prefStore    store.PreferenceStore
 	npaStore     store.NPAStore
 	rag          *rag.Service
@@ -403,6 +403,9 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/proxy/find-russian", s.requireAuthJSON(s.handleAPIFindRussianProxy))
 	mux.HandleFunc("POST /api/dochub-cookie", s.requireAuthJSON(s.handleAPISetDochubCookie))
 	mux.HandleFunc("GET /proxy", s.requireAuth(s.handleProxyPage)) // UI страница
+
+	// Диагностика — живые проверки подсистем со способами решения
+	mux.HandleFunc("GET /health", s.requireAuth(s.handleDiagnostics))
 
 	// ИИ Конфигурация — модели и агенты
 	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))
@@ -3176,6 +3179,8 @@ type sitePagesPageData struct {
 	Status       string
 	DateFrom     string
 	DateTo       string
+	PubFrom      string // фильтр: дата публикации на сайте «от»
+	PubTo        string // фильтр: дата публикации на сайте «до»
 	Sections     []string
 	AllTags      []string        // все теги для фильтра множественного выбора
 	SelectedTags []string        // выбранные теги
@@ -3214,6 +3219,7 @@ type sitePageRow struct {
 	StatusLabel string
 	Tags        []string
 	LastChanged time.Time
+	Published   string // дата публикации на сайте Сколково (ГГГГ-форматированная) или «—»
 }
 
 // relRow — ссылка на связанную страницу (по тегам или семантически).
@@ -3238,6 +3244,7 @@ type sitePageViewData struct {
 	FirstSeen       time.Time
 	LastSeen        time.Time
 	LastChanged     time.Time
+	Published       string // дата публикации на сайте Сколково или «—»
 	Enriched        bool
 	AISummary       string
 	Goals           string
@@ -3249,6 +3256,14 @@ type sitePageViewData struct {
 	CanEdit         bool   // доступны ли ручные действия (переаннотировать/править)
 	TagsCSV         string // теги через запятую (для формы правки)
 	ThesesText      string // тезисы по строкам (для textarea правки)
+}
+
+// fmtPublished форматирует дату публикации страницы на сайте (или «—», если её нет).
+func fmtPublished(t *time.Time) string {
+	if t == nil {
+		return "—"
+	}
+	return t.Format("02.01.2006")
 }
 
 // sitePageStatusLabel — человекочитаемый статус страницы сайта.
@@ -3271,6 +3286,8 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	dateFrom := r.URL.Query().Get("date_from")
 	dateTo := r.URL.Query().Get("date_to")
+	pubFrom := r.URL.Query().Get("pub_from")
+	pubTo := r.URL.Query().Get("pub_to")
 	selectedTags := normalizeTagParams(r.URL.Query()["tags"])
 
 	selectedSet := make(map[string]bool, len(selectedTags))
@@ -3284,6 +3301,8 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		Status:       status,
 		DateFrom:     dateFrom,
 		DateTo:       dateTo,
+		PubFrom:      pubFrom,
+		PubTo:        pubTo,
 		SelectedTags: selectedTags,
 		SelectedSet:  selectedSet,
 		HasStore:     s.sitePages != nil,
@@ -3312,6 +3331,19 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Период по дате публикации на сайте Сколково.
+	var pubSince, pubUntil time.Time
+	if pubFrom != "" {
+		if t, err := time.ParseInLocation("2006-01-02", pubFrom, time.Local); err == nil {
+			pubSince = t
+		}
+	}
+	if pubTo != "" {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", pubTo+" 23:59", time.Local); err == nil {
+			pubUntil = t
+		}
+	}
+
 	// Номер страницы и размер.
 	perPage := sitePagesPerPage
 	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v >= 10 && v <= 500 {
@@ -3329,6 +3361,8 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		Tags:    selectedTags,
 		Since:   since,
 		Until:   until,
+		PubFrom: pubSince,
+		PubTo:   pubUntil,
 	}
 
 	ctx := r.Context()
@@ -3361,6 +3395,7 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 			StatusLabel: sitePageStatusLabel(p.Status),
 			Tags:        p.Tags,
 			LastChanged: p.LastChanged,
+			Published:   fmtPublished(p.PublishedAt),
 		})
 	}
 
@@ -3425,7 +3460,7 @@ const sitePagesPerPage = 50
 // текущие фильтры (q, section, status, tags, даты, per_page).
 func sitePagesPageURL(q url.Values, n int) string {
 	out := url.Values{}
-	for _, k := range []string{"q", "section", "status", "date_from", "date_to", "per_page"} {
+	for _, k := range []string{"q", "section", "status", "date_from", "date_to", "pub_from", "pub_to", "per_page"} {
 		if v := q.Get(k); v != "" {
 			out.Set(k, v)
 		}
@@ -3499,6 +3534,7 @@ func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
 		FirstSeen:   p.FirstSeen,
 		LastSeen:    p.LastSeen,
 		LastChanged: p.LastChanged,
+		Published:   fmtPublished(p.PublishedAt),
 		Enriched:    p.Enriched(),
 		AISummary:   p.AISummary,
 		Goals:       p.Goals,

@@ -26,6 +26,9 @@ import (
 type BotConfig struct {
 	// Token — токен Telegram-бота (получается у @BotFather).
 	Token string
+	// TenantID — тенант, которому принадлежит бот; авторизация клиентов
+	// ограничивается этим тенантом. Пусто — глобальный бот (поиск по всем клиентам).
+	TenantID string
 	// MCPURL — URL MCP-сервера для вызова инструментов (опционально, для MVP не требуется).
 	MCPURL string
 	// MCPAPIKey — API-ключ для MCP-сервера.
@@ -47,11 +50,13 @@ type Bot struct {
 	stores     Stores
 	config     BotConfig
 	consultant *agents.ConsultantAgent
+	// tenantID — тенант бота; ограничивает поиск клиентов при авторизации.
+	tenantID string
 
 	// authMutex защищает map авторизаций.
 	authMutex sync.RWMutex
-	// chatIDToEmail map: Telegram chat ID → email клиента.
-	chatIDToEmail map[int64]string
+	// chatIDToClientID map: Telegram chat ID → clientID авторизованного клиента.
+	chatIDToClientID map[int64]string
 }
 
 // NewBot создаёт новый экземпляр бота.
@@ -62,15 +67,34 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 	}
 
 	b := &Bot{
-		api:           api,
-		stores:        stores,
-		config:        config,
-		consultant:    consultant,
-		chatIDToEmail: make(map[int64]string),
+		api:              api,
+		stores:           stores,
+		config:           config,
+		consultant:       consultant,
+		tenantID:         config.TenantID,
+		chatIDToClientID: make(map[int64]string),
 	}
 
-	log.Printf("[tgbot] авторизован бот: %s (ID: %d)", api.Self.UserName, api.Self.ID)
+	log.Printf("[tgbot] авторизован бот: %s (ID: %d, tenant=%s)", api.Self.UserName, api.Self.ID, orNone(config.TenantID))
 	return b, nil
+}
+
+// logf пишет в лог с префиксом тенанта бота.
+func (b *Bot) logf(format string, args ...any) {
+	log.Printf("[tgbot tenant=%s] "+format, append([]any{orNone(b.tenantID)}, args...)...)
+}
+
+// orNone возвращает "—" для пустой строки (для читабельности логов).
+func orNone(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
+}
+
+// Username возвращает @username бота (как сообщил Telegram при авторизации).
+func (b *Bot) Username() string {
+	return b.api.Self.UserName
 }
 
 // Start запускает бота в режиме polling (блокирует вызывающую горутину).

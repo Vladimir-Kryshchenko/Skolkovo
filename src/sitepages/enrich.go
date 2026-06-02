@@ -29,6 +29,10 @@ type Annotation struct {
 	Goals       string   `json:"goals"`
 	Theses      []string `json:"theses"`
 	Conclusions string   `json:"conclusions"`
+	// PublishedDate — дата публикации страницы на сайте, как её увидел ИИ в тексте
+	// (ГГГГ-ММ-ДД или пусто). Запасной источник, если детерминированный
+	// экстрактор разметки ничего не нашёл; см. published.go и parseAnyDate.
+	PublishedDate string `json:"published_date"`
 }
 
 // chatFunc — вызов LLM (по умолчанию aimodels.ChatWithAgent; переопределяется в тестах).
@@ -92,7 +96,16 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 			log.Printf("[sitepages/enrich] %s: %v", p.URL, err)
 			continue
 		}
-		if err := e.Pages.UpdateEnrichment(ctx, p.ID, ann, p.ContentHash); err != nil {
+		// Запасной источник даты публикации: если разметка её не дала, берём
+		// распознанную ИИ из текста (в БД проставится лишь при отсутствии).
+		var published *time.Time
+		if p.PublishedAt == nil {
+			if t, ok := parseAnyDate(ann.PublishedDate); ok {
+				published = &t
+				p.PublishedAt = &t
+			}
+		}
+		if err := e.Pages.UpdateEnrichment(ctx, p.ID, ann, p.ContentHash, published); err != nil {
 			failed++
 			log.Printf("[sitepages/enrich] сохранение %s: %v", p.URL, err)
 			continue
@@ -123,6 +136,7 @@ func (e *Enricher) annotate(ctx context.Context, chat chatFunc, agent aimodels.A
 	ann.Summary = strings.TrimSpace(ann.Summary)
 	ann.Goals = strings.TrimSpace(ann.Goals)
 	ann.Conclusions = strings.TrimSpace(ann.Conclusions)
+	ann.PublishedDate = strings.TrimSpace(ann.PublishedDate)
 	return ann, nil
 }
 
@@ -148,7 +162,11 @@ func buildAnnotatePrompt(p *Page, known []string) string {
 	}
 	b.WriteString("\n\nТекст страницы:\n")
 	b.WriteString(truncate(text, maxPromptText))
-	b.WriteString("\n\nВерни строго JSON по заданному формату.")
+	b.WriteString("\n\nДополнительно найди в тексте дату публикации страницы на сайте " +
+		"(когда материал опубликован/размещён) и верни её в поле published_date в формате " +
+		"ГГГГ-ММ-ДД. Если даты на странице нет — верни пустую строку. Не выдумывай дату.")
+	b.WriteString("\n\nВерни строго JSON по заданному формату " +
+		`{"tags":[...],"summary":"...","goals":"...","theses":[...],"conclusions":"...","published_date":"ГГГГ-ММ-ДД"}.`)
 	return b.String()
 }
 

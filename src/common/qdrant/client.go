@@ -134,6 +134,19 @@ func (c *Client) Search(ctx context.Context, vector []float32, limit int, filter
 	return out.Result, nil
 }
 
+// Delete удаляет точки по их ID. Пустой список — no-op.
+func (c *Client) Delete(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	pts := make([]any, len(ids))
+	for i, id := range ids {
+		pts[i] = id
+	}
+	body := map[string]any{"points": pts}
+	return c.do(ctx, http.MethodPost, "/collections/"+c.Collection+"/points/delete?wait=true", body, nil)
+}
+
 // DeleteByDocument удаляет все точки документа (payload.document_id == docID).
 func (c *Client) DeleteByDocument(ctx context.Context, docID string) error {
 	body := map[string]any{

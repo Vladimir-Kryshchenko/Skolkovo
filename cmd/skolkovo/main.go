@@ -201,6 +201,7 @@ func sitePagesSeeds(cfg config.Config) []string {
 //	sitepages enrich       — аннотировать ИИ страницы без аннотации (теги/описание/цели/тезисы/выводы);
 //	sitepages enrich --all — переаннотировать все действующие страницы заново;
 //	sitepages index        — переиндексировать все страницы в Qdrant;
+//	sitepages dates        — дозаполнить дату публикации для страниц без неё (повторная загрузка);
 //	sitepages search <q>   — смоук-проверка поиска (search_site_pages);
 //	sitepages              — всё сразу (crawl + enrich + index).
 func cmdSitePages(cfg config.Config, args []string) error {
@@ -241,6 +242,30 @@ func cmdSitePages(cfg config.Config, args []string) error {
 		return fmt.Errorf("хранилище страниц: %w", err)
 	}
 
+	// sitepages dates — дозаполнить дату публикации у страниц без неё (исторический
+	// бэкфилл): повторно загружаем страницу и извлекаем только дату. Новые/изменённые
+	// страницы получают дату прямо на обходе (crawler.parse), этот шаг — для архива.
+	if action == "dates" || action == "backfill-dates" {
+		missing, err := pageStore.ListMissingPublished(ctx, cfg.SitePagesMaxPages)
+		if err != nil {
+			return fmt.Errorf("страницы без даты публикации: %w", err)
+		}
+		log.Printf("[sitepages] бэкфилл дат: к обработке %d страниц", len(missing))
+		cr := sitepages.New(sitePagesSeeds(cfg), pageStore)
+		cr.Concurrency = cfg.SitePagesConcurrency
+		cr.Delay = cfg.ScrapeDelay
+		cr.UseProxy(cfg.ProxyURL)
+		if cfg.SitePagesRenderJS {
+			rndr, closeRndr := newChromeRenderer(cfg.ChromePath, cfg.ProxyURL, cfg.ScrapeDelay)
+			defer closeRndr()
+			cr.Renderer = rndr
+		}
+		bf := sitepages.NewDateBackfiller(cr, pageStore, cfg.SitePagesConcurrency)
+		filled, notFound, failed := bf.Run(ctx, missing)
+		log.Printf("[sitepages] бэкфилл дат завершён: проставлено %d, без даты %d, ошибок %d", filled, notFound, failed)
+		return nil
+	}
+
 	doCrawl := action == "all" || action == "crawl"
 	doEnrich := action == "all" || action == "enrich"
 	doIndex := action == "all" || action == "index"
@@ -254,15 +279,22 @@ func cmdSitePages(cfg config.Config, args []string) error {
 		}
 		cr := sitepages.New(sitePagesSeeds(cfg), pageStore)
 		cr.MaxPages = cfg.SitePagesMaxPages
+		cr.MaxPerPath = cfg.SitePagesMaxPerPath
+		cr.Concurrency = cfg.SitePagesConcurrency
 		cr.Delay = cfg.ScrapeDelay
 		cr.Changes = rec
 		cr.UseProxy(cfg.ProxyURL)
+		if cfg.SitePagesRenderJS {
+			rndr, closeRndr := newChromeRenderer(cfg.ChromePath, cfg.ProxyURL, cfg.ScrapeDelay)
+			defer closeRndr()
+			cr.Renderer = rndr
+		}
 		rep, err := cr.Run(ctx)
 		if err != nil {
 			return fmt.Errorf("обход страниц: %w", err)
 		}
-		log.Printf("[sitepages] обход: посещено %d, новых %d, изменено %d, без изменений %d, ошибок %d",
-			rep.Visited, rep.New, rep.Changed, rep.Unchanged, len(rep.Errors))
+		log.Printf("[sitepages] обход: посещено %d, новых %d, изменено %d, без изменений %d, недоступно %d, ошибок %d",
+			rep.Visited, rep.New, rep.Changed, rep.Unchanged, rep.Gone, len(rep.Errors))
 	}
 
 	if doEnrich {
@@ -1155,12 +1187,24 @@ func cmdMCP(cfg config.Config) error {
 	}
 
 	srv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
+	enableTenantAuth(srv, st)
 
 	// Регистрируем дополнительные инструменты, если доступны соответствующие хранилища.
 	mcpSrv := srv.MCPServer()
 	registerExtraMCPTools(mcpSrv, st, cfg)
 
 	return srv.ListenAndServe()
+}
+
+// enableTenantAuth подключает per-tenant авторизацию MCP (ключи тенантов) и аудит,
+// если хранилище — PostgreSQL. На in-memory бэкенде — no-op (только глобальный ключ).
+func enableTenantAuth(srv *mcpserver.Server, st store.Store) {
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		return
+	}
+	pcs := store.NewPostgresClientStore(ps.Pool())
+	srv.WithTenantAuth(pcs).WithAudit(mcpserver.NewAuditLogger(ps.Pool()))
 }
 
 func cmdAdmin(cfg config.Config) error {
@@ -1197,6 +1241,9 @@ func cmdAdmin(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		srv.WithPreferenceStore(pss)
 		srv.WithNPAStore(pss)
+		// Связи документов нужны странице /graph и API /api/graph
+		// (без этого граф собирался только из Supersedes и обычно был пуст).
+		srv.WithLinkStore(pss)
 		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
 		srv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
 	}
@@ -1266,6 +1313,7 @@ func cmdServe(cfg config.Config) error {
 
 	// --- MCP-сервер ---
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
+	enableTenantAuth(mcpSrv, st)
 	registerExtraMCPTools(mcpSrv.MCPServer(), st, cfg)
 	registerAgentMCPTools(mcpSrv.MCPServer(), st, svc, cfg)
 
@@ -1348,6 +1396,9 @@ func cmdServe(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		adminSrv.WithPreferenceStore(pss)
 		adminSrv.WithNPAStore(pss)
+		// Связи документов нужны странице /graph и API /api/graph
+		// (без этого граф собирался только из Supersedes и обычно был пуст).
+		adminSrv.WithLinkStore(pss)
 		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
 		adminSrv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
 
@@ -1490,10 +1541,8 @@ func cmdServe(cfg config.Config) error {
 		log.Printf("[serve:notify] Telegram-уведомления консультанту включены")
 	}
 
-	// --- Telegram-бот ---
-	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
-		go runTelegramBot(ctx, cfg, st)
-	}
+	// --- Telegram-боты (мультибот: по боту на тенанта + глобальный fallback) ---
+	go runTelegramBots(ctx, cfg, st)
 
 	// --- Консультантский дашборд ---
 	if cfg.ConsultantEnabled {
@@ -1736,6 +1785,16 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		aiStore = aimodels.NewStore(ps.Pool())
 	}
 
+	// JS-рендерер страниц (chromedp) — создаём один раз и переиспользуем во всех
+	// циклах обхода. Включается флагом SITEPAGES_RENDER_JS.
+	var sitePageRenderer sitepages.Renderer
+	if cfg.SitePagesEnabled && cfg.SitePagesRenderJS {
+		rndr, closeRndr := newChromeRenderer(cfg.ChromePath, cfg.ProxyURL, cfg.ScrapeDelay)
+		sitePageRenderer = rndr
+		defer closeRndr()
+		log.Printf("[serve:sitepages] JS-рендеринг включён (headless-браузер)")
+	}
+
 	// ИИ-обогащение страниц сайта (теги/описание/цели/тезисы/выводы). Безопасно,
 	// если агент «Аннотатор страниц» не настроен — аннотирование просто пропускается.
 	var sitePageEnricher *sitepages.Enricher
@@ -1908,15 +1967,28 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 				log.Printf("[serve:sitepages] обход страниц сайта")
 				cr := sitepages.New(sitePagesSeeds(cfg), sitePageStore)
 				cr.MaxPages = cfg.SitePagesMaxPages
+				cr.MaxPerPath = cfg.SitePagesMaxPerPath
+				cr.Concurrency = cfg.SitePagesConcurrency
 				cr.Delay = cfg.ScrapeDelay
 				cr.Changes = changeStore
 				cr.UseDynamicProxy(proxyResolver)
+				cr.Renderer = sitePageRenderer
 				rep, err := cr.Run(ctx)
 				if err != nil {
 					log.Printf("[serve:sitepages] ошибка обхода: %v", err)
 					recordHealth("sitepages", 0, err)
 				} else {
 					recordHealth("sitepages", rep.New+rep.Changed, nil)
+					// Убираем из индекса страницы, ставшие недоступными (404/410).
+					if rep.Gone > 0 {
+						if gone, gerr := sitePageStore.ListGone(ctx); gerr == nil && len(gone) > 0 {
+							if _, derr := newSitePagesIndexer(cfg).Reindex(ctx, gone); derr != nil {
+								log.Printf("[serve:sitepages] очистка недоступных из индекса: %v", derr)
+							} else {
+								log.Printf("[serve:sitepages] из индекса удалено недоступных: %d", rep.Gone)
+							}
+						}
+					}
 					// Инкрементально доиндексируем изменённые/новые страницы.
 					if rep.New+rep.Changed > 0 {
 						// Сначала аннотируем новые/изменённые страницы через ИИ.
@@ -2076,44 +2148,36 @@ func buildResidencyStores(st store.Store) admin.Stores {
 	return stores
 }
 
-// runTelegramBot запускает Telegram-бота в фоновой горутине.
-func runTelegramBot(ctx context.Context, cfg config.Config, st store.Store) {
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
+// runTelegramBots запускает мультибот-менеджер: по одному боту на каждый активный
+// тенант с заданным токеном + глобальный бот (fallback на TELEGRAM_BOT_TOKEN).
+// Требует Postgres (нужен TenantStore); на in-memory бэкенде — no-op.
+func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
 		return
 	}
+	pcs := store.NewPostgresClientStore(ps.Pool())
 
-	var botStores tgbot.Stores
-	if ps, ok := st.(*store.PostgresStore); ok {
-		pcs := store.NewPostgresClientStore(ps.Pool())
-		botStores.Client = pcs
-		botStores.Deadline = pcs
-		botStores.DocLink = pcs
-		botStores.Template = pcs
-		botStores.Checklist = pcs
+	botStores := tgbot.Stores{
+		Client:    pcs,
+		Deadline:  pcs,
+		DocLink:   pcs,
+		Template:  pcs,
+		Checklist: pcs,
 	}
 
-	botCfg := tgbot.BotConfig{
-		Token:     token,
-		MCPURL:    "http://" + cfg.MCPAddr + "/mcp",
-		MCPAPIKey: cfg.MCPAPIKey,
-	}
-
-	// Создаём консультанта для бота: реальный RAG + LLM-синтез (если настроен).
+	// Консультант общий для всех ботов: RAG глобален, LLM-синтез из настроек.
 	consultant := agents.NewConsultantAgent(newRAG(cfg, st, nil), "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
-	if ps, ok := st.(*store.PostgresStore); ok {
-		consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool()))
-	}
+	consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool()))
 
-	bot, err := tgbot.NewBot(botCfg, botStores, consultant)
-	if err != nil {
-		log.Printf("[tgbot] ошибка создания бота: %v", err)
-		return
-	}
-
-	log.Printf("[tgbot] запуск бота")
-	if err := bot.Run(ctx); err != nil {
-		log.Printf("[tgbot] остановлен: %v", err)
+	mgr := tgbot.NewBotManager(
+		pcs, botStores, consultant,
+		"http://"+cfg.MCPAddr+"/mcp",
+		cfg.MCPAPIKey,                    // fallback MCP-ключ (если у тенанта нет своего)
+		os.Getenv("TELEGRAM_BOT_TOKEN"),  // fallback токен бота (для Default/глобального)
+	)
+	if err := mgr.Run(ctx); err != nil && err != context.Canceled {
+		log.Printf("[tgbot:manager] остановлен: %v", err)
 	}
 }
 

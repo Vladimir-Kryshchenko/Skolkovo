@@ -39,7 +39,10 @@ ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS theses       TEXT[]      NOT NUL
 ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS conclusions  TEXT        NOT NULL DEFAULT '';
 ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS enriched_at  TIMESTAMPTZ;
 ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS enrich_hash  TEXT        NOT NULL DEFAULT '';
+-- Дата публикации страницы НА САЙТЕ Сколково (см. миграцию 011, published.go).
+ALTER TABLE site_pages ADD COLUMN IF NOT EXISTS published_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_site_pages_section      ON site_pages (section);
+CREATE INDEX IF NOT EXISTS idx_site_pages_published    ON site_pages (published_at DESC NULLS LAST);
 CREATE INDEX IF NOT EXISTS idx_site_pages_last_changed ON site_pages (last_changed DESC);
 CREATE INDEX IF NOT EXISTS idx_site_pages_status       ON site_pages (status);
 CREATE INDEX IF NOT EXISTS idx_site_pages_tags         ON site_pages USING GIN (tags);
@@ -64,7 +67,7 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 }
 
 const selectCols = `SELECT id, url, title, summary, section, content_hash, status,
-       first_seen, last_seen, last_changed,
+       first_seen, last_seen, last_changed, published_at,
        tags, ai_summary, goals, theses, conclusions, enriched_at
 FROM site_pages`
 
@@ -89,9 +92,9 @@ func (s *PostgresStore) Upsert(ctx context.Context, p *Page) (string, error) {
 	if errors.Is(err, ErrNotFound) {
 		now := time.Now()
 		_, err = s.pool.Exec(ctx, `
-INSERT INTO site_pages (id, url, title, summary, text, section, content_hash, status, first_seen, last_seen, last_changed)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9)`,
-			p.ID, p.URL, p.Title, p.Summary, p.Text, p.Section, p.ContentHash, p.Status, now)
+INSERT INTO site_pages (id, url, title, summary, text, section, content_hash, status, first_seen, last_seen, last_changed, published_at)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9,$10)`,
+			p.ID, p.URL, p.Title, p.Summary, p.Text, p.Section, p.ContentHash, p.Status, now, p.PublishedAt)
 		if err != nil {
 			return "", err
 		}
@@ -102,31 +105,37 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$9)`,
 		return "", err
 	}
 
-	// Контент не менялся — отмечаем, что страница ещё жива.
+	// Контент не менялся — отмечаем, что страница ещё жива. Дату публикации
+	// дозаполняем, если её ещё не было (так старые страницы получают дату на
+	// обычных перекраулах, без перезаписи уже известной даты).
 	if existing.ContentHash == p.ContentHash {
-		_, err = s.pool.Exec(ctx, `UPDATE site_pages SET last_seen = now(), status = $2 WHERE id = $1`, p.ID, p.Status)
+		_, err = s.pool.Exec(ctx, `
+UPDATE site_pages SET last_seen = now(), status = $2, published_at = COALESCE(published_at, $3)
+ WHERE id = $1`, p.ID, p.Status, p.PublishedAt)
 		return UpsertUnchanged, err
 	}
 
-	// Контент изменился — обновляем поля и двигаем last_changed.
+	// Контент изменился — обновляем поля и двигаем last_changed. Дату публикации
+	// берём новую, если извлеклась, иначе сохраняем ранее известную.
 	_, err = s.pool.Exec(ctx, `
 UPDATE site_pages
    SET title = $2, summary = $3, text = $4, section = $5, content_hash = $6, status = $7,
+       published_at = COALESCE($8, published_at),
        last_seen = now(), last_changed = now()
  WHERE id = $1`,
-		p.ID, p.Title, p.Summary, p.Text, p.Section, p.ContentHash, p.Status)
+		p.ID, p.Title, p.Summary, p.Text, p.Section, p.ContentHash, p.Status, p.PublishedAt)
 	return UpsertChanged, err
 }
 
 // GetWithText возвращает страницу вместе с полным текстом и ИИ-полями (для просмотрщика).
 func (s *PostgresStore) GetWithText(ctx context.Context, id string) (*Page, error) {
 	row := s.pool.QueryRow(ctx, `SELECT id, url, title, summary, section, content_hash, status,
-       first_seen, last_seen, last_changed, text,
+       first_seen, last_seen, last_changed, published_at, text,
        tags, ai_summary, goals, theses, conclusions, enriched_at
 FROM site_pages WHERE id = $1`, id)
 	var p Page
 	err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
-		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.Text,
+		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt, &p.Text,
 		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
@@ -143,6 +152,17 @@ func (s *PostgresStore) ListRecent(ctx context.Context, limit int) ([]*Page, err
 		limit = 50
 	}
 	rows, err := s.pool.Query(ctx, selectCols+` ORDER BY last_changed DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPages(rows)
+}
+
+// ListGone возвращает недоступные (gone) страницы — например, чтобы удалить их
+// точки из поискового индекса после обхода.
+func (s *PostgresStore) ListGone(ctx context.Context) ([]*Page, error) {
+	rows, err := s.pool.Query(ctx, selectCols+` WHERE status = 'gone' ORDER BY last_changed DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -178,6 +198,8 @@ type PageFilter struct {
 	Tags    []string  // страница должна содержать ВСЕ теги (оператор @>)
 	Since   time.Time // last_changed >= Since
 	Until   time.Time // last_changed <= Until
+	PubFrom time.Time // published_at >= PubFrom (дата публикации на сайте)
+	PubTo   time.Time // published_at <= PubTo
 	Limit   int       // размер страницы (<=0 — без лимита)
 	Offset  int       // сдвиг для пагинации
 }
@@ -211,6 +233,14 @@ func buildSitePageWhere(f PageFilter) (string, []any) {
 	if !f.Until.IsZero() {
 		args = append(args, f.Until)
 		conds = append(conds, fmt.Sprintf("last_changed <= $%d", len(args)))
+	}
+	if !f.PubFrom.IsZero() {
+		args = append(args, f.PubFrom)
+		conds = append(conds, fmt.Sprintf("published_at >= $%d", len(args)))
+	}
+	if !f.PubTo.IsZero() {
+		args = append(args, f.PubTo)
+		conds = append(conds, fmt.Sprintf("published_at <= $%d", len(args)))
 	}
 	if len(conds) == 0 {
 		return "", nil
@@ -263,6 +293,21 @@ func (s *PostgresStore) Sections(ctx context.Context) ([]string, error) {
 	return out, rows.Err()
 }
 
+// MarkGone помечает страницу недоступной (404/410). Возвращает changed=true,
+// только если страница существовала и ещё не была помечена gone (чтобы краулер
+// зафиксировал событие в ленте лишь один раз). last_changed двигается при первом
+// переходе в gone.
+func (s *PostgresStore) MarkGone(ctx context.Context, id string) (bool, error) {
+	ct, err := s.pool.Exec(ctx, `
+UPDATE site_pages
+   SET status = 'gone', last_seen = now(), last_changed = now()
+ WHERE id = $1 AND status <> 'gone'`, id)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
 // LastSeenMax возвращает время последнего успешного обхода (max last_seen).
 // Используется как запасной источник, если мониторинг свежести недоступен.
 func (s *PostgresStore) LastSeenMax(ctx context.Context) (time.Time, error) {
@@ -276,12 +321,66 @@ func (s *PostgresStore) LastSeenMax(ctx context.Context) (time.Time, error) {
 	return *t, nil
 }
 
+// ─── Дата публикации (backfill) ─────────────────────────────────────────────
+
+// ListMissingPublished возвращает действующие страницы без определённой даты
+// публикации (id+url достаточно для повторной загрузки). limit<=0 — без лимита.
+func (s *PostgresStore) ListMissingPublished(ctx context.Context, limit int) ([]*Page, error) {
+	q := `SELECT id, url FROM site_pages
+WHERE status = 'active' AND published_at IS NULL
+ORDER BY last_changed DESC`
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if limit > 0 {
+		rows, err = s.pool.Query(ctx, q+` LIMIT $1`, limit)
+	} else {
+		rows, err = s.pool.Query(ctx, q)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Page
+	for rows.Next() {
+		var p Page
+		if err := rows.Scan(&p.ID, &p.URL); err != nil {
+			return nil, err
+		}
+		out = append(out, &p)
+	}
+	return out, rows.Err()
+}
+
+// SetPublished проставляет дату публикации, не перезаписывая уже известную
+// (COALESCE). Возвращает changed=true, если значение действительно проставлено.
+func (s *PostgresStore) SetPublished(ctx context.Context, id string, published time.Time) (bool, error) {
+	ct, err := s.pool.Exec(ctx, `
+UPDATE site_pages SET published_at = $2
+ WHERE id = $1 AND published_at IS NULL`, id, published)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// CountMissingPublished возвращает число действующих страниц без даты публикации.
+func (s *PostgresStore) CountMissingPublished(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		`SELECT count(*) FROM site_pages WHERE status='active' AND published_at IS NULL`).Scan(&n)
+	return n, err
+}
+
 // ─── ИИ-обогащение ──────────────────────────────────────────────────────────
 
 // UpdateEnrichment сохраняет результат аннотирования страницы ИИ и фиксирует
 // enrich_hash = текущий content_hash (чтобы переаннотировать только при
-// изменении контента). Базовые поля (title/text/...) не трогаются.
-func (s *PostgresStore) UpdateEnrichment(ctx context.Context, id string, a Annotation, contentHash string) error {
+// изменении контента). Базовые поля (title/text/...) не трогаются. published —
+// дата публикации, извлечённая ИИ из текста; проставляется лишь если её ещё не
+// было (детерминированная разметка имеет приоритет), nil — не трогать.
+func (s *PostgresStore) UpdateEnrichment(ctx context.Context, id string, a Annotation, contentHash string, published *time.Time) error {
 	tags := a.Tags
 	if tags == nil {
 		tags = []string{}
@@ -293,9 +392,10 @@ func (s *PostgresStore) UpdateEnrichment(ctx context.Context, id string, a Annot
 	_, err := s.pool.Exec(ctx, `
 UPDATE site_pages
    SET tags=$2, ai_summary=$3, goals=$4, theses=$5, conclusions=$6,
+       published_at=COALESCE(published_at, $8),
        enriched_at=now(), enrich_hash=$7
  WHERE id=$1`,
-		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash)
+		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash, published)
 	return err
 }
 
@@ -429,7 +529,7 @@ type scannable interface {
 func scanPage(row scannable) (*Page, error) {
 	var p Page
 	if err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
-		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged,
+		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt,
 		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt); err != nil {
 		return nil, err
 	}

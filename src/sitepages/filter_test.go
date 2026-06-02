@@ -1,10 +1,38 @@
 package sitepages
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestSearchFilterExcludesGone проверяет, что поиск по страницам всегда требует
+// status=active (мёртвые страницы не попадают в выдачу) и корректно добавляет
+// фильтр по тегам.
+func TestSearchFilterExcludesGone(t *testing.T) {
+	statusCond := map[string]any{"key": "status", "match": map[string]any{"value": StatusActive}}
+
+	t.Run("без тегов — только активные", func(t *testing.T) {
+		f := searchFilter(nil)
+		must, _ := f["must"].([]any)
+		if len(must) != 1 || !reflect.DeepEqual(must[0], statusCond) {
+			t.Fatalf("ожидали единственное условие status=active, получили %v", must)
+		}
+	})
+
+	t.Run("с тегами — активные И все теги", func(t *testing.T) {
+		f := searchFilter([]string{"льготы", "", "резиденты"})
+		must, _ := f["must"].([]any)
+		// status + 2 непустых тега = 3 условия (пустой тег отброшен).
+		if len(must) != 3 {
+			t.Fatalf("ожидали 3 условия (status + 2 тега), получили %d: %v", len(must), must)
+		}
+		if !reflect.DeepEqual(must[0], statusCond) {
+			t.Errorf("первое условие должно быть status=active, получили %v", must[0])
+		}
+	})
+}
 
 // TestBuildSitePageWhere проверяет, что условие WHERE и аргументы собираются
 // согласованно (правильная нумерация плейсхолдеров $1..$N и набор условий).

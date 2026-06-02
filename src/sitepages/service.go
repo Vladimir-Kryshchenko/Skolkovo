@@ -52,7 +52,7 @@ func (s *AdminService) SaveAnnotation(ctx context.Context, id string, a Annotati
 	a.Summary = strings.TrimSpace(a.Summary)
 	a.Goals = strings.TrimSpace(a.Goals)
 	a.Conclusions = strings.TrimSpace(a.Conclusions)
-	if err := s.Pages.UpdateEnrichment(ctx, id, a, p.ContentHash); err != nil {
+	if err := s.Pages.UpdateEnrichment(ctx, id, a, p.ContentHash, nil); err != nil {
 		return err
 	}
 	_ = s.Pages.BumpTags(ctx, a.Tags)

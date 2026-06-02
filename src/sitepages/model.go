@@ -25,17 +25,23 @@ const (
 
 // Page — одна страница публичного сайта.
 type Page struct {
-	ID          string    `json:"id"`           // детерминированный sha1 от нормализованного URL
-	URL         string    `json:"url"`          //
-	Title       string    `json:"title"`        // <title> страницы
-	Summary     string    `json:"summary"`      // meta description или начало текста
+	ID          string    `json:"id"`             // детерминированный sha1 от нормализованного URL
+	URL         string    `json:"url"`            //
+	Title       string    `json:"title"`          // <title> страницы
+	Summary     string    `json:"summary"`        // meta description или начало текста
 	Text        string    `json:"text,omitempty"` // полный видимый текст страницы (для просмотрщика)
-	Section     string    `json:"section"`      // раздел/хлебные крошки из пути URL
-	ContentHash string    `json:"content_hash"` // sha256 видимого текста
-	Status      string    `json:"status"`       // active | gone
+	Section     string    `json:"section"`        // раздел/хлебные крошки из пути URL
+	ContentHash string    `json:"content_hash"`   // sha256 видимого текста
+	Status      string    `json:"status"`         // active | gone
 	FirstSeen   time.Time `json:"first_seen"`
 	LastSeen    time.Time `json:"last_seen"`
 	LastChanged time.Time `json:"last_changed"`
+
+	// PublishedAt — дата публикации страницы НА САЙТЕ Сколково (как указана на
+	// самой странице), в отличие от FirstSeen/LastChanged — времён обхода нашим
+	// краулером. Извлекается детерминированно из разметки (см. published.go), а
+	// если разметки нет — ИИ-аннотатором из текста. nil — дату определить не удалось.
+	PublishedAt *time.Time `json:"published_at,omitempty"`
 
 	// ИИ-обогащение (заполняется агентом «Аннотатор страниц», не краулером).
 	Tags        []string   `json:"tags,omitempty"`        // авто-теги (нормализованы против словаря)

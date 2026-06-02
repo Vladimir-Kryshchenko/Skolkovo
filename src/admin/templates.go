@@ -1773,6 +1773,14 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
         <label for="date_to">Изменено до</label>
         <input type="date" id="date_to" name="date_to" value="{{.DateTo}}">
       </div>
+      <div class="filter-group">
+        <label for="pub_from" title="Дата публикации на сайте Сколково">Опубликовано от</label>
+        <input type="date" id="pub_from" name="pub_from" value="{{.PubFrom}}">
+      </div>
+      <div class="filter-group">
+        <label for="pub_to" title="Дата публикации на сайте Сколково">Опубликовано до</label>
+        <input type="date" id="pub_to" name="pub_to" value="{{.PubTo}}">
+      </div>
       <div class="filter-actions">
         <button type="submit" class="btn btn-primary">Применить</button>
         <a href="/sitepages" class="btn btn-ghost">Сбросить</a>

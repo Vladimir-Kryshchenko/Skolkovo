@@ -47,6 +47,24 @@ func (ix *Indexer) Reindex(ctx context.Context, pages []*Page) (int, error) {
 	if len(pages) == 0 {
 		return 0, nil
 	}
+	// Недоступные (gone) страницы не индексируем и удаляем их точки из коллекции,
+	// чтобы поиск не отдавал мёртвые страницы.
+	var active []*Page
+	var deleteIDs []string
+	for _, p := range pages {
+		if p.Status == StatusGone {
+			deleteIDs = append(deleteIDs, pointID(p.URL))
+			continue
+		}
+		active = append(active, p)
+	}
+	if err := ix.Qdr.Delete(ctx, deleteIDs); err != nil {
+		return 0, fmt.Errorf("удаление недоступных страниц из Qdrant: %w", err)
+	}
+	pages = active
+	if len(pages) == 0 {
+		return 0, nil
+	}
 	var points []qdrant.Point
 	for start := 0; start < len(pages); start += embedBatch {
 		end := min(start+embedBatch, len(pages))
@@ -65,23 +83,23 @@ func (ix *Indexer) Reindex(ctx context.Context, pages []*Page) (int, error) {
 			if summary == "" {
 				summary = p.Summary
 			}
-			points = append(points, qdrant.Point{
-				ID:     pointID(p.URL),
-				Vector: v,
-				Payload: map[string]any{
-					"entity_type":  "sitepage",
-					"url":          p.URL,
-					"title":        p.Title,
-					"summary":      summary,
-					"section":      p.Section,
-					"status":       p.Status,
-					"tags":         p.Tags,
-					"goals":        p.Goals,
-					"theses":       p.Theses,
-					"conclusions":  p.Conclusions,
-					"last_changed": p.LastChanged.Format(time.RFC3339),
-				},
-			})
+			payload := map[string]any{
+				"entity_type":  "sitepage",
+				"url":          p.URL,
+				"title":        p.Title,
+				"summary":      summary,
+				"section":      p.Section,
+				"status":       p.Status,
+				"tags":         p.Tags,
+				"goals":        p.Goals,
+				"theses":       p.Theses,
+				"conclusions":  p.Conclusions,
+				"last_changed": p.LastChanged.Format(time.RFC3339),
+			}
+			if p.PublishedAt != nil {
+				payload["published_at"] = p.PublishedAt.Format("2006-01-02")
+			}
+			points = append(points, qdrant.Point{ID: pointID(p.URL), Vector: v, Payload: payload})
 		}
 	}
 	if err := ix.Qdr.Upsert(ctx, points); err != nil {
@@ -103,12 +121,13 @@ func NewSearcher(qdr *qdrant.Client, emb embed.Embedder) *Searcher {
 
 // Hit — результат поиска по страницам сайта.
 type Hit struct {
-	URL     string   `json:"url"`
-	Title   string   `json:"title"`
-	Summary string   `json:"summary"`
-	Section string   `json:"section"`
-	Tags    []string `json:"tags,omitempty"`
-	Score   float32  `json:"score"`
+	URL       string   `json:"url"`
+	Title     string   `json:"title"`
+	Summary   string   `json:"summary"`
+	Section   string   `json:"section"`
+	Tags      []string `json:"tags,omitempty"`
+	Published string   `json:"published,omitempty"` // дата публикации на сайте (ГГГГ-ММ-ДД)
+	Score     float32  `json:"score"`
 }
 
 // Search ищет наиболее релевантные страницы под запрос пользователя.
@@ -129,7 +148,7 @@ func (s *Searcher) SearchWithTags(ctx context.Context, query string, limit int, 
 	if len(vecs) == 0 {
 		return nil, fmt.Errorf("пустой эмбеддинг запроса")
 	}
-	hits, err := s.Qdr.Search(ctx, vecs[0], limit, tagsFilter(tags))
+	hits, err := s.Qdr.Search(ctx, vecs[0], limit, searchFilter(tags))
 	if err != nil {
 		return nil, err
 	}
@@ -149,8 +168,11 @@ func (s *Searcher) Related(ctx context.Context, p *Page, limit int) ([]Hit, erro
 	if len(vecs) == 0 {
 		return nil, fmt.Errorf("пустой эмбеддинг страницы")
 	}
-	// Берём на один больше и исключаем саму страницу (по URL).
+	// Берём на один больше и исключаем саму страницу (по URL); только доступные.
 	filter := map[string]any{
+		"must": []any{
+			map[string]any{"key": "status", "match": map[string]any{"value": StatusActive}},
+		},
 		"must_not": []any{
 			map[string]any{"key": "url", "match": map[string]any{"value": p.URL}},
 		},
@@ -166,20 +188,17 @@ func (s *Searcher) Related(ctx context.Context, p *Page, limit int) ([]Hit, erro
 	return out, nil
 }
 
-// tagsFilter строит фильтр Qdrant: страница содержит все указанные теги (AND).
-func tagsFilter(tags []string) map[string]any {
-	if len(tags) == 0 {
-		return nil
+// searchFilter строит фильтр Qdrant: только доступные страницы (status=active)
+// и, если заданы теги, страница содержит ВСЕ указанные теги (AND).
+func searchFilter(tags []string) map[string]any {
+	must := []any{
+		map[string]any{"key": "status", "match": map[string]any{"value": StatusActive}},
 	}
-	must := make([]any, 0, len(tags))
 	for _, t := range tags {
 		if t == "" {
 			continue
 		}
 		must = append(must, map[string]any{"key": "tags", "match": map[string]any{"value": t}})
-	}
-	if len(must) == 0 {
-		return nil
 	}
 	return map[string]any{"must": must}
 }
@@ -188,12 +207,13 @@ func toHits(hits []qdrant.SearchHit) []Hit {
 	out := make([]Hit, 0, len(hits))
 	for _, h := range hits {
 		out = append(out, Hit{
-			URL:     str(h.Payload["url"]),
-			Title:   str(h.Payload["title"]),
-			Summary: str(h.Payload["summary"]),
-			Section: str(h.Payload["section"]),
-			Tags:    strSlice(h.Payload["tags"]),
-			Score:   h.Score,
+			URL:       str(h.Payload["url"]),
+			Title:     str(h.Payload["title"]),
+			Summary:   str(h.Payload["summary"]),
+			Section:   str(h.Payload["section"]),
+			Tags:      strSlice(h.Payload["tags"]),
+			Published: str(h.Payload["published_at"]),
+			Score:     h.Score,
 		})
 	}
 	return out

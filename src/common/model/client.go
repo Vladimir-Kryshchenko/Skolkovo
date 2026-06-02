@@ -239,12 +239,18 @@ type ClientDocument struct {
 
 // Tenant — мульти-тенант.
 type Tenant struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	APIKey    string          `json:"api_key"`
-	Settings  json.RawMessage `json:"settings,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	Active    bool            `json:"active"`
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	APIKey string `json:"api_key"`
+	// TelegramBotToken — токен Telegram-бота тенанта (@BotFather); пусто — бот не поднимается.
+	TelegramBotToken string `json:"telegram_bot_token,omitempty"`
+	// TelegramBotUsername — кэш @username бота, заполняется менеджером после запуска.
+	TelegramBotUsername string          `json:"telegram_bot_username,omitempty"`
+	Settings            json.RawMessage `json:"settings,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	// KeyRotatedAt — когда последний раз ротировали MCP API-ключ (nil — ни разу).
+	KeyRotatedAt *time.Time `json:"key_rotated_at,omitempty"`
+	Active       bool       `json:"active"`
 }
 
 // ParseSettings декодирует JSON настроек тенанта в map.

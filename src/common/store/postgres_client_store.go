@@ -62,6 +62,16 @@ FROM clients WHERE inn = $1`, inn)
 	return scanClient(row)
 }
 
+// GetClientByEmail ищет клиента по email; если tenantID не пуст — только в рамках тенанта.
+func (s *PostgresClientStore) GetClientByEmail(ctx context.Context, tenantID, email string) (*model.Client, error) {
+	row := s.db.QueryRow(ctx, `
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+FROM clients
+WHERE lower(contact_email) = lower($1) AND ($2 = '' OR tenant_id = $2)
+LIMIT 1`, email, tenantID)
+	return scanClient(row)
+}
+
 func (s *PostgresClientStore) UpdateClient(ctx context.Context, client *model.Client) error {
 	if err := validateClient(client); err != nil {
 		return err
@@ -611,30 +621,31 @@ func (s *PostgresClientStore) CreateTenant(ctx context.Context, tenant *model.Te
 		settings = json.RawMessage("{}")
 	}
 	_, err := s.db.Exec(ctx, `
-INSERT INTO tenants (id, name, api_key, settings, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenant.ID, tenant.Name, tenant.APIKey, settings,
-		tenant.CreatedAt, tenant.Active)
+INSERT INTO tenants (id, name, api_key, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		tenant.ID, tenant.Name, tenant.APIKey,
+		nullStrPtr(tenant.TelegramBotToken), nullStrPtr(tenant.TelegramBotUsername),
+		settings, tenant.CreatedAt, tenant.KeyRotatedAt, tenant.Active)
 	return err
 }
 
 func (s *PostgresClientStore) GetTenant(ctx context.Context, id string) (*model.Tenant, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, api_key, settings, created_at, active
+SELECT id, name, api_key, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
 FROM tenants WHERE id = $1`, id)
 	return scanTenant(row)
 }
 
 func (s *PostgresClientStore) GetTenantByAPIKey(ctx context.Context, apiKey string) (*model.Tenant, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, api_key, settings, created_at, active
+SELECT id, name, api_key, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
 FROM tenants WHERE api_key = $1`, apiKey)
 	return scanTenant(row)
 }
 
 func (s *PostgresClientStore) ListTenants(ctx context.Context) ([]*model.Tenant, error) {
 	rows, err := s.db.Query(ctx, `
-SELECT id, name, api_key, settings, created_at, active
+SELECT id, name, api_key, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
 FROM tenants ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -657,9 +668,12 @@ func (s *PostgresClientStore) UpdateTenant(ctx context.Context, tenant *model.Te
 		return err
 	}
 	tag, err := s.db.Exec(ctx, `
-UPDATE tenants SET name=$2, api_key=$3, settings=$4, active=$5
+UPDATE tenants SET name=$2, api_key=$3, telegram_bot_token=$4, telegram_bot_username=$5,
+                   settings=$6, key_rotated_at=$7, active=$8
 WHERE id = $1`,
-		tenant.ID, tenant.Name, tenant.APIKey, tenant.Settings, tenant.Active)
+		tenant.ID, tenant.Name, tenant.APIKey,
+		nullStrPtr(tenant.TelegramBotToken), nullStrPtr(tenant.TelegramBotUsername),
+		tenant.Settings, tenant.KeyRotatedAt, tenant.Active)
 	if err != nil {
 		return err
 	}
@@ -797,14 +811,19 @@ func scanClientDocument(r row) (*model.ClientDocument, error) {
 func scanTenant(r row) (*model.Tenant, error) {
 	var t model.Tenant
 	var settings json.RawMessage
-	err := r.Scan(&t.ID, &t.Name, &t.APIKey, &settings, &t.CreatedAt, &t.Active)
+	var tgToken, tgUsername *string
+	var keyRotatedAt *time.Time
+	err := r.Scan(&t.ID, &t.Name, &t.APIKey, &tgToken, &tgUsername, &settings, &t.CreatedAt, &keyRotatedAt, &t.Active)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	t.TelegramBotToken = deref(tgToken)
+	t.TelegramBotUsername = deref(tgUsername)
 	t.Settings = settings
+	t.KeyRotatedAt = keyRotatedAt
 	return &t, nil
 }
 

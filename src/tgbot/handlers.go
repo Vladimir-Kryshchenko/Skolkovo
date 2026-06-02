@@ -63,9 +63,7 @@ func (b *Bot) handleMessage(update tgbotapi.Update) {
 	text := strings.TrimSpace(msg.Text)
 
 	// Если пользователь не авторизован и прислал email — привязываем.
-	b.authMutex.RLock()
-	_, exists := b.chatIDToEmail[chatID]
-	b.authMutex.RUnlock()
+	exists := b.isAuthorized(chatID)
 
 	if !exists && emailRe.MatchString(text) {
 		b.handleEmailAuth(chatID, text)
@@ -111,11 +109,7 @@ func (b *Bot) handleCallback(update tgbotapi.Update) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) cmdStart(chatID int64) {
-	b.authMutex.RLock()
-	_, exists := b.chatIDToEmail[chatID]
-	b.authMutex.RUnlock()
-
-	if exists {
+	if b.isAuthorized(chatID) {
 		b.sendReply(chatID,
 			"👋 Здравствуйте! Вы уже авторизованы.\n\n"+
 				"Выберите действие:",
@@ -133,7 +127,7 @@ func (b *Bot) cmdStart(chatID int64) {
 
 // handleEmailAuth привязывает chat ID к клиенту по email.
 func (b *Bot) handleEmailAuth(chatID int64, email string) {
-	clientID, err := AuthorizeUser(b.stores.Client, chatID, email)
+	clientID, err := b.authorizeUser(chatID, email)
 	if err != nil {
 		b.sendReply(chatID, fmt.Sprintf(
 			"❌ Не удалось авторизоваться: %v\n\n"+
@@ -141,10 +135,6 @@ func (b *Bot) handleEmailAuth(chatID int64, email string) {
 		))
 		return
 	}
-
-	b.authMutex.Lock()
-	b.chatIDToEmail[chatID] = email
-	b.authMutex.Unlock()
 
 	b.sendReply(chatID,
 		fmt.Sprintf("✅ Вы успешно авторизованы!\n\n"+
@@ -557,7 +547,7 @@ func (b *Bot) cmdStageInfo(chatID int64) {
 
 // getClientByChatID получает клиента по chat ID через авторизацию.
 func (b *Bot) getClientByChatID(chatID int64) (*model.Client, error) {
-	return GetClientByChatID(b.stores.Client, chatID)
+	return b.clientByChatID(chatID)
 }
 
 // emailRe — упрощённая проверка email.

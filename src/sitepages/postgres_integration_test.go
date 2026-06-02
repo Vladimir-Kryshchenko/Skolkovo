@@ -79,7 +79,7 @@ func TestPostgresEnrichmentIntegration(t *testing.T) {
 		Theses:      []string{"тезис 1", "тезис 2"},
 		Conclusions: "Вывод А",
 	}
-	if err := st.UpdateEnrichment(ctx, p1.ID, ann, p1.ContentHash); err != nil {
+	if err := st.UpdateEnrichment(ctx, p1.ID, ann, p1.ContentHash, nil); err != nil {
 		t.Fatalf("UpdateEnrichment: %v", err)
 	}
 	_ = st.BumpTags(ctx, ann.Tags)
@@ -122,7 +122,7 @@ func TestPostgresEnrichmentIntegration(t *testing.T) {
 	if _, err := st.Upsert(ctx, p2); err != nil {
 		t.Fatalf("Upsert p2: %v", err)
 	}
-	if err := st.UpdateEnrichment(ctx, p2.ID, Annotation{Tags: []string{tagPrefix + "b", tagPrefix + "c"}}, p2.ContentHash); err != nil {
+	if err := st.UpdateEnrichment(ctx, p2.ID, Annotation{Tags: []string{tagPrefix + "b", tagPrefix + "c"}}, p2.ContentHash, nil); err != nil {
 		t.Fatalf("UpdateEnrichment p2: %v", err)
 	}
 	rel, err := st.RelatedByTags(ctx, p1.ID, got.Tags, 6)

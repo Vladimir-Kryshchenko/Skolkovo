@@ -44,15 +44,16 @@ func NewProxyManager(path string) *ProxyManager {
 }
 
 func (pm *ProxyManager) load() {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
 	data, err := os.ReadFile(pm.Path)
 	if err != nil {
 		// Файл не существует — создаём пустой
 		pm.Proxies = []ProxyConfig{}
-		pm.save()
+		pm.saveLocked()
 		return
 	}
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
 	json.Unmarshal(data, &pm.Proxies)
 
 	for _, p := range pm.Proxies {
@@ -62,10 +63,13 @@ func (pm *ProxyManager) load() {
 	}
 }
 
-func (pm *ProxyManager) save() {
-	pm.mu.Lock()
-	defer pm.mu.Unlock()
-
+// saveLocked сохраняет список прокси на диск.
+// ВНИМАНИЕ: вызывающий ДОЛЖЕН держать pm.mu. sync.Mutex не рекурсивный —
+// раньше save() сам брал Lock, но вызывался из методов, уже державших mu
+// (AddProxy/ActivateProxy/RemoveProxy/TestProxy/AutoSwitch), что приводило
+// к самоблокировке: горутина навсегда удерживала mu, а страница /proxy и
+// весь прокси-менеджер зависали (handleProxyPage блокировался на mu.Lock()).
+func (pm *ProxyManager) saveLocked() {
 	activeCount := 0
 	for i := range pm.Proxies {
 		if pm.Proxies[i].Active {
@@ -117,7 +121,7 @@ func (pm *ProxyManager) AddProxy(name, pType, urlStr string) string {
 	}
 
 	pm.Proxies = append(pm.Proxies, newProxy)
-	pm.save()
+	pm.saveLocked()
 	return id
 }
 
@@ -141,7 +145,7 @@ func (pm *ProxyManager) ActivateProxy(id string) error {
 		return fmt.Errorf("proxy not found")
 	}
 
-	pm.save()
+	pm.saveLocked()
 	return nil
 }
 
@@ -160,7 +164,7 @@ func (pm *ProxyManager) RemoveProxy(id string) error {
 					pm.CurrentID = pm.Proxies[0].ID
 				}
 			}
-			pm.save()
+			pm.saveLocked()
 			return nil
 		}
 	}
@@ -213,7 +217,7 @@ func (pm *ProxyManager) TestProxy(id string) (bool, string, error) {
 		pm.Proxies[proxyIdx].Status = "error"
 		pm.Proxies[proxyIdx].Error = err.Error()
 	}
-	pm.save()
+	pm.saveLocked()
 	pm.mu.Unlock()
 
 	return ok, ip, err
@@ -233,7 +237,7 @@ func (pm *ProxyManager) AutoSwitch() string {
 					pm.Proxies[j].Active = false
 				}
 			}
-			pm.save()
+			pm.saveLocked()
 			return p.ID
 		}
 	}

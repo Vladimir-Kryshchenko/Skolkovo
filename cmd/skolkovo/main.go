@@ -2308,22 +2308,41 @@ func buildJobRunner(ctx context.Context, cfg config.Config, st store.Store, svc 
 		if cfg.SitePagesEnrichEnabled && aiStore != nil {
 			_ = aiStore.EnsurePageAnnotatorAgent(ctx)
 			sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
-			// Стартовый бэкфилл: размечаем порцию (кап SitePagesEnrichMaxPerRun) ещё не
-			// обогащённых страниц и переиндексируем именно их. Остальной backlog добирается
-			// на периодических прогонах задания «sitepages» — без многочасового марафона.
+			// Стартовый бэкфилл: непрерывно размечаем backlog порциями (по
+			// SitePagesEnrichMaxPerRun) до полного исчерпания, переиндексируя каждую
+			// порцию. Работает в фоне отдельной горутиной — не блокирует раннер заданий
+			// и не привязан к обходу (новые/изменённые страницы дополнительно ловит
+			// периодическое задание «sitepages»). Прерывается по отмене контекста или
+			// когда размечать больше нечего/не выходит (d==0 — агент выключен/стойкие ошибки).
 			go func() {
-				pend, err := sitePageStore.ListNeedingEnrichment(ctx, cfg.SitePagesEnrichMaxPerRun)
-				if err != nil || len(pend) == 0 {
-					return
-				}
-				log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц (кап %d)", len(pend), cfg.SitePagesEnrichMaxPerRun)
-				d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
-				log.Printf("[serve:sitepages] бэкфилл аннотаций: обогащено %d, пропущено %d, ошибок %d", d, s, f)
-				if d > 0 {
-					if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pend); ierr != nil {
-						log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
+				var totalDone, batches int
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					default:
+					}
+					pend, err := sitePageStore.ListNeedingEnrichment(ctx, cfg.SitePagesEnrichMaxPerRun)
+					if err != nil || len(pend) == 0 {
+						if totalDone > 0 {
+							log.Printf("[serve:sitepages] бэкфилл аннотаций завершён: всего обогащено %d за %d порций", totalDone, batches)
+						}
+						return
+					}
+					batches++
+					d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+					totalDone += d
+					log.Printf("[serve:sitepages] бэкфилл аннотаций, порция %d: обогащено %d, пропущено %d, ошибок %d (итого %d)", batches, d, s, f, totalDone)
+					if d > 0 {
+						if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pend); ierr != nil {
+							log.Printf("[serve:sitepages] переиндексация после порции: %v", ierr)
+						} else {
+							log.Printf("[serve:sitepages] переиндексировано %d страниц после порции", n)
+						}
 					} else {
-						log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
+						// Ни одна не размечена (агент выключен/стойкие ошибки) — не крутим вхолостую.
+						log.Printf("[serve:sitepages] бэкфилл остановлен: порция не дала разметки")
+						return
 					}
 				}
 			}()

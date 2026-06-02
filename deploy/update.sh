@@ -23,5 +23,10 @@ else
   docker compose -f docker-compose.prod.yml --env-file .env up -d --build skolkovo
 fi
 
+# nginx кэширует IP апстрима skolkovo; после пересоздания контейнера он может
+# отдавать 502, пока не перечитает конфиг. Перезагружаем nginx (best-effort).
+echo "[update] перезагрузка nginx (сброс кэша upstream)"
+docker exec baza-skolkovo-nginx-1 nginx -s reload 2>/dev/null || echo "[update] nginx reload пропущен (контейнер не найден)"
+
 echo "[update] готово. Состояние:"
 docker compose -f docker-compose.prod.yml ps

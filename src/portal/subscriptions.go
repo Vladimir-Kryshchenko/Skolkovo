@@ -25,11 +25,8 @@ type subscriptionCategory struct {
 }
 
 type subscriptionsData struct {
-	Client               interface{} // *model.Client
-	Categories           []subscriptionCategory
-	Flash                string
-	FlashKind            string
-	ActiveTabSubscriptions bool
+	baseData
+	Categories []subscriptionCategory
 }
 
 func (ps *PortalServer) handleSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -55,13 +52,13 @@ func (ps *PortalServer) handleSubscriptions(w http.ResponseWriter, r *http.Reque
 	}
 
 	data := subscriptionsData{
-		Client:                client,
-		Categories:            cats,
-		Flash:                 r.URL.Query().Get("msg"),
-		ActiveTabSubscriptions: true,
-	}
-	if data.Flash != "" {
-		data.FlashKind = "ok"
+		baseData: baseData{
+			Client:    client,
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "subscriptions",
+		},
+		Categories: cats,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

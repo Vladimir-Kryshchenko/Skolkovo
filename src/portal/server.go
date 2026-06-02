@@ -347,11 +347,15 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 	}
 
 	data := dashboardData{
-		Client:              client,
+		baseData: baseData{
+			Client:    client,
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "dashboard",
+		},
 		Deadlines:           ps.getDeadlines(r.Context(), client.ID),
-		Checklists:          ps.getClientChecklists(r.Context(), client.ID),
-		Documents:           ps.getClientDocuments(r.Context(), client.ID),
-		Flash:               r.URL.Query().Get("msg"),
+		Checklists:          ps.enrichChecklists(r.Context(), ps.getClientChecklists(r.Context(), client.ID)),
+		Documents:           ps.enrichClientDocuments(r.Context(), ps.getClientDocuments(r.Context(), client.ID)),
 		RecentChanges:       ps.getRecentChanges(r.Context()),
 		TelegramBotUsername: ps.config.TelegramBotUsername,
 	}
@@ -369,8 +373,13 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 func (ps *PortalServer) handleChecklists(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
 	data := checklistsData{
-		Client:     ps.mustGetClient(r.Context(), sess.ClientID),
-		Checklists: ps.getClientChecklists(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "checklists",
+		},
+		Checklists: ps.enrichChecklists(r.Context(), ps.getClientChecklists(r.Context(), sess.ClientID)),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -386,7 +395,12 @@ func (ps *PortalServer) handleChecklists(w http.ResponseWriter, r *http.Request)
 func (ps *PortalServer) handleDeadlines(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
 	data := deadlinesData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "deadlines",
+		},
 		Deadlines: ps.getDeadlines(r.Context(), sess.ClientID),
 		Overdue:   ps.getOverdueDeadlines(r.Context()),
 	}
@@ -407,7 +421,12 @@ func (ps *PortalServer) handleDocuments(w http.ResponseWriter, r *http.Request) 
 	docs := ps.enrichClientDocuments(r.Context(), clientDocs)
 
 	data := documentsData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "documents",
+		},
 		Documents: docs,
 	}
 
@@ -438,10 +457,13 @@ func (ps *PortalServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := generateData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "generate",
+		},
 		Templates: templates,
-		Flash:     r.URL.Query().Get("msg"),
-		FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -594,6 +616,80 @@ func (ps *PortalServer) getClientChecklists(ctx context.Context, clientID string
 	return cc
 }
 
+// enrichChecklists обогащает привязки чек-листов клиента данными шаблона
+// (название, тип процедуры, шаги) и статусами шагов, вычисляя прогресс.
+// Используются методы store.ChecklistStore: GetChecklist (шаблон со списком шагов
+// через Checklist.ParseSteps) и GetStepStatuses (статусы шагов по client_checklist_id).
+func (ps *PortalServer) enrichChecklists(ctx context.Context, clientChecklists []*model.ClientChecklist) []*checklistView {
+	if len(clientChecklists) == 0 {
+		return nil
+	}
+	out := make([]*checklistView, 0, len(clientChecklists))
+	for _, cc := range clientChecklists {
+		out = append(out, ps.buildChecklistView(ctx, cc))
+	}
+	return out
+}
+
+// buildChecklistView собирает представление одного чек-листа клиента.
+func (ps *PortalServer) buildChecklistView(ctx context.Context, cc *model.ClientChecklist) *checklistView {
+	v := &checklistView{
+		ID:     cc.ID,
+		Status: cc.Status,
+	}
+
+	var defs []model.ChecklistStepDef
+	if ps.stores.ChecklistStore != nil && cc.ChecklistID != "" {
+		if tpl, err := ps.stores.ChecklistStore.GetChecklist(ctx, cc.ChecklistID); err == nil && tpl != nil {
+			v.Title = tpl.Title
+			v.ProcedureType = procedureTypeLabel(tpl.ProcedureType)
+			if parsed, err := tpl.ParseSteps(); err == nil {
+				defs = parsed
+			}
+		}
+	}
+	if v.Title == "" {
+		v.Title = "Чек-лист"
+	}
+	v.TotalSteps = len(defs)
+
+	// Статусы шагов клиента по индексу шага.
+	statusByIndex := map[int]model.StepStatus{}
+	if ps.stores.ChecklistStore != nil && cc.ID != "" {
+		if statuses, err := ps.stores.ChecklistStore.GetStepStatuses(ctx, cc.ID); err == nil {
+			for _, ss := range statuses {
+				statusByIndex[ss.StepIndex] = ss.Status
+			}
+		}
+	}
+
+	// Собираем шаги из определения шаблона, накладывая статус клиента.
+	v.Steps = make([]checklistStepView, 0, len(defs))
+	for i, def := range defs {
+		st := statusByIndex[i]
+		if st == "" {
+			st = model.StepPending
+		}
+		if st == model.StepDone {
+			v.CompletedSteps++
+		}
+		v.Steps = append(v.Steps, checklistStepView{Title: def.Title, Status: string(st)})
+	}
+
+	switch {
+	case v.TotalSteps > 0:
+		v.Progress = int(float64(v.CompletedSteps) / float64(v.TotalSteps) * 100.0)
+	case cc.Status == model.ChecklistCompleted:
+		// Нет определения шагов — оцениваем прогресс по статусу привязки.
+		v.Progress = 100
+	case cc.Status == model.ChecklistInProgress:
+		v.Progress = 50
+	default:
+		v.Progress = 0
+	}
+	return v
+}
+
 func (ps *PortalServer) getClientDocuments(ctx context.Context, clientID string) []*model.ClientDocument {
 	if ps.stores.DocStore == nil {
 		return nil
@@ -696,6 +792,35 @@ func deadlineStatusClass(d *model.Deadline) string {
 		return "overdue"
 	}
 	return "upcoming"
+}
+
+// deadlineStatusLabel — русская подпись статуса дедлайна, согласованная с
+// deadlineStatusClass (Выполнен / Просрочен / Предстоит).
+func deadlineStatusLabel(d *model.Deadline) string {
+	switch deadlineStatusClass(d) {
+	case "completed":
+		return "Выполнен"
+	case "overdue":
+		return "Просрочен"
+	default:
+		return "Предстоит"
+	}
+}
+
+// procedureTypeLabel — читаемое русское название типа процедуры чек-листа.
+func procedureTypeLabel(t model.ChecklistType) string {
+	switch t {
+	case model.ChecklistEntry:
+		return "Вступление"
+	case model.ChecklistReporting:
+		return "Отчётность"
+	case model.ChecklistExtension:
+		return "Продление"
+	case model.ChecklistExit:
+		return "Выход"
+	default:
+		return string(t)
+	}
 }
 
 func docStatusLabel(d *model.ClientDocument) string {

@@ -18,12 +18,20 @@ type loginData struct {
 	Link      string
 }
 
+// baseData — общие поля всех авторизованных страниц портала: клиент, флеш-сообщение
+// и ключ активной страницы (для подсветки в меню и шапки с email).
+type baseData struct {
+	Client    *model.Client
+	Flash     string
+	FlashKind string
+	Page      string // ключ активной вкладки: dashboard/checklists/deadlines/documents/subscriptions/generate
+}
+
 type dashboardData struct {
-	Client              *model.Client
+	baseData
 	Deadlines           []*model.Deadline
-	Checklists          []*model.ClientChecklist
-	Documents           []*model.ClientDocument
-	Flash               string
+	Checklists          []*checklistView
+	Documents           []*portalDocInfo
 	TelegramBotUsername string // @username бота, может быть пустым
 	// Последние изменения базы знаний
 	RecentChanges []recentChange
@@ -39,19 +47,38 @@ type recentChange struct {
 }
 
 type checklistsData struct {
-	Client     *model.Client
-	Checklists []*model.ClientChecklist
+	baseData
+	Checklists []*checklistView
 }
 
 type deadlinesData struct {
-	Client    *model.Client
+	baseData
 	Deadlines []*model.Deadline
 	Overdue   []*model.Deadline
 }
 
 type documentsData struct {
-	Client    *model.Client
+	baseData
 	Documents []*portalDocInfo
+}
+
+// checklistView — представление чек-листа клиента для шаблонов: объединяет
+// шаблон чек-листа (название, тип, шаги) с прогрессом и статусами шагов клиента.
+type checklistView struct {
+	ID             string
+	Title          string
+	ProcedureType  string
+	Status         model.ChecklistStatus
+	Progress       int
+	CompletedSteps int
+	TotalSteps     int
+	Steps          []checklistStepView
+}
+
+// checklistStepView — шаг чек-листа для шаблона (название + статус "pending"/"in_progress"/"done").
+type checklistStepView struct {
+	Title  string
+	Status string
 }
 
 // portalDocInfo — расширенная информация о документе для портала (с источником).
@@ -67,10 +94,8 @@ type portalDocInfo struct {
 }
 
 type generateData struct {
-	Client    *model.Client
+	baseData
 	Templates []*model.DocumentTemplate
-	Flash     string
-	FlashKind string
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +106,7 @@ var portalTmpl = template.Must(template.New("portal").Funcs(template.FuncMap{
 	"stageProgress":       stageProgress,
 	"stageLabel":          stageLabel,
 	"deadlineStatusClass": deadlineStatusClass,
+	"deadlineStatusLabel": deadlineStatusLabel,
 	"docStatusLabel":      docStatusLabel,
 	"docStatusClass":      docStatusClass,
 	"humanTime":           humanTime,
@@ -89,8 +115,8 @@ var portalTmpl = template.Must(template.New("portal").Funcs(template.FuncMap{
 	"add":                 func(a, b int) int { return a + b },
 	"TrimAt":              func(s string) string { return strings.TrimPrefix(s, "@") },
 }).Parse(`
-{{/* ===== LAYOUT ===== */}}
-{{define "layout"}}<!DOCTYPE html>
+{{/* ===== SHELL (top half) ===== */}}
+{{define "shell_top"}}<!DOCTYPE html>
 <html lang="ru">
 <head>
 <meta charset="utf-8">
@@ -305,8 +331,10 @@ select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,23
 {{template "header" .}}
 {{template "nav" .}}
 <main>
-{{template "page" .}}
-</main>
+{{end}}
+
+{{/* ===== SHELL (bottom half) ===== */}}
+{{define "shell_bottom"}}</main>
 <script>
 function toggleTheme() {
   var r = document.documentElement;
@@ -342,7 +370,7 @@ document.addEventListener('DOMContentLoaded', function() {
     База Сколково
   </h1>
   <div class="header-right">
-    {{if .Client}}<span class="header-email" data-tooltip="Текущий аккаунт">{{.Client.Email}}</span>{{end}}
+    {{if .Client}}<span class="header-email" data-tooltip="Текущий аккаунт">{{.Client.ContactEmail}}</span>{{end}}
     <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" data-theme-toggle class="header-btn" aria-label="Переключить тему"></button>
     <a href="/logout" class="header-btn" data-tooltip="Выйти из личного кабинета">Выйти</a>
   </div>
@@ -352,27 +380,27 @@ document.addEventListener('DOMContentLoaded', function() {
 {{/* ===== NAV ===== */}}
 {{define "nav"}}
 <nav>
-  <a href="/dashboard"{{if .ActiveTabDashboard}} class="active"{{end}} data-tooltip="Обзор текущей стадии, дедлайнов и прогресса">
+  <a href="/dashboard"{{if eq .Page "dashboard"}} class="active"{{end}} data-tooltip="Обзор текущей стадии, дедлайнов и прогресса">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
     Дашборд
   </a>
-  <a href="/checklists"{{if .ActiveTabChecklists}} class="active"{{end}} data-tooltip="Список шагов для прохождения процедур резидентства">
+  <a href="/checklists"{{if eq .Page "checklists"}} class="active"{{end}} data-tooltip="Список шагов для прохождения процедур резидентства">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
     Чек-листы
   </a>
-  <a href="/deadlines"{{if .ActiveTabDeadlines}} class="active"{{end}} data-tooltip="Сроки подачи документов и отчётности">
+  <a href="/deadlines"{{if eq .Page "deadlines"}} class="active"{{end}} data-tooltip="Сроки подачи документов и отчётности">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     Дедлайны
   </a>
-  <a href="/documents"{{if .ActiveTabDocuments}} class="active"{{end}} data-tooltip="Документы сопровождения (в рамках нашего сервиса)">
+  <a href="/documents"{{if eq .Page "documents"}} class="active"{{end}} data-tooltip="Документы сопровождения (в рамках нашего сервиса)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
     Документы
   </a>
-  <a href="/subscriptions"{{if .ActiveTabSubscriptions}} class="active"{{end}} data-tooltip="Управление подписками на уведомления об изменениях">
+  <a href="/subscriptions"{{if eq .Page "subscriptions"}} class="active"{{end}} data-tooltip="Управление подписками на уведомления об изменениях">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
     Подписки
   </a>
-  <a href="/generate"{{if .ActiveTabGenerate}} class="active"{{end}} data-tooltip="Генерация документов из шаблонов на основе данных профиля">
+  <a href="/generate"{{if eq .Page "generate"}} class="active"{{end}} data-tooltip="Генерация документов из шаблонов на основе данных профиля">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
     Генерация
   </a>
@@ -498,8 +526,8 @@ document.addEventListener('DOMContentLoaded', function() {
 </html>{{end}}
 
 {{/* ===== DASHBOARD PAGE ===== */}}
-{{define "dashboard"}}
-{{.Flash}}
+{{define "dashboard"}}{{template "shell_top" .}}
+{{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="notice-banner">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
   <span>Это ваш прогресс в <strong>нашем сопровождении</strong>. Официальный статус заявки и документы — в
@@ -514,14 +542,14 @@ document.addEventListener('DOMContentLoaded', function() {
         Текущая стадия
       </h2>
       <div style="margin-bottom:12px">
-        <span class="stage-badge" data-tooltip="Стадия: {{.Client.ResidencyStage}}">{{.Client.ResidencyStage}}</span>
+        <span class="stage-badge" data-tooltip="Стадия: {{stageLabel .Client.ResidencyStage}}">{{stageLabel .Client.ResidencyStage}}</span>
       </div>
       <div class="progress">
-        <div class="progress-bar" style="width: {{.Client.StageProgress}}%"></div>
+        <div class="progress-bar" style="width: {{stageProgress .Client.ResidencyStage}}%"></div>
       </div>
       <div class="progress-label">
-        <span>{{.Client.ResidencyStage}}</span>
-        <span>{{.Client.StageProgress}}%</span>
+        <span>{{stageLabel .Client.ResidencyStage}}</span>
+        <span>{{stageProgress .Client.ResidencyStage}}%</span>
       </div>
     </div>
     <div class="card">
@@ -561,10 +589,10 @@ document.addEventListener('DOMContentLoaded', function() {
             <thead><tr><th>Дедлайн</th><th>Дата</th><th>Статус</th></tr></thead>
             <tbody>
             {{range .Deadlines}}
-              <tr class="row-{{.StatusClass}}">
+              <tr class="row-{{deadlineStatusClass .}}">
                 <td data-tooltip="{{.Title}}">{{.Title}}</td>
                 <td>{{.DueDate.Format "02.01.2006"}}</td>
-                <td><span class="badge badge-{{.StatusClass}}" data-tooltip="{{.StatusLabel}}">{{.StatusLabel}}</span></td>
+                <td><span class="badge badge-{{deadlineStatusClass .}}" data-tooltip="{{deadlineStatusLabel .}}">{{deadlineStatusLabel .}}</span></td>
               </tr>
             {{end}}
             </tbody>
@@ -639,11 +667,10 @@ document.addEventListener('DOMContentLoaded', function() {
   </a>
 </div>
 {{end}}
-
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 {{/* ===== CHECKLISTS PAGE ===== */}}
-{{define "checklists"}}
+{{define "checklists"}}{{template "shell_top" .}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="card">
   <h2>
@@ -691,10 +718,10 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
   {{end}}
 </div>
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 {{/* ===== DEADLINES PAGE ===== */}}
-{{define "deadlines"}}
+{{define "deadlines"}}{{template "shell_top" .}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="grid grid-2">
   <div class="card">
@@ -708,11 +735,11 @@ document.addEventListener('DOMContentLoaded', function() {
           <thead><tr><th>Название</th><th>Дата</th><th>Тип</th><th>Статус</th></tr></thead>
           <tbody>
           {{range .Deadlines}}
-            <tr class="row-{{.StatusClass}}">
+            <tr class="row-{{deadlineStatusClass .}}">
               <td style="font-weight:500" data-tooltip="{{.Title}}">{{.Title}}</td>
               <td>{{.DueDate.Format "02.01.2006"}}</td>
               <td><span style="font-size:11px;color:var(--text-secondary)">{{.Type}}</span></td>
-              <td><span class="badge badge-{{.StatusClass}}" data-tooltip="{{.StatusLabel}}">{{.StatusLabel}}</span></td>
+              <td><span class="badge badge-{{deadlineStatusClass .}}" data-tooltip="{{deadlineStatusLabel .}}">{{deadlineStatusLabel .}}</span></td>
             </tr>
           {{end}}
           </tbody>
@@ -753,10 +780,10 @@ document.addEventListener('DOMContentLoaded', function() {
     {{end}}
   </div>
 </div>
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 {{/* ===== DOCUMENTS PAGE ===== */}}
-{{define "documents"}}
+{{define "documents"}}{{template "shell_top" .}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="card">
   <h2>
@@ -787,10 +814,10 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
   {{end}}
 </div>
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 {{/* ===== GENERATE PAGE ===== */}}
-{{define "generate"}}
+{{define "generate"}}{{template "shell_top" .}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="card">
   <h2>
@@ -843,10 +870,10 @@ document.addEventListener('DOMContentLoaded', function() {
   <p>Шаблоны документов создаются администратором в разделе резидентства</p>
 </div>
 {{end}}
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 {{/* ===== SUBSCRIPTIONS PAGE ===== */}}
-{{define "subscriptions"}}
+{{define "subscriptions"}}{{template "shell_top" .}}
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 <div class="card">
   <h2>
@@ -877,6 +904,6 @@ document.addEventListener('DOMContentLoaded', function() {
     </button>
   </form>
 </div>
-{{end}}
+{{template "shell_bottom" .}}{{end}}
 
 `))

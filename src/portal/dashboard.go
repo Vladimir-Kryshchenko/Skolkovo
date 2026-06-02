@@ -1,8 +1,10 @@
 package portal
 
 import (
-	"baza-skolkovo/src/common/model"
 	"html/template"
+	"strings"
+
+	"baza-skolkovo/src/common/model"
 )
 
 // ---------------------------------------------------------------------------
@@ -17,11 +19,12 @@ type loginData struct {
 }
 
 type dashboardData struct {
-	Client     *model.Client
-	Deadlines  []*model.Deadline
-	Checklists []*model.ClientChecklist
-	Documents  []*model.ClientDocument
-	Flash      string
+	Client              *model.Client
+	Deadlines           []*model.Deadline
+	Checklists          []*model.ClientChecklist
+	Documents           []*model.ClientDocument
+	Flash               string
+	TelegramBotUsername string // @username бота, может быть пустым
 	// Последние изменения базы знаний
 	RecentChanges []recentChange
 }
@@ -84,6 +87,7 @@ var portalTmpl = template.Must(template.New("portal").Funcs(template.FuncMap{
 	"filename":            filename,
 	"sub":                 func(a, b int) int { return a - b },
 	"add":                 func(a, b int) int { return a + b },
+	"TrimAt":              func(s string) string { return strings.TrimPrefix(s, "@") },
 }).Parse(`
 {{/* ===== LAYOUT ===== */}}
 {{define "layout"}}<!DOCTYPE html>
@@ -184,6 +188,14 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 .card h2 { font-size: 16px; font-weight: 700; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; color: var(--text); }
 .card h2 svg { width: 18px; height: 18px; color: var(--primary); flex-shrink: 0; }
 .card h3 { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: var(--text); }
+
+/* Notice banner */
+.notice-banner { display: flex; align-items: flex-start; gap: 10px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; font-size: 13px; color: #92400e; }
+.notice-banner svg { flex-shrink: 0; color: #f59e0b; margin-top: 1px; }
+.notice-banner a { color: #b45309; font-weight: 600; text-decoration: underline; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .notice-banner { background: #2d1a00; border-color: #b45309; color: #fcd34d; } :root:not([data-theme="light"]) .notice-banner a { color: #fbbf24; } }
+:root[data-theme="dark"] .notice-banner { background: #2d1a00; border-color: #b45309; color: #fcd34d; }
+:root[data-theme="dark"] .notice-banner a { color: #fbbf24; }
 
 /* Progress bar */
 .progress { background: var(--gray-bg); border-radius: 6px; height: 8px; overflow: hidden; }
@@ -352,9 +364,13 @@ document.addEventListener('DOMContentLoaded', function() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     Дедлайны
   </a>
-  <a href="/documents"{{if .ActiveTabDocuments}} class="active"{{end}} data-tooltip="Документы, связанные с вашим резидентством">
+  <a href="/documents"{{if .ActiveTabDocuments}} class="active"{{end}} data-tooltip="Документы сопровождения (в рамках нашего сервиса)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
     Документы
+  </a>
+  <a href="/subscriptions"{{if .ActiveTabSubscriptions}} class="active"{{end}} data-tooltip="Управление подписками на уведомления об изменениях">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    Подписки
   </a>
   <a href="/generate"{{if .ActiveTabGenerate}} class="active"{{end}} data-tooltip="Генерация документов из шаблонов на основе данных профиля">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
@@ -484,6 +500,12 @@ document.addEventListener('DOMContentLoaded', function() {
 {{/* ===== DASHBOARD PAGE ===== */}}
 {{define "dashboard"}}
 {{.Flash}}
+<div class="notice-banner">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="18" height="18"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+  <span>Это ваш прогресс в <strong>нашем сопровождении</strong>. Официальный статус заявки и документы — в
+    <a href="https://cabinet.sk.ru/" target="_blank" rel="noopener">личном кабинете Сколково cabinet.sk.ru</a>.
+  </span>
+</div>
 <div class="grid grid-2">
   <div>
     <div class="card">
@@ -558,7 +580,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <div class="card">
       <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-        Статус документов
+        Документы сопровождения
       </h2>
       {{if .Documents}}
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -601,6 +623,20 @@ document.addEventListener('DOMContentLoaded', function() {
     </div>
     {{end}}
   </div>
+</div>
+{{end}}
+
+{{if .TelegramBotUsername}}
+<div class="card tg-banner" style="margin-top:16px;display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+  <svg viewBox="0 0 24 24" fill="currentColor" width="32" height="32" style="flex-shrink:0;color:#229ed9"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248-2.04 9.607c-.152.68-.548.847-1.11.527l-3.074-2.265-1.484 1.429c-.164.164-.3.3-.617.3l.22-3.121 5.672-5.123c.246-.22-.054-.34-.383-.12L7.33 14.73l-3.035-.945c-.66-.208-.672-.66.137-.977l11.853-4.571c.549-.198 1.03.134.852.977l-.575-.966z"/></svg>
+  <div style="flex:1;min-width:180px">
+    <div style="font-weight:600;font-size:14px;margin-bottom:4px">Telegram-бот</div>
+    <div style="font-size:12px;color:var(--text-secondary)">Получайте дедлайны, статус и ответы консультанта прямо в Telegram</div>
+  </div>
+  <a href="https://t.me/{{TrimAt .TelegramBotUsername}}" target="_blank" rel="noopener"
+     style="background:#229ed9;color:#fff;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap">
+    Открыть {{.TelegramBotUsername}}
+  </a>
 </div>
 {{end}}
 
@@ -807,6 +843,40 @@ document.addEventListener('DOMContentLoaded', function() {
   <p>Шаблоны документов создаются администратором в разделе резидентства</p>
 </div>
 {{end}}
+{{end}}
+
+{{/* ===== SUBSCRIPTIONS PAGE ===== */}}
+{{define "subscriptions"}}
+{{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
+<div class="card">
+  <h2>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+    Подписки на уведомления
+  </h2>
+  <p style="font-size:13px;color:var(--text-secondary);margin-bottom:20px">
+    Выберите категории изменений, о которых хотите получать уведомления.
+    Уведомления появляются в разделе «Уведомления» и могут приходить в Telegram-боте.
+  </p>
+  <form method="POST" action="/subscriptions">
+    <div style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px">
+      {{range .Categories}}
+      <label style="display:flex;align-items:flex-start;gap:12px;cursor:pointer;padding:12px;border:1px solid var(--border);border-radius:var(--radius);transition:background .15s"
+             onmouseover="this.style.background='var(--primary-light)'" onmouseout="this.style.background=''">
+        <input type="checkbox" name="categories" value="{{.Key}}"{{if .Checked}} checked{{end}}
+               style="width:16px;height:16px;margin-top:2px;flex-shrink:0;accent-color:var(--primary)">
+        <div>
+          <div style="font-size:14px;font-weight:600;margin-bottom:2px">{{.Label}}</div>
+          <div style="font-size:12px;color:var(--text-secondary)">{{.Desc}}</div>
+        </div>
+      </label>
+      {{end}}
+    </div>
+    <button type="submit" class="btn btn-primary" style="width:auto;padding:10px 24px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polyline points="20 6 9 17 4 12"/></svg>
+      Сохранить подписки
+    </button>
+  </form>
+</div>
 {{end}}
 
 `))

@@ -63,10 +63,12 @@ VALUES ($1,$2,$3,$4,$5,$6,$7,$8,FALSE)`,
 	return err
 }
 
-const selectCols = `SELECT id, entity_type, entity_id, title,
+const colList = `id, entity_type, entity_id, title,
        COALESCE(category,''), kind, COALESCE(source_url,''), COALESCE(summary,''),
        detected_at, notified,
-       severity, analysis_summary, affected_stages, diff_added, diff_removed, analyzed
+       severity, analysis_summary, affected_stages, diff_added, diff_removed, analyzed`
+
+const selectCols = `SELECT ` + colList + `
 FROM change_events`
 
 // Recent возвращает последние изменения по фильтру.
@@ -165,6 +167,40 @@ UPDATE change_events
  WHERE id = $1`,
 		id, string(e.Severity), e.AnalysisSummary, stages, e.DiffAdded, e.DiffRemoved)
 	return err
+}
+
+// LatestAnalyzedByType возвращает по одному — самому свежему проанализированному —
+// событию с ИИ-вердиктом на каждую сущность указанного типа. Один запрос вместо
+// скана всей ленты; питает сводную панель автоматического сравнения версий (/diff).
+func (s *PostgresStore) LatestAnalyzedByType(ctx context.Context, entityType string) (map[string]Event, error) {
+	q := `SELECT DISTINCT ON (entity_id) ` + colList + `
+FROM change_events
+WHERE entity_type = $1 AND analyzed = TRUE AND severity <> ''
+ORDER BY entity_id, detected_at DESC`
+	evs, err := s.query(ctx, q, entityType)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Event, len(evs))
+	for _, e := range evs {
+		out[e.EntityID] = e
+	}
+	return out, nil
+}
+
+// LatestByEntity возвращает самое свежее событие ленты для конкретной сущности
+// (любого статуса анализа). Используется, чтобы записать в него свежий вердикт
+// при ручном переанализе. found=false, если событий по сущности нет.
+func (s *PostgresStore) LatestByEntity(ctx context.Context, entityType, entityID string) (Event, bool, error) {
+	q := selectCols + ` WHERE entity_type = $1 AND entity_id = $2 ORDER BY detected_at DESC LIMIT 1`
+	evs, err := s.query(ctx, q, entityType, entityID)
+	if err != nil {
+		return Event{}, false, err
+	}
+	if len(evs) == 0 {
+		return Event{}, false, nil
+	}
+	return evs[0], true, nil
 }
 
 func (s *PostgresStore) query(ctx context.Context, q string, args ...any) ([]Event, error) {

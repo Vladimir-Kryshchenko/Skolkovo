@@ -12,6 +12,8 @@ type Config struct {
 	PostgresDSN     string
 	QdrantURL       string
 	QdrantColl      string
+	NavColl         string // отдельная Qdrant-коллекция навигации по сайту
+	SitePagesColl   string // отдельная Qdrant-коллекция страниц публичного сайта (sk.ru/dochub)
 	TEIURL          string
 	EmbeddingDim    int
 	SourceURL       string
@@ -32,6 +34,7 @@ type Config struct {
 	NotifyWebhook   string
 	ChromePath      string // путь к Chrome для headless-загрузчика ("" — автоопределение)
 	ProxyURL        string // прокси для загрузчика (например, резидентный) — обход WAF
+	DochubCookie    string // сессионная кука dochub из браузера (spid+AuthorizationCookie) — HTTP-скачивание тел файлов без браузера; обычно задаётся в админке
 	FetchLimit      int    // сколько документов скачивать за прогон (0 — все)
 	FetchWait       time.Duration
 
@@ -61,6 +64,12 @@ type Config struct {
 	TelegramChannels  string // comma-separated список каналов
 	TelegramRssHubURL string // URL RSSHub-инстанса для Telegram
 
+	// Telegram-бот для клиентов резидентства
+	TelegramBotUsername string // @username бота, например @SkolkovoAssistantBot
+
+	// Российский прокси для обхода WAF dochub.sk.ru
+	Proxy6APIKey string // API-ключ proxy6.net для автоматической покупки/ротации прокси
+
 	// Портал клиента
 	PortalEnabled bool
 	PortalAddr    string
@@ -71,6 +80,15 @@ type Config struct {
 
 	// Классификатор документов
 	ClassifierEnabled bool
+
+	// Страницы публичного сайта (sitepages) — отдельный от файлов слой знаний
+	SitePagesEnabled  bool
+	SitePagesSeeds    string // стартовые URL обхода через запятую
+	SitePagesMaxPages int    // лимит страниц за обход
+
+	// ИИ-обогащение страниц сайта (теги, описание, цели, тезисы, выводы)
+	SitePagesEnrichEnabled bool          // запускать аннотирование страниц через ИИ-агента
+	SitePagesEnrichDelay   time.Duration // пауза между LLM-запросами при аннотировании (троттлинг)
 
 	// Льготы резидентов (preferences)
 	PreferencesEnabled bool
@@ -91,6 +109,8 @@ type Config struct {
 	// Консультантский дашборд
 	ConsultantAddr    string // адрес для консультантского дашборда
 	ConsultantEnabled bool
+	ConsultantUser    string // логин Basic Auth для дашборда консультанта
+	ConsultantPass    string // пароль Basic Auth для дашборда консультанта
 
 	// Аудит-лог MCP
 	MCPAuditEnabled bool
@@ -123,6 +143,8 @@ func Load() Config {
 		PostgresDSN:     env("POSTGRES_DSN", "postgres://skolkovo:skolkovo@localhost:5432/skolkovo?sslmode=disable"),
 		QdrantURL:       env("QDRANT_URL", "http://localhost:6333"),
 		QdrantColl:      env("QDRANT_COLLECTION", "skolkovo_docs"),
+		NavColl:         env("NAV_COLLECTION", "skolkovo_navigation"),
+		SitePagesColl:   env("SITEPAGES_COLLECTION", "skolkovo_sitepages"),
 		TEIURL:          env("TEI_URL", "http://localhost:8081"),
 		EmbeddingDim:    envInt("EMBEDDING_DIM", 768),
 		SourceURL:       env("SOURCE_URL", "https://dochub.sk.ru/foundation/documents/"),
@@ -143,6 +165,7 @@ func Load() Config {
 		NotifyWebhook:   env("NOTIFY_WEBHOOK", ""),
 		ChromePath:      env("CHROME_PATH", ""),
 		ProxyURL:        env("PROXY_URL", ""),
+		DochubCookie:    env("DOCHUB_COOKIE", ""),
 		FetchLimit:      envInt("FETCH_LIMIT", 0),
 		FetchWait:       envDuration("FETCH_WAIT", 7*time.Second),
 
@@ -171,6 +194,12 @@ func Load() Config {
 		TelegramChannels:  env("TELEGRAM_CHANNELS", ""),
 		TelegramRssHubURL: env("TELEGRAM_RSS_HUB_URL", "https://rsshub.rssforever.com/telegram/channel/"),
 
+		// Telegram-бот для клиентов резидентства
+		TelegramBotUsername: env("TELEGRAM_BOT_USERNAME", ""),
+
+		// Российский прокси
+		Proxy6APIKey: env("PROXY6_API_KEY", ""),
+
 		// Портал клиента
 		PortalEnabled: envBool("PORTAL_ENABLED", false),
 		PortalAddr:    env("PORTAL_ADDR", ":8092"),
@@ -181,6 +210,15 @@ func Load() Config {
 
 		// Классификатор документов
 		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
+
+		// Страницы публичного сайта
+		SitePagesEnabled:  envBool("SITEPAGES_ENABLED", true),
+		SitePagesSeeds:    env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
+		SitePagesMaxPages: envInt("SITEPAGES_MAX_PAGES", 0), // 0 = без лимита
+
+		// ИИ-обогащение страниц сайта
+		SitePagesEnrichEnabled: envBool("SITEPAGES_ENRICH_ENABLED", true),
+		SitePagesEnrichDelay:   envDuration("SITEPAGES_ENRICH_DELAY", 1*time.Second),
 
 		// Льготы резидентов
 		PreferencesEnabled: envBool("PREFERENCES_ENABLED", true),
@@ -201,6 +239,8 @@ func Load() Config {
 		// Консультантский дашборд
 		ConsultantAddr:    env("CONSULTANT_ADDR", ":8094"),
 		ConsultantEnabled: envBool("CONSULTANT_ENABLED", true),
+		ConsultantUser:    env("CONSULTANT_USER", "consultant"),
+		ConsultantPass:    env("CONSULTANT_PASS", ""),
 
 		// Аудит-лог MCP
 		MCPAuditEnabled: envBool("MCP_AUDIT_ENABLED", true),

@@ -44,7 +44,7 @@ INSERT INTO clients (id, name, inn, contact_email, contact_phone, residency_stag
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.CreatedAt, client.UpdatedAt)
+		nullStrPtr(client.TenantID), client.CreatedAt, client.UpdatedAt)
 	return err
 }
 
@@ -74,7 +74,7 @@ UPDATE clients SET name=$2, inn=$3, contact_email=$4, contact_phone=$5,
 WHERE id = $1`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.UpdatedAt)
+		nullStrPtr(client.TenantID), client.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -606,10 +606,14 @@ func (s *PostgresClientStore) CreateTenant(ctx context.Context, tenant *model.Te
 		tenant.CreatedAt = time.Now()
 	}
 
+	settings := tenant.Settings
+	if settings == nil {
+		settings = json.RawMessage("{}")
+	}
 	_, err := s.db.Exec(ctx, `
 INSERT INTO tenants (id, name, api_key, settings, created_at, active)
 VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenant.ID, tenant.Name, tenant.APIKey, tenant.Settings,
+		tenant.ID, tenant.Name, tenant.APIKey, settings,
 		tenant.CreatedAt, tenant.Active)
 	return err
 }
@@ -813,4 +817,52 @@ func nullStrPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// ============================================================================
+// SubscriptionStore
+// ============================================================================
+
+func (s *PostgresClientStore) GetSubscriptions(ctx context.Context, clientID string) ([]string, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT category FROM client_subscriptions WHERE client_id = $1 ORDER BY category`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cats = append(cats, c)
+	}
+	return cats, rows.Err()
+}
+
+func (s *PostgresClientStore) SetSubscriptions(ctx context.Context, clientID string, categories []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM client_subscriptions WHERE client_id = $1`, clientID); err != nil {
+		return err
+	}
+
+	for _, cat := range categories {
+		if cat == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO client_subscriptions (client_id, category) VALUES ($1, $2)
+			 ON CONFLICT (client_id, category) DO NOTHING`, clientID, cat); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

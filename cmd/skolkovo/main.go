@@ -5,6 +5,7 @@
 //	scrape          — каталог из RSS (~20 свежих) + обход HTML               (E1)
 //	catalog         — полное перечисление каталога по категориям (headless)  (E1)
 //	index [-force]  — проиндексировать действующие документы в RAG          (E2)
+//	navindex [act]  — навигационная карта сайта: render|export|index|search|all (для get_navigation)
 //	fetch           — скачать тела файлов через headless-браузер (E1, обход WAF)
 //	news            — синхронизировать новости/RSS в RAG                    (E5)
 //	events          — парсинг мероприятий
@@ -22,7 +23,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -36,7 +36,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
@@ -62,6 +61,7 @@ import (
 	"baza-skolkovo/src/mailer"
 	mcpserver "baza-skolkovo/src/mcp_server"
 	"baza-skolkovo/src/migrate"
+	"baza-skolkovo/src/navindex"
 	"baza-skolkovo/src/news"
 	"baza-skolkovo/src/notify"
 	"baza-skolkovo/src/pipeline"
@@ -72,6 +72,7 @@ import (
 	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/residents"
 	"baza-skolkovo/src/scraper"
+	"baza-skolkovo/src/sitepages"
 	"baza-skolkovo/src/telegram"
 	"baza-skolkovo/src/tgbot"
 )
@@ -92,6 +93,10 @@ func main() {
 		mustRun(cmdScrape(cfg))
 	case "index":
 		mustRun(cmdIndex(cfg, args))
+	case "navindex":
+		mustRun(cmdNavIndex(cfg, args))
+	case "sitepages":
+		mustRun(cmdSitePages(cfg, args))
 	case "catalog":
 		mustRun(cmdCatalog(cfg))
 	case "crawl":
@@ -156,6 +161,213 @@ func newRAG(cfg config.Config, st store.Store, cls *classifier.DocumentClassifie
 		svc.WithClassifier(cls)
 	}
 	return svc
+}
+
+// newNavQdrant создаёт Qdrant-клиент для отдельной коллекции навигации.
+func newNavQdrant(cfg config.Config) *qdrant.Client {
+	return qdrant.New(cfg.QdrantURL, cfg.NavColl)
+}
+
+// newNavIndexer создаёт индексатор навигации по сайту (коллекция NAV_COLLECTION).
+func newNavIndexer(cfg config.Config) *navindex.Indexer {
+	return navindex.NewIndexer(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL), cfg.EmbeddingDim)
+}
+
+// newSitePagesQdrant создаёт Qdrant-клиент для коллекции страниц публичного сайта.
+func newSitePagesQdrant(cfg config.Config) *qdrant.Client {
+	return qdrant.New(cfg.QdrantURL, cfg.SitePagesColl)
+}
+
+// newSitePagesIndexer создаёт индексатор страниц сайта (коллекция SITEPAGES_COLLECTION).
+func newSitePagesIndexer(cfg config.Config) *sitepages.Indexer {
+	return sitepages.NewIndexer(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL), cfg.EmbeddingDim)
+}
+
+// sitePagesSeeds разбирает SITEPAGES_SEEDS (URL через запятую) в список.
+func sitePagesSeeds(cfg config.Config) []string {
+	var out []string
+	for _, s := range strings.Split(cfg.SitePagesSeeds, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// cmdSitePages обходит страницы публичного сайта Сколково и индексирует их в
+// отдельную Qdrant-коллекцию (отдельно от файлов-документов):
+//
+//	sitepages crawl        — обойти сайт и обновить таблицу site_pages;
+//	sitepages enrich       — аннотировать ИИ страницы без аннотации (теги/описание/цели/тезисы/выводы);
+//	sitepages enrich --all — переаннотировать все действующие страницы заново;
+//	sitepages index        — переиндексировать все страницы в Qdrant;
+//	sitepages search <q>   — смоук-проверка поиска (search_site_pages);
+//	sitepages              — всё сразу (crawl + enrich + index).
+func cmdSitePages(cfg config.Config, args []string) error {
+	action := "all"
+	if len(args) > 0 {
+		action = args[0]
+	}
+	ctx := context.Background()
+
+	// sitepages search <запрос> — смоук-проверка поиска по страницам.
+	if action == "search" {
+		query := strings.TrimSpace(strings.Join(args[1:], " "))
+		if query == "" {
+			return fmt.Errorf("использование: sitepages search <запрос>")
+		}
+		searcher := sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+		hits, err := searcher.Search(ctx, query, 5)
+		if err != nil {
+			return fmt.Errorf("поиск по страницам: %w", err)
+		}
+		for i, h := range hits {
+			fmt.Printf("%d. [%.3f] %s — %s\n   %s\n", i+1, h.Score, h.Title, h.URL, h.Section)
+		}
+		return nil
+	}
+
+	st, err := openStore(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ps, ok := st.(*store.PostgresStore)
+	if !ok {
+		return fmt.Errorf("sitepages требует backend=postgres")
+	}
+	pageStore, err := sitepages.NewPostgresStore(ctx, ps.Pool())
+	if err != nil {
+		return fmt.Errorf("хранилище страниц: %w", err)
+	}
+
+	doCrawl := action == "all" || action == "crawl"
+	doEnrich := action == "all" || action == "enrich"
+	doIndex := action == "all" || action == "index"
+	forceEnrich := action == "enrich" && len(args) > 1 &&
+		(args[1] == "--all" || args[1] == "all" || args[1] == "--force")
+
+	if doCrawl {
+		var rec changes.Recorder
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			rec = cs
+		}
+		cr := sitepages.New(sitePagesSeeds(cfg), pageStore)
+		cr.MaxPages = cfg.SitePagesMaxPages
+		cr.Delay = cfg.ScrapeDelay
+		cr.Changes = rec
+		cr.UseProxy(cfg.ProxyURL)
+		rep, err := cr.Run(ctx)
+		if err != nil {
+			return fmt.Errorf("обход страниц: %w", err)
+		}
+		log.Printf("[sitepages] обход: посещено %d, новых %d, изменено %d, без изменений %d, ошибок %d",
+			rep.Visited, rep.New, rep.Changed, rep.Unchanged, len(rep.Errors))
+	}
+
+	if doEnrich {
+		aiStore := aimodels.NewStore(ps.Pool())
+		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
+		enr := sitepages.NewEnricher(aiStore, pageStore, cfg.SitePagesEnrichDelay)
+		var pend []*sitepages.Page
+		if forceEnrich {
+			pend, err = pageStore.ListAllForEnrichment(ctx, 0)
+		} else {
+			pend, err = pageStore.ListNeedingEnrichment(ctx, 0)
+		}
+		if err != nil {
+			return fmt.Errorf("страницы для аннотирования: %w", err)
+		}
+		log.Printf("[sitepages] аннотирование: к обработке %d страниц", len(pend))
+		d, s, f := enr.EnrichBatch(ctx, pend)
+		log.Printf("[sitepages] аннотирование завершено: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+	}
+
+	if doIndex {
+		pages, err := pageStore.ListAll(ctx)
+		if err != nil {
+			return fmt.Errorf("чтение страниц: %w", err)
+		}
+		n, err := newSitePagesIndexer(cfg).Reindex(ctx, pages)
+		if err != nil {
+			return fmt.Errorf("индексация страниц: %w", err)
+		}
+		log.Printf("[sitepages] проиндексировано %d страниц в коллекцию %q", n, cfg.SitePagesColl)
+	}
+	return nil
+}
+
+// cmdNavIndex собирает навигационную карту сайта из src/navindex (источник истины)
+// и выгружает её во все формы:
+//
+//	navindex render — Markdown-карта (RAG_Структура_сайта.md) для каталога;
+//	navindex export — navigation.json (источник истины в JSON);
+//	navindex index  — векторный индекс в Qdrant-коллекцию навигации (для get_navigation);
+//	navindex search <запрос> — смоук-проверка навигационного поиска;
+//	navindex        — всё сразу (render + export + index).
+func cmdNavIndex(cfg config.Config, args []string) error {
+	action := "all"
+	if len(args) > 0 {
+		action = args[0]
+	}
+
+	// navindex search <запрос> — смоук-проверка навигационного поиска (get_navigation).
+	if action == "search" {
+		query := strings.TrimSpace(strings.Join(args[1:], " "))
+		if query == "" {
+			return fmt.Errorf("использование: navindex search <запрос>")
+		}
+		searcher := navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+		hits, err := searcher.Search(context.Background(), query, 5)
+		if err != nil {
+			return fmt.Errorf("поиск навигации: %w", err)
+		}
+		for i, h := range hits {
+			fmt.Printf("%d. [%.3f] %s — %s (%s%s)\n   как попасть: %s\n",
+				i+1, h.Score, h.PageTitle, h.Interface, h.Port, h.Route, h.HowTo)
+		}
+		return nil
+	}
+
+	tree := navindex.Tree()
+	outDir := filepath.Join(cfg.DocsDir, "RAG_Структура_сайта")
+
+	doRender := action == "all" || action == "render"
+	doExport := action == "all" || action == "export"
+	doIndex := action == "all" || action == "index"
+
+	if doRender || doExport {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			return fmt.Errorf("создание каталога %s: %w", outDir, err)
+		}
+	}
+	if doRender {
+		mdPath := filepath.Join(outDir, "RAG_Структура_сайта.md")
+		if err := os.WriteFile(mdPath, []byte(navindex.ToMarkdown(tree)), 0o644); err != nil {
+			return fmt.Errorf("запись Markdown-карты: %w", err)
+		}
+		log.Printf("[navindex] Markdown-карта обновлена: %s", mdPath)
+	}
+	if doExport {
+		jsonData, err := navindex.ToJSON(tree)
+		if err != nil {
+			return fmt.Errorf("сериализация JSON: %w", err)
+		}
+		jsonPath := filepath.Join(outDir, "navigation.json")
+		if err := os.WriteFile(jsonPath, jsonData, 0o644); err != nil {
+			return fmt.Errorf("запись navigation.json: %w", err)
+		}
+		log.Printf("[navindex] JSON-карта обновлена: %s", jsonPath)
+	}
+	if doIndex {
+		ctx := context.Background()
+		n, err := newNavIndexer(cfg).Reindex(ctx)
+		if err != nil {
+			return fmt.Errorf("индексация навигации: %w", err)
+		}
+		log.Printf("[navindex] навигация проиндексирована: %d узлов в коллекцию %q", n, cfg.NavColl)
+	}
+	return nil
 }
 
 func newScraper(cfg config.Config, st store.Store) *scraper.Scraper {
@@ -338,6 +550,57 @@ func upsertCatalogItems(ctx context.Context, st store.Store, items []fetcher.Cat
 	return added, merged
 }
 
+// registerCookieDocs регистрирует файлы, скачанные по куке dochub (с прикреплённым
+// телом), в реестр: дедуп по download-URL, переиндексация действующих. Возвращает
+// число добавленных/обновлённых.
+func registerCookieDocs(ctx context.Context, st store.Store, svc *rag.Service, docs []fetcher.CookieDoc) int {
+	var n int
+	for _, cd := range docs {
+		if registerOneCookieDocCmd(ctx, st, svc, cd) {
+			n++
+		}
+	}
+	return n
+}
+
+// registerOneCookieDocCmd регистрирует один скачанный файл (инкрементально):
+// обновляет существующую запись по download-URL либо создаёт новую с верным
+// статусом; действующие сразу переиндексирует. Возвращает true при успехе.
+func registerOneCookieDocCmd(ctx context.Context, st store.Store, svc *rag.Service, cd fetcher.CookieDoc) bool {
+	id := scraper.DocID(cd.URL)
+	if doc, err := st.Get(ctx, id); err == nil {
+		doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+		if doc.Category == "" {
+			doc.Category = cd.Category
+		}
+		if st.Upsert(ctx, doc) == nil {
+			if svc != nil && doc.Status == model.StatusActive {
+				if svc.Init(ctx) == nil {
+					_, _ = svc.IndexDocument(ctx, id)
+				}
+			}
+			return true
+		}
+		return false
+	}
+	doc := model.Document{
+		ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+		LocalPath: cd.LocalPath, FileHash: cd.Hash,
+		Status: cookieDocStatus(cd.Title, cd.Category), FetchedAt: time.Now(),
+	}
+	return st.Upsert(ctx, doc) == nil
+}
+
+// cookieDocStatus определяет статус нового документа: «устарел» для категории
+// утративших силу / заголовков с «УТРАТИЛ», иначе «на_проверке».
+func cookieDocStatus(title, category string) model.Status {
+	if category == scraper.CategoryNames["unactual_documents"] ||
+		strings.Contains(strings.ToUpper(title), "УТРАТИЛ") {
+		return model.StatusOutdated
+	}
+	return model.StatusPending
+}
+
 func cmdCatalog(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)
@@ -387,6 +650,10 @@ func cmdCrawl(cfg config.Config) error {
 	return nil
 }
 
+// cmdFetch скачивает тела файлов dochub. Основной путь — по сессионной куке
+// (env DOCHUB_COOKIE или сохранённая в админке): обычный HTTP без браузера и
+// прокси, обходит WAF. FETCH_LIMIT ограничивает число файлов за прогон (0 — все).
+// Скачанные регистрируются «на_проверке»; индексируются после одобрения.
 func cmdFetch(cfg config.Config) error {
 	ctx := context.Background()
 	st, err := openStore(ctx, cfg)
@@ -395,13 +662,52 @@ func cmdFetch(cfg config.Config) error {
 	}
 	defer st.Close()
 
+	svc := newRAG(cfg, st, nil)
+
+	cookie := cfg.DochubCookie
+	if cookie == "" {
+		cookie = admin.LoadDochubCookie(cfg.DocsDir)
+	}
+	if cookie != "" {
+		f, err := fetcher.New("", "", cfg.FetchWait, nil) // без Chrome и без прокси
+		if err != nil {
+			return err
+		}
+		applyFetchProfile(f, cfg)
+		f.Cookie = cookie
+		// Возобновляемость: не качаем то, что уже скачано (есть файл на диске).
+		f.SkipURL = func(u string) bool {
+			if d, derr := st.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+				if _, serr := os.Stat(d.LocalPath); serr == nil {
+					return true
+				}
+			}
+			return false
+		}
+		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
+		fmt.Println("Скачивание тел файлов dochub по куке (без браузера и прокси)…")
+		n := 0
+		docs, errs := f.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
+			func(m string) { fmt.Println("  " + m) },
+			func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+				if registerOneCookieDocCmd(ctx, st, svc, cd) {
+					n++
+				}
+			})
+		fmt.Printf("Готово: скачано файлов %d, в реестр %d, ошибок %d (часть — «мёртвые» дубли /m/docs/, это норма)\n", len(docs), n, len(errs))
+		if len(docs) == 0 && len(errs) > 0 {
+			fmt.Println("0 файлов — вероятно, кука dochub протухла. Обновите её (админка /proxy или DOCHUB_COOKIE).")
+		}
+		return nil
+	}
+
+	// Фоллбэк: старый headless+прокси путь (обычно блокируется WAF).
+	fmt.Println("DOCHUB_COOKIE не задана — пробую headless+прокси (обычно блокируется WAF). Надёжнее задать куку в админке /proxy.")
 	f, err := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
 	if err != nil {
 		return err
 	}
 	applyFetchProfile(f, cfg)
-
-	svc := newRAG(cfg, st, nil)
 	indexFn := func(ctx context.Context, id string) error {
 		if err := svc.Init(ctx); err != nil {
 			return err
@@ -409,7 +715,6 @@ func cmdFetch(cfg config.Config) error {
 		_, err := svc.IndexDocument(ctx, id)
 		return err
 	}
-
 	done, errs := f.EnrichMissing(ctx, st, cfg.DocsDir, cfg.FetchLimit, indexFn)
 	fmt.Printf("Загрузка файлов: скачано %d, ошибок %d\n", done, len(errs))
 	for _, e := range errs {
@@ -830,7 +1135,7 @@ func cmdSync(cfg config.Config) error {
 
 	svc := newRAG(cfg, st, nil)
 	// Headless-обход сайта + скачивание тел файлов (обход WAF) до прочего цикла.
-	if found, fetched, herr := headlessCollect(ctx, cfg, st, svc, nil); herr != nil {
+	if found, fetched, herr := headlessCollect(ctx, cfg, st, svc, nil /*pm unavailable in cmdSync*/); herr != nil {
 		fmt.Printf("Sync: headless-сбор пропущен: %v\n", herr)
 	} else {
 		fmt.Printf("Sync: headless — найдено %d, скачано %d\n", found, fetched)
@@ -853,7 +1158,7 @@ func cmdMCP(cfg config.Config) error {
 
 	// Регистрируем дополнительные инструменты, если доступны соответствующие хранилища.
 	mcpSrv := srv.MCPServer()
-	registerExtraMCPTools(mcpSrv, st)
+	registerExtraMCPTools(mcpSrv, st, cfg)
 
 	return srv.ListenAndServe()
 }
@@ -867,7 +1172,8 @@ func cmdAdmin(cfg config.Config) error {
 
 	// Создаём основной сервер админки.
 	srv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil))
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, newRAG(cfg, st, nil)).
+		WithNavIndexer(newNavIndexer(cfg))
 
 	// Подключаем хранилище ленты изменений (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -876,10 +1182,23 @@ func cmdAdmin(cfg config.Config) error {
 		} else {
 			log.Printf("[admin] хранилище изменений: %v", err)
 		}
+		// Мониторинг свежести источников для панели на /changes.
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			srv.WithHealthStore(hs)
+		}
+		// Страницы публичного сайта (раздел «Страницы сайта»: список + просмотрщик).
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			srv.WithSitePageStore(sps)
+			srv.WithSitePageSearcher(sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
+			enr := sitepages.NewEnricher(aimodels.NewStore(ps.Pool()), sps, cfg.SitePagesEnrichDelay)
+			srv.WithSitePageActions(sitepages.NewAdminService(sps, enr, newSitePagesIndexer(cfg)))
+		}
 		// Подключаем хранилища льгот и НПА.
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		srv.WithPreferenceStore(pss)
 		srv.WithNPAStore(pss)
+		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
+		srv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
 	}
 
 	// Подключаем AI-хранилище (только для Postgres-бэкенда).
@@ -899,12 +1218,16 @@ func cmdAdmin(cfg config.Config) error {
 		}
 	}
 
-	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту.
+	// Создаём mux для маршрутов резидентства и запускаем его на отдельном порту (BasicAuth).
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
+	var residencyHandlerAdmin http.Handler = residencyMux
+	if cfg.AdminUser != "" && cfg.AdminPassword != "" {
+		residencyHandlerAdmin = admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Резидентство-Админ", residencyMux)
+	}
 	go func() {
-		log.Printf("[admin:residency] запуск на %s", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyHandlerAdmin); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
@@ -943,8 +1266,53 @@ func cmdServe(cfg config.Config) error {
 
 	// --- MCP-сервер ---
 	mcpSrv := mcpserver.New(cfg.MCPAddr, cfg.MCPAPIKey, cfg.MCPRateLimitRPS, svc, st)
-	registerExtraMCPTools(mcpSrv.MCPServer(), st)
+	registerExtraMCPTools(mcpSrv.MCPServer(), st, cfg)
 	registerAgentMCPTools(mcpSrv.MCPServer(), st, svc, cfg)
+
+	// --- Навигационный индекс сайта (для get_navigation) ---
+	// Пересобираем при старте из src/navindex (источник истины), чтобы чат-бот
+	// всегда знал актуальную структуру страниц/блоков.
+	navIndexer := newNavIndexer(cfg)
+	// Коллекцию создаём СИНХРОННО до приёма запросов — иначе ранний get_navigation
+	// мог попасть в несуществующую коллекцию и вернуть «коллекция не найдена».
+	// Сами эмбеддинги (через TEI) считаем фоном, чтобы не блокировать старт на
+	// возможном холодном старте/недоступности TEI: до завершения поиск вернёт
+	// пустой, но валидный результат.
+	if err := navIndexer.EnsureCollection(context.Background()); err != nil {
+		log.Printf("[serve:navindex] коллекция навигации недоступна: %v", err)
+	}
+	go func() {
+		if n, err := navIndexer.Reindex(context.Background()); err != nil {
+			log.Printf("[serve:navindex] навигация не проиндексирована: %v", err)
+		} else {
+			log.Printf("[serve:navindex] навигация проиндексирована: %d узлов", n)
+		}
+	}()
+
+	// --- Индекс страниц публичного сайта (для search_site_pages) ---
+	// Разогреваем коллекцию из уже собранных страниц (если backend=postgres).
+	if cfg.SitePagesEnabled {
+		if ps, ok := st.(*store.PostgresStore); ok {
+			go func() {
+				ctx := context.Background()
+				pageStore, err := sitepages.NewPostgresStore(ctx, ps.Pool())
+				if err != nil {
+					log.Printf("[serve:sitepages] хранилище недоступно: %v", err)
+					return
+				}
+				pages, err := pageStore.ListAll(ctx)
+				if err != nil {
+					log.Printf("[serve:sitepages] чтение страниц: %v", err)
+					return
+				}
+				if n, err := newSitePagesIndexer(cfg).Reindex(ctx, pages); err != nil {
+					log.Printf("[serve:sitepages] страницы не проиндексированы: %v", err)
+				} else {
+					log.Printf("[serve:sitepages] страницы проиндексированы: %d", n)
+				}
+			}()
+		}
+	}
 
 	// --- Prometheus /metrics на отдельном порту ---
 	promAddr := ":9090"
@@ -957,29 +1325,57 @@ func cmdServe(cfg config.Config) error {
 		}
 	}()
 
-	// --- Админка резидентства ---
+	// --- Админка резидентства (BasicAuth) ---
 	residencyMux := admin.RegisterResidencyRoutes(nil, buildResidencyStores(st))
 	residencyAddr := ":8091"
+	var residencyHandler http.Handler = residencyMux
+	if cfg.AdminUser != "" && cfg.AdminPassword != "" {
+		residencyHandler = admin.BasicAuth(cfg.AdminUser, cfg.AdminPassword, "Резидентство-Админ", residencyMux)
+	}
 	go func() {
-		log.Printf("[admin:residency] запуск на %s", residencyAddr)
-		if err := http.ListenAndServe(residencyAddr, residencyMux); err != nil {
+		log.Printf("[admin:residency] запуск на %s (BasicAuth)", residencyAddr)
+		if err := http.ListenAndServe(residencyAddr, residencyHandler); err != nil {
 			log.Printf("[admin:residency] остановлен: %v", err)
 		}
 	}()
 
 	adminSrv := admin.New(cfg.AdminAddr, cfg.AdminUser, cfg.AdminPassword, cfg.DocsDir,
-		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc)
+		cfg.ChromePath, cfg.ProxyURL, cfg.SourceURL, cfg.FetchWait, st, svc).
+		WithNavIndexer(newNavIndexer(cfg))
 
 	// Подключаем хранилища льгот и НПА к админке.
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		adminSrv.WithPreferenceStore(pss)
 		adminSrv.WithNPAStore(pss)
+		// История версий документов — для автоматического ИИ-сравнения редакций (/diff).
+		adminSrv.WithVersionStore(store.NewPostgresVersionStore(ps.Pool()))
+
+		// Лента изменений нужна странице /changes (в режиме serve её раньше
+		// не подключали — страница истории получалась пустой).
+		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithChangeStore(cs)
+		} else {
+			log.Printf("[serve:admin] лента изменений недоступна: %v", err)
+		}
+		// Мониторинг свежести источников для панели «когда обновлялось» на /changes.
+		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithHealthStore(hs)
+		} else {
+			log.Printf("[serve:admin] мониторинг свежести недоступен: %v", err)
+		}
+		// Страницы публичного сайта (раздел «Страницы сайта»).
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			adminSrv.WithSitePageStore(sps)
+			adminSrv.WithSitePageSearcher(sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
+			enr := sitepages.NewEnricher(aimodels.NewStore(ps.Pool()), sps, cfg.SitePagesEnrichDelay)
+			adminSrv.WithSitePageActions(sitepages.NewAdminService(sps, enr, newSitePagesIndexer(cfg)))
+		}
 	}
 
 	// Подключаем менеджер прокси к админке.
 	pm := admin.NewProxyManager(filepath.Join(cfg.DocsDir, ".admin", "proxies.json"))
-	adminSrv.WithProxyManager(pm)
+	adminSrv.WithProxyManager(pm).WithProxy6APIKey(cfg.Proxy6APIKey)
 
 	// Подключаем AI-хранилище к админке (только для Postgres-бэкенда).
 	if ps, ok := st.(*store.PostgresStore); ok {
@@ -1013,10 +1409,11 @@ func cmdServe(cfg config.Config) error {
 	if cfg.PortalEnabled {
 		go func() {
 			portalCfg := portal.PortalConfig{
-				Addr:      cfg.PortalAddr,
-				BaseURL:   "http://localhost" + cfg.PortalAddr,
-				MCPURL:    "http://localhost" + cfg.MCPAddr,
-				MCPAPIKey: cfg.MCPAPIKey,
+				Addr:                cfg.PortalAddr,
+				BaseURL:             "http://localhost" + cfg.PortalAddr,
+				MCPURL:              "http://localhost" + cfg.MCPAddr,
+				MCPAPIKey:           cfg.MCPAPIKey,
+				TelegramBotUsername: cfg.TelegramBotUsername,
 			}
 			stores := buildResidencyStores(st)
 			gen := newGenerator(cfg, st)
@@ -1038,8 +1435,15 @@ func cmdServe(cfg config.Config) error {
 				Mailer:         mlr,
 			}
 			if pgs, ok := st.(*store.PostgresStore); ok {
+				pcs := store.NewPostgresClientStore(pgs.Pool())
 				portalStores.NotifStore = store.NewPostgresNotificationStore(pgs.Pool())
-				portalStores.DocStore = store.NewPostgresClientStore(pgs.Pool())
+				portalStores.DocStore = pcs
+				portalStores.SubscriptionStore = pcs
+				// Лента изменений для блока «Что нового в базе Сколково» в дашборде
+				// (без неё getRecentChanges возвращает пусто — блок не рендерится).
+				if cs, err := changes.NewPostgresStore(ctx, pgs.Pool()); err == nil {
+					portalStores.ChangeStore = cs
+				}
 			}
 			ps := portal.NewPortalServer(portalCfg, portalStores)
 			log.Printf("[portal] запуск на %s", cfg.PortalAddr)
@@ -1105,9 +1509,9 @@ func cmdServe(cfg config.Config) error {
 				}
 			}
 			if consultantStores.ClientStore != nil {
-				mux := admin.RegisterConsultantRoutes(nil, consultantStores)
+				h := admin.RegisterConsultantRoutes(nil, consultantStores, cfg.ConsultantUser, cfg.ConsultantPass)
 				log.Printf("[consultant] дашборд запускается на %s", cfg.ConsultantAddr)
-				if err := http.ListenAndServe(cfg.ConsultantAddr, mux); err != nil {
+				if err := http.ListenAndServe(cfg.ConsultantAddr, h); err != nil {
 					log.Printf("[consultant] остановлен: %v", err)
 				}
 			} else {
@@ -1117,7 +1521,7 @@ func cmdServe(cfg config.Config) error {
 	}
 
 	// --- Планировщик для новых модулей ---
-	go scheduleNewModules(ctx, cfg, st, svc)
+	go scheduleNewModules(ctx, cfg, st, svc, pm)
 
 	// --- Ежедневная сводка консультанту ---
 	if tgNotifier.Enabled() {
@@ -1297,9 +1701,11 @@ func sendDailySummary(ctx context.Context, cfg config.Config, st store.Store, tg
 
 // scheduleNewModules запускает периодический парсинг мероприятий, конкурсов,
 // FAQ, Telegram-каналов, льгот и НПА.
-func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service) {
-	ticker := time.NewTicker(cfg.ScrapeInterval)
-	defer ticker.Stop()
+func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager) {
+	// Первый прогон — сразу при старте serve (After(0)), далее каждый интервал.
+	// Иначе после рестарта источники (мероприятия/конкурсы/sitepages + скачивание
+	// тел по куке) не обновлялись бы до первого тика (6 ч по умолчанию).
+	tick := time.After(0)
 
 	var eventStore store.EventStore
 	var contestStore store.ContestStore
@@ -1308,6 +1714,8 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 	var residentStore store.ResidentStore
 	var healthStore health.Store
 	var changeStore changes.Recorder
+	var sitePageStore *sitepages.PostgresStore
+	var aiStore *aimodels.Store
 
 	if ps, ok := st.(*store.PostgresStore); ok {
 		pss := store.NewPostgresSourceStore(ps.Pool())
@@ -1322,6 +1730,45 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		if cs, err := changes.NewPostgresStore(ctx, ps.Pool()); err == nil {
 			changeStore = cs
 		}
+		if sps, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
+			sitePageStore = sps
+		}
+		aiStore = aimodels.NewStore(ps.Pool())
+	}
+
+	// ИИ-обогащение страниц сайта (теги/описание/цели/тезисы/выводы). Безопасно,
+	// если агент «Аннотатор страниц» не настроен — аннотирование просто пропускается.
+	var sitePageEnricher *sitepages.Enricher
+	if cfg.SitePagesEnrichEnabled && aiStore != nil && sitePageStore != nil {
+		_ = aiStore.EnsurePageAnnotatorAgent(ctx)
+		sitePageEnricher = sitepages.NewEnricher(aiStore, sitePageStore, cfg.SitePagesEnrichDelay)
+		// Стартовый бэкфилл: единожды аннотируем все ещё не обогащённые страницы.
+		go func() {
+			pend, err := sitePageStore.ListNeedingEnrichment(ctx, 0)
+			if err != nil || len(pend) == 0 {
+				return
+			}
+			log.Printf("[serve:sitepages] стартовый бэкфилл аннотаций: %d страниц", len(pend))
+			d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+			log.Printf("[serve:sitepages] бэкфилл аннотаций завершён: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+			if d > 0 {
+				if pages, lerr := sitePageStore.ListAll(ctx); lerr == nil {
+					if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+						log.Printf("[serve:sitepages] переиндексация после бэкфилла: %v", ierr)
+					} else {
+						log.Printf("[serve:sitepages] переиндексировано %d страниц после бэкфилла", n)
+					}
+				}
+			}
+		}()
+	}
+
+	// proxyResolver: активный прокси из админки, иначе статический PROXY_URL.
+	proxyResolver := func() string {
+		if u := pm.GetActiveURL(); u != "" {
+			return u
+		}
+		return cfg.ProxyURL
 	}
 
 	// recordHealth фиксирует результат прогона источника (no-op без Postgres).
@@ -1338,9 +1785,10 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			// Полный headless-цикл: обход сайта (обход WAF) + скачивание тел файлов.
-			runScheduledCollect(ctx, cfg, st, svc, recordHealth)
+		case <-tick:
+			tick = time.After(cfg.ScrapeInterval) // запланировать следующий прогон
+			// Скачивание тел файлов dochub (по куке) + обновление источников.
+			runScheduledCollect(ctx, cfg, st, svc, pm, recordHealth)
 
 			// Мероприятия
 			if cfg.EventsSourceURL != "" && eventStore != nil {
@@ -1454,12 +1902,59 @@ func scheduleNewModules(ctx context.Context, cfg config.Config, st store.Store, 
 					recordHealth("regulations", res.New+res.Updated, nil)
 				}
 			}
+
+			// Страницы публичного сайта (отдельно от файлов-документов)
+			if cfg.SitePagesEnabled && sitePageStore != nil {
+				log.Printf("[serve:sitepages] обход страниц сайта")
+				cr := sitepages.New(sitePagesSeeds(cfg), sitePageStore)
+				cr.MaxPages = cfg.SitePagesMaxPages
+				cr.Delay = cfg.ScrapeDelay
+				cr.Changes = changeStore
+				cr.UseDynamicProxy(proxyResolver)
+				rep, err := cr.Run(ctx)
+				if err != nil {
+					log.Printf("[serve:sitepages] ошибка обхода: %v", err)
+					recordHealth("sitepages", 0, err)
+				} else {
+					recordHealth("sitepages", rep.New+rep.Changed, nil)
+					// Инкрементально доиндексируем изменённые/новые страницы.
+					if rep.New+rep.Changed > 0 {
+						// Сначала аннотируем новые/изменённые страницы через ИИ.
+						if sitePageEnricher != nil {
+							if pend, perr := sitePageStore.ListNeedingEnrichment(ctx, rep.New+rep.Changed); perr == nil && len(pend) > 0 {
+								d, s, f := sitePageEnricher.EnrichBatch(ctx, pend)
+								log.Printf("[serve:sitepages] аннотирование: обогащено %d, пропущено %d, ошибок %d", d, s, f)
+							}
+						}
+						if pages, lerr := sitePageStore.ListRecent(ctx, rep.New+rep.Changed); lerr == nil {
+							if n, ierr := newSitePagesIndexer(cfg).Reindex(ctx, pages); ierr != nil {
+								log.Printf("[serve:sitepages] индексация: %v", ierr)
+							} else {
+								log.Printf("[serve:sitepages] готово: новых %d, изменено %d, проиндексировано %d", rep.New, rep.Changed, n)
+							}
+						}
+					} else {
+						log.Printf("[serve:sitepages] готово: без изменений (посещено %d)", rep.Visited)
+					}
+				}
+			}
 		}
 	}
 }
 
-// registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство и источники).
-func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
+// registerExtraMCPTools регистрирует дополнительные MCP-инструменты (резидентство,
+// источники, навигацию по сайту).
+func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.Config) {
+	// Навигация по сайту (get_navigation) работает на любом бэкенде — индекс
+	// в отдельной Qdrant-коллекции, не зависит от Postgres.
+	navSearcher := navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+	mcpserver.RegisterNavigationTools(mcpSrv, navSearcher)
+
+	// Поиск по страницам публичного сайта (search_site_pages) — отдельная
+	// Qdrant-коллекция, не зависит от Postgres.
+	pageSearcher := sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
+	mcpserver.RegisterSitePageTools(mcpSrv, pageSearcher)
+
 	ps, ok := st.(*store.PostgresStore)
 	if !ok {
 		log.Printf("[mcp] дополнительные инструменты: требуется backend=postgres")
@@ -1474,6 +1969,10 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store) {
 
 	// Регистрируем инструменты источников (включая реестр резидентов).
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
+
+	// Инструменты льгот и НПА: search_preferences/get_preference/search_npa/get_npa.
+	// PostgresSourceStore реализует и PreferenceStore, и NPAStore.
+	mcpserver.RegisterRegulationTools(mcpSrv, pss, pss)
 
 	// Лента изменений: get_recent_changes.
 	ctx := context.Background()
@@ -1518,223 +2017,44 @@ func registerAgentMCPTools(mcpSrv *server.MCPServer, st store.Store, ragSvc *rag
 	pool := ps.Pool()
 	pcs := store.NewPostgresClientStore(pool)
 
-	// Создаём агентов. Консультанту даём доступ к LLM-конфигу (агент Consultant)
-	// для синтеза связного ответа; без настроенной модели работает на чистом RAG.
 	consultant := agents.NewConsultantAgent(ragSvc, "http://"+cfg.MCPAddr, cfg.MCPAPIKey).
-		WithLLM(aimodels.NewStore(pool))
+		WithLLM(aimodels.NewStore(pool)).
+		WithNavigation(navindex.NewSearcher(newNavQdrant(cfg), embed.NewTEIClient(cfg.TEIURL)))
 	validator := agents.NewValidatorAgent(ragSvc, pcs)
-	monitorStores := agents.MonitorStores{
+	monitor := agents.NewMonitorAgent(agents.MonitorStores{
 		DocStore:      st,
 		EventStore:    store.NewPostgresSourceStore(pool),
 		ContestStore:  store.NewPostgresSourceStore(pool),
 		ClientStore:   pcs,
 		DeadlineStore: pcs,
-	}
-	monitor := agents.NewMonitorAgent(monitorStores)
-	coordStores := agents.CoordinatorStores{
+	})
+	coordinator := agents.NewCoordinatorAgent(agents.CoordinatorStores{
 		ClientStore:    pcs,
 		ChecklistStore: pcs,
 		DeadlineStore:  pcs,
 		TemplateStore:  pcs,
-	}
-	coordinator := agents.NewCoordinatorAgent(coordStores)
-
-	// ask_consultant — вопрос к консультанту.
-	mcpSrv.AddTool(
-		mcp.NewTool("ask_consultant",
-			mcp.WithDescription("Задать вопрос ИИ-консультанту по базе документов Сколково. Возвращает ответ с источниками."),
-			mcp.WithString("question", mcp.Required(), mcp.Description("Текст вопроса")),
-			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			question := req.GetString("question", "")
-			clientID := req.GetString("client_id", "")
-			resp, err := consultant.Ask(ctx, question, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка консультанта: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(formatConsultantAnswer(resp)), nil
-		},
-	)
-
-	// validate_document — валидация документа по чек-листу.
-	mcpSrv.AddTool(
-		mcp.NewTool("validate_document",
-			mcp.WithDescription("Проверить документ по чек-листу процедуры. Возвращает отчёт с проблемами и оценкой."),
-			mcp.WithString("document_text", mcp.Required(), mcp.Description("Полный текст документа")),
-			mcp.WithString("procedure_type", mcp.Required(), mcp.Description("Тип процедуры: entry, reporting, extension, exit")),
-			mcp.WithString("client_id", mcp.Description("Идентификатор клиента (необязательно)")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			docText := req.GetString("document_text", "")
-			procType := req.GetString("procedure_type", "")
-			clientID := req.GetString("client_id", "")
-			report, err := validator.ValidateDocument(ctx, docText, procType, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка валидации: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(report)), nil
-		},
-	)
-
-	// get_next_steps — рекомендации следующих шагов для клиента.
-	mcpSrv.AddTool(
-		mcp.NewTool("get_next_steps",
-			mcp.WithDescription("Получить рекомендации следующих шагов для клиента по чек-листу."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			clientID := req.GetString("client_id", "")
-			steps, err := coordinator.GetNextSteps(ctx, clientID)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка координатора: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(steps)), nil
-		},
-	)
-
-	// subscribe_to_changes — подписка на изменения документов.
-	mcpSrv.AddTool(
-		mcp.NewTool("subscribe_to_changes",
-			mcp.WithDescription("Подписать клиента на уведомления об изменениях в указанных категориях документов."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-			mcp.WithString("categories", mcp.Required(), mcp.Description("Категории через запятую: regulations, events, contests, reporting")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			clientID := req.GetString("client_id", "")
-			catsStr := req.GetString("categories", "")
-			cats := strings.Split(catsStr, ",")
-			for i := range cats {
-				cats[i] = strings.TrimSpace(cats[i])
-			}
-			if err := monitor.Subscribe(ctx, clientID, cats); err != nil {
-				return mcp.NewToolResultError("ошибка подписки: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(fmt.Sprintf("Клиент %s подписан на: %s", clientID, catsStr)), nil
-		},
-	)
-
-	// draft_document — подготовка черновика документа для клиента.
-	draftingStores := agents.DraftingStores{
+	})
+	drafter := agents.NewDocumentDraftingAgent(agents.DraftingStores{
 		ClientStore:    pcs,
 		TemplateStore:  pcs,
 		ChecklistStore: pcs,
+	}, ragSvc)
+
+	deps := mcpserver.AgentToolDeps{
+		Consultant:  consultant,
+		Validator:   validator,
+		Monitor:     monitor,
+		Coordinator: coordinator,
+		Drafter:     drafter,
+		Store:       st,
+		Config:      cfg,
 	}
-	drafter := agents.NewDocumentDraftingAgent(draftingStores, ragSvc)
-
-	mcpSrv.AddTool(
-		mcp.NewTool("draft_document",
-			mcp.WithDescription("Подготовить черновик документа для клиента (заявка, описание проекта, отчёт, продление, выход). Возвращает заполненный текст в Markdown."),
-			mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-			mcp.WithString("document_type", mcp.Required(), mcp.Description("Тип документа: application, project_description, report, extension_request, exit_notice, ird_description")),
-			mcp.WithString("extra_context", mcp.Description("Дополнительный контекст от консультанта")),
-		),
-		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			draftReq := agents.DraftRequest{
-				ClientID:     req.GetString("client_id", ""),
-				DocumentType: req.GetString("document_type", ""),
-				ExtraContext: req.GetString("extra_context", ""),
-			}
-			result, err := drafter.Draft(ctx, draftReq)
-			if err != nil {
-				return mcp.NewToolResultError("ошибка подготовки документа: " + err.Error()), nil
-			}
-			return mcp.NewToolResultText(toJSON(result)), nil
-		},
-	)
-
-	// check_eligibility — проверка компании по ИНН.
 	if cfg.EligibilityEnabled {
-		eligChecker := eligibility.NewChecker(eligibility.Config{
-			DadataAPIKey: cfg.DadataAPIKey,
-		})
-		mcpSrv.AddTool(
-			mcp.NewTool("check_eligibility",
-				mcp.WithDescription("Проверить, может ли компания стать резидентом Сколково. Принимает ИНН, возвращает отчёт с оценкой, проблемами и рекомендациями."),
-				mcp.WithString("inn", mcp.Required(), mcp.Description("ИНН компании (10 или 12 цифр)")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				inn := req.GetString("inn", "")
-				report, err := eligChecker.CheckByINN(ctx, inn)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка проверки: " + err.Error()), nil
-				}
-				return mcp.NewToolResultText(toJSON(report)), nil
-			},
-		)
+		deps.Eligibility = eligibility.NewChecker(eligibility.Config{DadataAPIKey: cfg.DadataAPIKey})
 	}
+	deps.Generator = newGenerator(cfg, st)
 
-	// generate_document — сгенерировать готовый файл документа (PDF/DOCX) для клиента.
-	if gen := newGenerator(cfg, st); gen != nil {
-		mcpSrv.AddTool(
-			mcp.NewTool("generate_document",
-				mcp.WithDescription("Сгенерировать готовый файл документа (PDF/DOCX) для клиента из шаблона. Возвращает путь к файлу; при inline=true также base64-содержимое для скачивания. Список шаблонов: list_document_templates."),
-				mcp.WithString("template_id", mcp.Required(), mcp.Description("Идентификатор шаблона (имя файла, напр. Заявление_на_резидентство.go.tpl)")),
-				mcp.WithString("client_id", mcp.Required(), mcp.Description("Идентификатор клиента")),
-				mcp.WithString("variables", mcp.Description("Доп. переменные в формате key=value через запятую (опционально)")),
-				mcp.WithBoolean("inline", mcp.Description("Вернуть содержимое файла в base64 (для скачивания удалённым клиентом)")),
-			),
-			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				templateID := req.GetString("template_id", "")
-				clientID := req.GetString("client_id", "")
-				vars := map[string]string{}
-				if raw := req.GetString("variables", ""); raw != "" {
-					for _, kv := range strings.Split(raw, ",") {
-						if i := strings.IndexByte(kv, '='); i > 0 {
-							vars[strings.TrimSpace(kv[:i])] = strings.TrimSpace(kv[i+1:])
-						}
-					}
-				}
-				out, err := gen.RenderTemplate(ctx, templateID, clientID, vars)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка генерации: " + err.Error()), nil
-				}
-				result := map[string]any{
-					"path":     out,
-					"filename": filepath.Base(out),
-				}
-				if req.GetBool("inline", false) {
-					data, rerr := os.ReadFile(out)
-					if rerr != nil {
-						return mcp.NewToolResultError("файл сгенерирован, но не читается: " + rerr.Error()), nil
-					}
-					result["content_base64"] = base64.StdEncoding.EncodeToString(data)
-					result["size_bytes"] = len(data)
-				}
-				return mcp.NewToolResultText(toJSON(result)), nil
-			},
-		)
-
-		// list_document_templates — список доступных шаблонов.
-		mcpSrv.AddTool(
-			mcp.NewTool("list_document_templates",
-				mcp.WithDescription("Список доступных шаблонов документов для генерации (generate_document)."),
-				mcp.WithReadOnlyHintAnnotation(true),
-			),
-			func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				names, err := gen.ListAvailableTemplates(ctx)
-				if err != nil {
-					return mcp.NewToolResultError("ошибка списка шаблонов: " + err.Error()), nil
-				}
-				return mcp.NewToolResultText(toJSON(names)), nil
-			},
-		)
-	}
-
-	// get_coverage_audit — полнота охвата источников Сколково.
-	mcpSrv.AddTool(
-		mcp.NewTool("get_coverage_audit",
-			mcp.WithDescription("Отчёт о полноте охвата источников Сколково: какие источники (документы, новости, мероприятия, конкурсы, FAQ, льготы, НПА, Telegram, резиденты) покрыты, а какие не настроены/устарели/без данных."),
-			mcp.WithReadOnlyHintAnnotation(true),
-			mcp.WithOpenWorldHintAnnotation(false),
-		),
-		func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			rep := buildCoverageReport(ctx, cfg, st)
-			return mcp.NewToolResultText(toJSON(rep)), nil
-		},
-	)
-
-	log.Printf("[mcp:agents] зарегистрированы инструменты: ask_consultant, validate_document, get_next_steps, subscribe_to_changes, draft_document, check_eligibility, generate_document, list_document_templates, get_coverage_audit")
+	mcpserver.RegisterAgentTools(mcpSrv, deps)
 }
 
 // buildResidencyStores собирает Stores для админки резидентства.
@@ -1897,84 +2217,6 @@ func cmdEligibility(cfg config.Config, args []string) error {
 	return nil
 }
 
-// buildCoverageReport собирает отчёт о полноте охвата источников из конфигурации,
-// мониторинга свежести и фактических счётчиков в хранилищах.
-func buildCoverageReport(ctx context.Context, cfg config.Config, st store.Store) audit.Report {
-	// Состояние свежести по имени источника.
-	healthByName := map[string]string{}
-	itemsLastRun := map[string]int{}
-	if ps, ok := st.(*store.PostgresStore); ok {
-		if hs, err := health.NewPostgresStore(ctx, ps.Pool()); err == nil {
-			if sources, err := hs.List(ctx); err == nil {
-				now := time.Now()
-				for _, s := range sources {
-					healthByName[s.Name] = string(s.State(24*time.Hour, now))
-					itemsLastRun[s.Name] = s.ItemsLastRun
-				}
-			}
-		}
-	}
-
-	// Счётчики документов по категориям.
-	var docsTotal, newsN, prefN, npaN, fetchedN = -1, -1, -1, -1, -1
-	if docs, err := st.List(ctx, store.Filter{}); err == nil {
-		docsTotal, newsN, prefN, npaN, fetchedN = 0, 0, 0, 0, 0
-		for _, d := range docs {
-			switch d.Category {
-			case "Новости":
-				newsN++
-			case "Льготы":
-				prefN++
-			case "НПА":
-				npaN++
-			default:
-				docsTotal++
-			}
-			if strings.TrimSpace(d.LocalPath) != "" {
-				fetchedN++
-			}
-		}
-	}
-
-	// Счётчики расширенных источников.
-	eventsN, contestsN, faqN, tgN, residentsN := -1, -1, -1, -1, -1
-	if ps, ok := st.(*store.PostgresStore); ok {
-		pss := store.NewPostgresSourceStore(ps.Pool())
-		if n, err := pss.CountEvents(ctx); err == nil {
-			eventsN = n
-		}
-		if n, err := pss.CountActiveContests(ctx); err == nil {
-			contestsN = n
-		}
-		if n, err := pss.CountFAQItems(ctx); err == nil {
-			faqN = n
-		}
-		if n, err := pss.CountPosts(ctx, ""); err == nil {
-			tgN = n
-		}
-		if n, err := pss.CountResidents(ctx); err == nil {
-			residentsN = n
-		}
-	}
-
-	cov := []audit.Coverage{
-		{Key: "documents", Name: "Документы dochub.sk.ru", URL: cfg.SourceURL, Enabled: cfg.SourceURL != "", HealthState: healthByName["documents"], ItemsLastRun: itemsLastRun["documents"], Items: docsTotal},
-		{Key: "fetch", Name: "Тела файлов документов (обход WAF)", URL: cfg.SourceURL, Enabled: true, HealthState: healthByName["fetch"], ItemsLastRun: itemsLastRun["fetch"], Items: fetchedN},
-		{Key: "news", Name: "Новости sk.ru", URL: cfg.NewsRSSURL, Enabled: cfg.NewsRSSURL != "", HealthState: healthByName["news"], ItemsLastRun: itemsLastRun["news"], Items: newsN},
-		{Key: "events", Name: "Мероприятия", URL: cfg.EventsSourceURL, Enabled: cfg.EventsSourceURL != "", HealthState: healthByName["events"], ItemsLastRun: itemsLastRun["events"], Items: eventsN},
-		{Key: "contests", Name: "Конкурсы и гранты", URL: cfg.ContestsURL, Enabled: cfg.ContestsURL != "", HealthState: healthByName["contests"], ItemsLastRun: itemsLastRun["contests"], Items: contestsN},
-		{Key: "faq", Name: "FAQ", URL: cfg.FAQURL, Enabled: cfg.FAQURL != "", HealthState: healthByName["faq"], ItemsLastRun: itemsLastRun["faq"], Items: faqN},
-		{Key: "preferences", Name: "Льготы резидентов", URL: cfg.PreferencesURL, Enabled: cfg.PreferencesEnabled, HealthState: healthByName["preferences"], ItemsLastRun: itemsLastRun["preferences"], Items: prefN},
-		{Key: "regulations", Name: "НПА (244-ФЗ и поправки)", URL: cfg.RegulationsSearchURL, Enabled: cfg.RegulationsEnabled, HealthState: healthByName["regulations"], ItemsLastRun: itemsLastRun["regulations"], Items: npaN},
-		{Key: "telegram", Name: "Telegram-каналы", URL: cfg.TelegramRssHubURL, Enabled: cfg.TelegramChannels != "", HealthState: healthByName["telegram"], ItemsLastRun: itemsLastRun["telegram"], Items: tgN},
-		{Key: "residents", Name: "Реестр резидентов", URL: cfg.ResidentsURL, Enabled: cfg.ResidentsEnabled, HealthState: healthByName["residents"], ItemsLastRun: itemsLastRun["residents"], Items: residentsN},
-	}
-
-	rep := audit.Build(cov)
-	rep.GeneratedAt = time.Now()
-	return rep
-}
-
 // cmdAudit строит отчёт о полноте охвата источников и сохраняет его в ReportDir.
 func cmdAudit(cfg config.Config) error {
 	ctx := context.Background()
@@ -1984,7 +2226,7 @@ func cmdAudit(cfg config.Config) error {
 	}
 	defer st.Close()
 
-	rep := buildCoverageReport(ctx, cfg, st)
+	rep := audit.BuildCoverageReport(ctx, cfg, st)
 	md := audit.ToMarkdown(rep)
 
 	if err := os.MkdirAll(cfg.ReportDir, 0o755); err != nil {

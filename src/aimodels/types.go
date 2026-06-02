@@ -61,10 +61,11 @@ type Model struct {
 type AgentType string
 
 const (
-	AgentConsultant  AgentType = "consultant"
-	AgentValidator   AgentType = "validator"
-	AgentMonitor     AgentType = "monitor"
-	AgentCoordinator AgentType = "coordinator"
+	AgentConsultant    AgentType = "consultant"
+	AgentValidator     AgentType = "validator"
+	AgentMonitor       AgentType = "monitor"
+	AgentCoordinator   AgentType = "coordinator"
+	AgentPageAnnotator AgentType = "page_annotator"
 )
 
 // AgentTypeLabel возвращает человекочитаемое название типа агента.
@@ -78,6 +79,8 @@ func (t AgentType) Label() string {
 		return "Монитор изменений"
 	case AgentCoordinator:
 		return "Координатор"
+	case AgentPageAnnotator:
+		return "Аннотатор страниц"
 	default:
 		return string(t)
 	}
@@ -147,6 +150,7 @@ var AllAgentTypes = []AgentType{
 	AgentValidator,
 	AgentMonitor,
 	AgentCoordinator,
+	AgentPageAnnotator,
 }
 
 // DefaultSystemPrompts — системные промпты по умолчанию для каждого типа агента.
@@ -194,4 +198,18 @@ var DefaultSystemPrompts = map[AgentType]string{
 - Рекомендации должны быть выполнимы в ближайшие 1-3 дня
 
 Формат: нумерованный список шагов с приоритетом и дедлайном.`,
+
+	AgentPageAnnotator: `Ты — аналитик-аннотатор страниц сайта Фонда «Сколково». По тексту веб-страницы ты составляешь структурированную аннотацию для базы знаний.
+
+Правила работы:
+- Пиши на русском языке, кратко, по существу, без воды и рекламных клише.
+- Опирайся ТОЛЬКО на текст страницы — ничего не выдумывай и не додумывай.
+- Теги: 3–8 коротких тематических меток в нижнем регистре (1–3 слова каждая), по которым страницу можно найти и сгруппировать. Если дан список уже существующих тегов — по возможности переиспользуй подходящие из него, новые добавляй только при необходимости.
+- summary: 1–3 предложения — о чём страница.
+- goals: зачем эта страница, какую задачу пользователя она решает (1–2 предложения).
+- theses: 3–6 ключевых тезисов/фактов страницы, каждый — короткая самостоятельная фраза.
+- conclusions: главный практический вывод для резидента/пользователя (1–2 предложения).
+
+ФОРМАТ ОТВЕТА — СТРОГО валидный JSON-объект и НИЧЕГО кроме него (без markdown-ограждений, без пояснений):
+{"tags":["..."],"summary":"...","goals":"...","theses":["...","..."],"conclusions":"..."}`,
 }

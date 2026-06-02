@@ -183,32 +183,14 @@ func urgencyOrder(u string) int {
 	}
 }
 
-// stageLabel возвращает читаемое название стадии.
+// stageLabel возвращает читаемое название стадии (единый источник — model.StageLabel).
 func stageLabel(s model.ResidencyStage) string {
-	switch s {
-	case model.StageApplication:
-		return "Подача заявки"
-	case model.StageExamination:
-		return "Экспертиза"
-	case model.StageDecision:
-		return "Решение"
-	case model.StageContract:
-		return "Договор"
-	case model.StageResident:
-		return "Резидент"
-	case model.StageReporting:
-		return "Отчётность"
-	case model.StageExtension:
-		return "Продление"
-	case model.StageExit:
-		return "Выход"
-	default:
-		return string(s)
-	}
+	return model.StageLabel(s)
 }
 
 // RegisterConsultantRoutes регистрирует маршруты консультантского дашборда.
-func RegisterConsultantRoutes(mux *http.ServeMux, stores ConsultantDashboardStores) *http.ServeMux {
+// Если user и pass не пусты — весь дашборд защищается HTTP Basic Auth.
+func RegisterConsultantRoutes(mux *http.ServeMux, stores ConsultantDashboardStores, user, pass string) http.Handler {
 	if mux == nil {
 		mux = http.NewServeMux()
 	}
@@ -217,6 +199,9 @@ func RegisterConsultantRoutes(mux *http.ServeMux, stores ConsultantDashboardStor
 		http.Redirect(w, r, "/consultant/dashboard", http.StatusFound)
 	})
 	log.Printf("[consultant] дашборд зарегистрирован на /consultant/dashboard")
+	if user != "" && pass != "" {
+		return BasicAuth(user, pass, "Дашборд консультанта", mux)
+	}
 	return mux
 }
 
@@ -602,7 +587,7 @@ a.client-link:hover { text-decoration: underline; }
 	// Блок «Важные изменения документации».
 	if len(recentChanges) > 0 {
 		sb.WriteString(`<div class="table-wrap"><div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px 20px">
-<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px">⚠️ Важные изменения документации (30 дней)</div>`)
+<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-muted);margin-bottom:12px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:13px;height:13px;vertical-align:-2px;margin-right:6px"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Важные изменения документации (30 дней)</div>`)
 		for _, ev := range recentChanges {
 			badgeClass, badgeText := severityBadge(ev.Severity)
 			summary := ev.AnalysisSummary

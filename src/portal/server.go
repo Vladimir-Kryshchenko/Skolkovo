@@ -22,10 +22,11 @@ import (
 
 // PortalConfig — конфигурация портала.
 type PortalConfig struct {
-	Addr      string // например ":8081"
-	BaseURL   string // например "http://portal.skolkovo.local"
-	MCPURL    string // URL MCP-сервера для генерации документов
-	MCPAPIKey string // API-ключ для MCP
+	Addr                string // например ":8092"
+	BaseURL             string // например "http://portal.skolkovo.local"
+	MCPURL              string // URL MCP-сервера для генерации документов
+	MCPAPIKey           string // API-ключ для MCP
+	TelegramBotUsername string // @username Telegram-бота, например @SkolkovoBot
 }
 
 // NotificationReader — доступ к персональным уведомлениям клиента (inbox).
@@ -38,16 +39,17 @@ type NotificationReader interface {
 
 // PortalStores — все хранилища, необходимые порталу.
 type PortalStores struct {
-	ClientStore    store.ClientStore
-	ChecklistStore store.ChecklistStore
-	DeadlineStore  store.DeadlineStore
-	TemplateStore  store.TemplateStore
-	DocStore       store.ClientDocumentStore
-	DocumentStore  store.Store                  // реестр документов (для скачивания)
-	ChangeStore    changes.Store                // лента изменений; может быть nil
-	NotifStore     NotificationReader           // inbox уведомлений клиента; может быть nil
-	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
-	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
+	ClientStore       store.ClientStore
+	ChecklistStore    store.ChecklistStore
+	DeadlineStore     store.DeadlineStore
+	TemplateStore     store.TemplateStore
+	DocStore          store.ClientDocumentStore
+	DocumentStore     store.Store                  // реестр документов (для скачивания)
+	ChangeStore       changes.Store                // лента изменений; может быть nil
+	NotifStore        NotificationReader           // inbox уведомлений клиента; может быть nil
+	SubscriptionStore store.SubscriptionStore      // подписки на уведомления; может быть nil
+	Generator         *generator.DocumentGenerator // генератор документов; может быть nil
+	Mailer            *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
 
 // PortalServer — HTTP-сервер личного кабинета.
@@ -102,6 +104,8 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /documents/file", ps.requireAuth(ps.handleDocumentFile))
 	mux.HandleFunc("GET /notifications", ps.requireAuth(ps.handleNotifications))
 	mux.HandleFunc("POST /notifications/read", ps.requireAuth(ps.handleNotificationRead))
+	mux.HandleFunc("GET /subscriptions", ps.requireAuth(ps.handleSubscriptions))
+	mux.HandleFunc("POST /subscriptions", ps.requireAuth(ps.handleSubscriptionsSubmit))
 
 	// JSON API
 	mux.HandleFunc("GET /api/me", ps.requireAuthJSON(ps.apiMe))
@@ -343,12 +347,13 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 	}
 
 	data := dashboardData{
-		Client:        client,
-		Deadlines:     ps.getDeadlines(r.Context(), client.ID),
-		Checklists:    ps.getClientChecklists(r.Context(), client.ID),
-		Documents:     ps.getClientDocuments(r.Context(), client.ID),
-		Flash:         r.URL.Query().Get("msg"),
-		RecentChanges: ps.getRecentChanges(r.Context()),
+		Client:              client,
+		Deadlines:           ps.getDeadlines(r.Context(), client.ID),
+		Checklists:          ps.getClientChecklists(r.Context(), client.ID),
+		Documents:           ps.getClientDocuments(r.Context(), client.ID),
+		Flash:               r.URL.Query().Get("msg"),
+		RecentChanges:       ps.getRecentChanges(r.Context()),
+		TelegramBotUsername: ps.config.TelegramBotUsername,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -675,39 +680,11 @@ func sanitizeFilename(name string) string {
 }
 
 func stageProgress(stage model.ResidencyStage) int {
-	stages := []model.ResidencyStage{
-		model.StageApplication,
-		model.StageExamination,
-		model.StageDecision,
-		model.StageContract,
-		model.StageResident,
-		model.StageReporting,
-		model.StageExtension,
-		model.StageExit,
-	}
-	for i, s := range stages {
-		if s == stage {
-			return int(float64(i+1) / float64(len(stages)) * 100)
-		}
-	}
-	return 0
+	return model.StageProgress(stage)
 }
 
 func stageLabel(stage model.ResidencyStage) string {
-	labels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
-	if l, ok := labels[stage]; ok {
-		return l
-	}
-	return string(stage)
+	return model.StageLabel(stage)
 }
 
 func deadlineStatusClass(d *model.Deadline) string {
@@ -722,16 +699,7 @@ func deadlineStatusClass(d *model.Deadline) string {
 }
 
 func docStatusLabel(d *model.ClientDocument) string {
-	labels := map[model.ClientDocStatus]string{
-		model.DocPending:   "Ожидает",
-		model.DocSubmitted: "Отправлен",
-		model.DocApproved:  "Утверждён",
-		model.DocRejected:  "Отклонён",
-	}
-	if l, ok := labels[d.Status]; ok {
-		return l
-	}
-	return string(d.Status)
+	return model.DocStatusLabel(d.Status)
 }
 
 func docStatusClass(d *model.ClientDocument) string {

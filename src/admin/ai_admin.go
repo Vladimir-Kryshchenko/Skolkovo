@@ -234,36 +234,7 @@ tbody tr:last-child td { border-bottom: none; }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4c0 1.1-.9 2-2 2h-4a2 2 0 0 1-2-2 4 4 0 0 1 4-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="4"/><path d="M8 16h8"/><path d="M10 20h4"/></svg>
-    База Сколково — ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/clients" class="nav-btn" data-tooltip="Управление клиентами резидентства">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      Клиенты
-    </a>
-    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}" data-tooltip="ИИ-модели: API-ключи, провайдеры, параметры">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}" data-tooltip="ИИ-агенты: промпты, типы, настройки">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-      Агенты
-    </a>
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="font-size:16px;min-width:36px;cursor:pointer;border:1px solid var(--border);padding:6px">
-      <!-- sun icon (shown in dark) -->
-      <svg class="theme-icon-sun" style="display:none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      <!-- moon icon (shown in light) -->
-      <svg class="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 {{template "ai-content" .}}
@@ -379,7 +350,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 {{define "ai-content"}}
 {{end}}
-`))
+` + sidebarMainDefine))
 
 // Отдельные шаблоны контента
 var aiModelsTmpl = template.Must(template.New("ai-models").Funcs(template.FuncMap{
@@ -446,7 +417,7 @@ var aiModelsTmpl = template.Must(template.New("ai-models").Funcs(template.FuncMa
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);--shadow-lg:0 8px 24px rgba(0,0,0,.08);--green:#00875a;--green-bg:#e3fcef;--yellow:#ff991f;--yellow-bg:#fff7e6;--red:#de350b;--red-bg:#ffeae6;--blue:#0073ea;--purple:#6554c0;--purple-bg:#eae6ff;--gray:#6b778c;--gray-bg:#f4f5f7;--header-bg:#fff;--card-border:1px solid #d5d9e2}
+:root{--bg:#f5f6f8;--surface:#fff;--surface-alt:#f4f5f7;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);--shadow-lg:0 8px 24px rgba(0,0,0,.08);--green:#00875a;--green-bg:#e3fcef;--yellow:#ff991f;--yellow-bg:#fff7e6;--red:#de350b;--red-bg:#ffeae6;--blue:#0073ea;--purple:#6554c0;--purple-bg:#eae6ff;--gray:#6b778c;--gray-bg:#f4f5f7;--header-bg:#fff;--card-border:1px solid #d5d9e2}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--shadow:0 1px 3px rgba(0,0,0,.3);--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}}
 :root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--shadow:0 1px 3px rgba(0,0,0,.3);--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}
 body{font-family:'Figtree',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
@@ -555,30 +526,7 @@ tr.disabled-row td{opacity:.55}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/ai/models" class="nav-btn active" data-tooltip="Управление ИИ-моделями">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn" data-tooltip="Управление ИИ-агентами">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-      Агенты
-    </a>
-    <a href="/ai/models/new" class="btn btn-primary" data-tooltip="Добавить новую модель">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Добавить модель
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 
@@ -597,9 +545,9 @@ tr.disabled-row td{opacity:.55}
 {{end}}
 
 <div class="stats-row">
-  <div class="stat-card blue"><div class="n">{{len .Models}}</div><div class="l">Всего моделей</div></div>
-  <div class="stat-card green"><div class="n">{{.EnabledCount}}</div><div class="l">Активные</div></div>
-  <div class="stat-card yellow"><div class="n">{{.ProviderCount}}</div><div class="l">Провайдеров</div></div>
+  <div class="stat-card blue" data-tooltip="Всего зарегистрированных моделей"><div class="n">{{len .Models}}</div><div class="l">Всего моделей</div></div>
+  <div class="stat-card green" data-tooltip="Модели, доступные агентам"><div class="n">{{.EnabledCount}}</div><div class="l">Активные</div></div>
+  <div class="stat-card yellow" data-tooltip="Число разных провайдеров"><div class="n">{{.ProviderCount}}</div><div class="l">Провайдеров</div></div>
 </div>
 
 <div class="card">
@@ -614,11 +562,11 @@ tr.disabled-row td{opacity:.55}
   <div style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>Модель</th>
-      <th>Провайдер</th>
-      <th>API Model ID</th>
-      <th>API-ключ</th>
-      <th>Параметры</th>
+      <th data-tooltip="Название и описание модели">Модель</th>
+      <th data-tooltip="Поставщик API">Провайдер</th>
+      <th data-tooltip="Идентификатор, передаваемый в поле model запроса">Идентификатор модели (Model ID)</th>
+      <th data-tooltip="Ключ авторизации (показан замаскированным)">API-ключ</th>
+      <th data-tooltip="Температура и максимум токенов">Параметры</th>
       <th>Статус</th>
       <th>Действия</th>
     </tr></thead>
@@ -637,7 +585,7 @@ tr.disabled-row td{opacity:.55}
       <td><span class="badge {{badgeClass (string .Provider)}}">{{providerLabel (string .Provider)}}</span></td>
       <td><code style="font-size:12px;background:var(--surface-alt);padding:2px 6px;border-radius:4px">{{.ModelID}}</code></td>
       <td><span class="key-mono">{{maskKey .APIKey}}</span></td>
-      <td style="font-size:12px">T={{.Temperature}} · {{.MaxTokens}}tok</td>
+      <td style="font-size:12px">T={{.Temperature}} · {{.MaxTokens}}ток.</td>
       <td>
         {{if .Enabled}}<span class="badge badge-green">Активна</span>{{else}}<span class="badge badge-gray">Отключена</span>{{end}}
       </td>
@@ -741,10 +689,13 @@ function seedQwen() {
     else { alert('Добавлено '+d.count+' моделей Qwen'); location.reload(); }
   });
 }
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(theme){var m=document.querySelector('.icon-moon');var s=document.querySelector('.icon-sun');if(m&&s){m.style.display=theme==='dark'?'none':'';s.style.display=theme==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiModelFormTmpl = template.Must(template.New("ai-model-form").Funcs(template.FuncMap{
 	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -764,9 +715,9 @@ var aiModelFormTmpl = template.Must(template.New("ai-model-form").Funcs(template
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
-:root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06);--card-border:1px solid #d5d9e2}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56}}
-:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56}
+:root{--bg:#f5f6f8;--surface:#fff;--surface-alt:#f4f5f7;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06);--card-border:1px solid #d5d9e2;--red-bg:#ffeae6;--red:#de350b;--red-border:#ffbdad}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56;--red-bg:#2e1a1a;--red:#ff6b6b;--red-border:#5a2d2d}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--card-border:1px solid #3a3f56;--red-bg:#2e1a1a;--red:#ff6b6b;--red-border:#5a2d2d}
 body{font-family:'Figtree',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
 header{background:var(--surface);color:var(--text);padding:12px 28px;display:flex;align-items:center;justify-content:space-between;box-shadow:var(--shadow);border-bottom:var(--card-border)}
 header h1{font-size:17px;font-weight:700}
@@ -788,27 +739,19 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
 .form-actions{display:flex;gap:10px;margin-top:24px;padding-top:20px;border-top:1px solid var(--border)}
 .btn{display:inline-flex;align-items:center;padding:8px 18px;border:none;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;transition:all .15s;font-family:inherit;text-decoration:none}
 .btn-primary{background:var(--primary);color:#fff}.btn-primary:hover{background:var(--primary-hover)}
-.btn-secondary{background:var(--surface-alt,#f4f5f7);color:var(--text);border:1px solid var(--border)}
+.btn-secondary{background:var(--surface-alt);color:var(--text);border:1px solid var(--border)}
 .flash{padding:12px 16px;border-radius:var(--radius);margin-bottom:16px;font-size:13px;font-weight:500}
-.flash-err{background:#ffeae6;color:#de350b;border:1px solid #ffbdad}
+.flash-err{background:var(--red-bg);color:var(--red);border:1px solid var(--red-border)}
 .toggle-wrap{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;cursor:pointer}
 .toggle-wrap label{cursor:pointer;font-size:13px;font-weight:500}
 [data-tooltip]{position:relative}
 [data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
 [data-tooltip]:hover::after{opacity:1}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    {{if .Model.ID}}Редактировать модель{{else}}Добавить ИИ-модель{{end}}
-  </h1>
-  <a href="/ai/models" class="nav-btn" data-tooltip="Вернуться к списку моделей">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-    Назад
-  </a>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 <div class="card">
@@ -827,17 +770,17 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
             <option value="alibabacloud" {{selected .Model.Provider "alibabacloud"}}>Alibaba Cloud (Qwen)</option>
             <option value="openai" {{selected .Model.Provider "openai"}}>OpenAI</option>
             <option value="anthropic" {{selected .Model.Provider "anthropic"}}>Anthropic</option>
-            <option value="custom" {{selected .Model.Provider "custom"}}>Custom / Self-hosted</option>
+            <option value="custom" {{selected .Model.Provider "custom"}}>Свой сервер (Custom / Self-hosted)</option>
           </select>
         </div>
         <div class="form-group">
-          <label>Model ID в API *</label>
+          <label>Идентификатор модели в API (Model ID) *</label>
           <input type="text" name="model_id" value="{{.Model.ModelID}}" placeholder="qwen-max" required>
           <div class="hint">Идентификатор, передаваемый в поле "model" запроса</div>
         </div>
       </div>
       <div class="form-group">
-        <label>Base URL API *</label>
+        <label>Базовый адрес API (Base URL) *</label>
         <input type="text" name="base_url" id="base-url" value="{{.Model.BaseURL}}" placeholder="https://dashscope-intl.aliyuncs.com/compatible-mode/v1" required>
         <div class="hint">Базовый URL OpenAI-совместимого API (без /chat/completions)</div>
       </div>
@@ -848,11 +791,11 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Max Tokens</label>
+          <label>Максимум токенов (Max Tokens)</label>
           <input type="number" name="max_tokens" value="{{if .Model.MaxTokens}}{{.Model.MaxTokens}}{{else}}4096{{end}}" min="256" max="131072">
         </div>
         <div class="form-group">
-          <label>Temperature</label>
+          <label>Температура (Temperature)</label>
           <input type="number" name="temperature" value="{{if .Model.Temperature}}{{.Model.Temperature}}{{else}}0.7{{end}}" min="0" max="2" step="0.1">
         </div>
       </div>
@@ -885,10 +828,13 @@ function updateBaseURL(provider) {
     urlInput.value = defaultURLs[provider] || '';
   }
 }
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(theme){var m=document.querySelector('.icon-moon');var s=document.querySelector('.icon-sun');if(m&&s){m.style.display=theme==='dark'?'none':'';s.style.display=theme==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiAgentsTmpl = template.Must(template.New("ai-agents").Funcs(template.FuncMap{
 	"string":         func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -926,8 +872,8 @@ var aiAgentsTmpl = template.Must(template.New("ai-agents").Funcs(template.FuncMa
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{--bg:#f5f6f8;--surface:#fff;--primary:#0073ea;--primary-hover:#005bb5;--primary-light:#e6f0fa;--text:#1a1d2e;--text-secondary:#5f6577;--border:#d5d9e2;--radius:8px;--shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);--green:#00875a;--green-bg:#e3fcef;--yellow:#ff991f;--yellow-bg:#fff7e6;--red:#de350b;--red-bg:#ffeae6;--blue:#0073ea;--purple:#6554c0;--purple-bg:#eae6ff;--gray:#6b778c;--gray-bg:#f4f5f7;--card-border:1px solid #d5d9e2}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}}
-:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}}
+:root[data-theme="dark"]{--bg:#181b2b;--surface:#23273a;--surface-alt:#2a2f45;--primary:#4c9aff;--primary-hover:#6db3f8;--primary-light:#1e3a5f;--text:#e8eaf0;--text-secondary:#a0a5b8;--border:#3a3f56;--green:#36b37e;--green-bg:#1b3a2a;--yellow:#ff991f;--yellow-bg:#3a2a0a;--red:#ff5630;--red-bg:#3a1510;--blue:#4c9aff;--purple:#998dd9;--purple-bg:#2d2450;--gray:#a0a5b8;--gray-bg:#2a2f45;--card-border:1px solid #3a3f56}
 body{font-family:'Figtree',-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.5}
 
 /* Header */
@@ -1003,30 +949,7 @@ tr.disabled-row td{opacity:.55}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-    ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/ai/models" class="nav-btn" data-tooltip="Управление ИИ-моделями">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn active" data-tooltip="Управление ИИ-агентами">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-      Агенты
-    </a>
-    <a href="/ai/agents/new" class="btn btn-primary" data-tooltip="Создать нового агента">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Добавить агента
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 <div class="card">
@@ -1041,11 +964,11 @@ tr.disabled-row td{opacity:.55}
   <div style="overflow-x:auto">
   <table>
     <thead><tr>
-      <th>Агент</th>
-      <th>Тип</th>
-      <th>Модель</th>
-      <th>Системный промпт</th>
-      <th>Параметры</th>
+      <th data-tooltip="Название и описание агента">Агент</th>
+      <th data-tooltip="Роль агента">Тип</th>
+      <th data-tooltip="Привязанная ИИ-модель">Модель</th>
+      <th data-tooltip="Инструкции, задающие поведение агента">Системный промпт</th>
+      <th data-tooltip="Температура и максимум токенов">Параметры</th>
       <th>Статус</th>
       <th style="min-width:220px">Действия и тест</th>
     </tr></thead>
@@ -1067,7 +990,7 @@ tr.disabled-row td{opacity:.55}
         <div class="prompt-box">{{truncate .Agent.SystemPrompt 120}}</div>
         {{else}}<span style="color:var(--text-secondary);font-size:12px">не задан</span>{{end}}
       </td>
-      <td style="font-size:12px">T={{.Agent.Temperature}}<br>{{.Agent.MaxTokens}}tok</td>
+      <td style="font-size:12px">T={{.Agent.Temperature}}<br>{{.Agent.MaxTokens}}ток.</td>
       <td>{{if .Agent.Enabled}}<span class="badge badge-green">Активен</span>{{else}}<span class="badge badge-gray">Отключён</span>{{end}}</td>
       <td>
         <div class="actions-cell">
@@ -1157,10 +1080,13 @@ function confirmDeleteAgent(url, name) {
     else r.text().then(function(t){alert('Ошибка: '+t)});
   });
 }
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(theme){var m=document.querySelector('.icon-moon');var s=document.querySelector('.icon-sun');if(m&&s){m.style.display=theme==='dark'?'none':'';s.style.display=theme==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiAgentFormTmpl = template.Must(template.New("ai-agent-form").Funcs(template.FuncMap{
 	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -1217,18 +1143,10 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
 [data-tooltip]::after{content:attr(data-tooltip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1a1d2e;color:#fff;font-size:11px;font-weight:400;padding:4px 8px;border-radius:4px;white-space:nowrap;pointer-events:none;opacity:0;transition:opacity .15s;z-index:200}
 [data-tooltip]:hover::after{opacity:1}
 </style>
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-    {{if .Agent.ID}}Редактировать агента{{else}}Добавить ИИ-агента{{end}}
-  </h1>
-  <a href="/ai/agents" class="nav-btn" data-tooltip="Вернуться к списку агентов">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-    Назад
-  </a>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 <div class="card">
@@ -1274,12 +1192,12 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
       </div>
       <div class="form-row">
         <div class="form-group">
-          <label>Temperature</label>
+          <label>Температура (Temperature)</label>
           <input type="number" name="temperature" value="{{if .Agent.Temperature}}{{.Agent.Temperature}}{{else}}0.7{{end}}" min="0" max="2" step="0.1">
           <div class="hint">0 — детерминированный, 2 — максимально случайный</div>
         </div>
         <div class="form-group">
-          <label>Max Tokens</label>
+          <label>Максимум токенов (Max Tokens)</label>
           <input type="number" name="max_tokens" value="{{if .Agent.MaxTokens}}{{.Agent.MaxTokens}}{{else}}4096{{end}}" min="256" max="131072">
         </div>
       </div>
@@ -1305,10 +1223,13 @@ function loadDefaultPrompt(type) {
   var p = defaultPrompts[type];
   if (p) document.getElementById('system-prompt').value = p;
 }
+function toggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);updateThemeIcons(next);}
+function updateThemeIcons(theme){var m=document.querySelector('.icon-moon');var s=document.querySelector('.icon-sun');if(m&&s){m.style.display=theme==='dark'?'none':'';s.style.display=theme==='dark'?'':'none';}}
+document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 // ─── views ────────────────────────────────────────────────────────────────────
 

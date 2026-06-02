@@ -422,43 +422,13 @@ func handleUpdateClientStage(ctx context.Context, req mcp.CallToolRequest, st st
 	return mcp.NewToolResultText(toJSON(updateResponse{Client: client, Transition: transition})), nil
 }
 
-// reportingDeadlineDays — срок первой квартальной отчётности после входа в стадию «отчётность».
-const reportingDeadlineDays = 90
-
-// deadlineCreator — подмножество DeadlineStore для создания дедлайна.
-type deadlineCreator interface {
-	CreateDeadline(ctx context.Context, d *model.Deadline) error
-	ListDeadlines(ctx context.Context, clientID string, daysAhead int) ([]*model.Deadline, error)
-}
-
 // autoCreateStageDeadline создаёт дедлайн квартальной отчётности при переходе
-// клиента на стадию «отчётность». No-op, если хранилище не умеет дедлайны или
-// у клиента уже есть незакрытый дедлайн отчётности.
+// клиента на стадию «отчётность». Делегирует единой логике store.EnsureReportingDeadline
+// (общей с Резидентство-Админ). No-op, если хранилище не умеет дедлайны.
 func autoCreateStageDeadline(ctx context.Context, st store.ClientStore, clientID string, to model.ResidencyStage) {
-	if to != model.StageReporting {
-		return
+	if dc, ok := st.(store.DeadlineEnsurer); ok {
+		store.EnsureReportingDeadline(ctx, dc, clientID, to)
 	}
-	dc, ok := st.(deadlineCreator)
-	if !ok {
-		return
-	}
-	// Не дублируем, если уже есть предстоящий дедлайн отчётности.
-	if existing, err := dc.ListDeadlines(ctx, clientID, 0); err == nil {
-		for _, d := range existing {
-			if d.Type == model.DeadlineReporting && d.Status != model.DeadlineCompleted {
-				return
-			}
-		}
-	}
-	_ = dc.CreateDeadline(ctx, &model.Deadline{
-		ID:        uuid.New().String(),
-		ClientID:  clientID,
-		Title:     "Квартальный отчёт резидента",
-		DueDate:   time.Now().AddDate(0, 0, reportingDeadlineDays),
-		Type:      model.DeadlineReporting,
-		Status:    model.DeadlineUpcoming,
-		CreatedAt: time.Now(),
-	})
 }
 
 func handleGetTemplates(ctx context.Context, req mcp.CallToolRequest, ts store.TemplateStore) (*mcp.CallToolResult, error) {

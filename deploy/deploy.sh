@@ -28,6 +28,15 @@ ADMIN_USER=admin
 ADMIN_PASSWORD=$ADMIN_PASSWORD
 NEWS_RSS_URL=https://sk.ru/news/rss/
 NOTIFY_WEBHOOK=
+# Обход WAF dochub для скачивания тел файлов (/m/docs/ за Variti).
+# С зарубежного датацентрового IP сервера тела файлов НЕ качаются (403/timeout) —
+# нужен рабочий РЕЗИДЕНТНЫЙ RU-прокси. Задайте ОДИН из вариантов и пересоздайте
+# контейнер: docker compose -f docker-compose.prod.yml --env-file .env up -d
+#   PROXY_URL      — резидентный RU-прокси: http://user:pass@host:port
+#   PROXY6_API_KEY — ключ proxy6.net (автоподбор RU-прокси при WAF-бане)
+CHROME_PATH=/usr/bin/chromium
+PROXY_URL=
+PROXY6_API_KEY=
 EOF
   chmod 600 .env
   echo "=================== СЕКРЕТЫ (сохраните) ==================="

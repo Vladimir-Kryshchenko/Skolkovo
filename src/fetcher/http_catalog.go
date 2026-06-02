@@ -122,13 +122,18 @@ func (f *Fetcher) fetchCategoryPage(ctx context.Context, pageURL string) (docs [
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7")
+	// С сессионной кукой реального браузера страницы категорий отдаются 200
+	// (без неё WAF dochub теперь редиректит/блокирует автоматизацию).
+	if f.Cookie != "" {
+		req.Header.Set("Cookie", f.Cookie)
+	}
 
 	resp, err := f.HTTP.Do(req)
 	if err != nil {
 		return nil, "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable {
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusServiceUnavailable || resp.StatusCode == 418 {
 		return nil, "", fmt.Errorf("%w: HTTP %d", errWAFBlock, resp.StatusCode)
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -187,9 +192,12 @@ func parseCategoryHTML(htmlBytes []byte, base *url.URL) (docs []docLink, next st
 }
 
 // isDocDownloadLink проверяет, что ссылка ведёт на тело документа dochub.
+// Тела бывают по двум путям: рабочий `…/m/wiki/{id}/download.aspx` и часто
+// «мёртвый» дубль `…/m/docs/{id}/download.aspx`. Берём оба — при скачивании
+// рабочий отдаёт файл, нерабочий вернёт 403 и будет пропущен.
 func isDocDownloadLink(u string) bool {
 	low := strings.ToLower(u)
-	return strings.Contains(low, "/m/docs/") &&
+	return (strings.Contains(low, "/m/docs/") || strings.Contains(low, "/m/wiki/")) &&
 		(strings.Contains(low, "/download") || strings.HasSuffix(low, ".aspx"))
 }
 

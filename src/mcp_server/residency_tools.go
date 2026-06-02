@@ -135,7 +135,7 @@ func registerResidencyTools(
 			mcp.WithString("inn", mcp.Required(), mcp.Description("ИНН организации (10 или 12 цифр)")),
 			mcp.WithString("contact_email", mcp.Description("Контактный email")),
 			mcp.WithString("contact_phone", mcp.Description("Контактный телефон")),
-			mcp.WithString("tenant_id", mcp.Description("Идентификатор тенанта")),
+			mcp.WithString("tenant_id", mcp.Description("Идентификатор тенанта (необязательно; если пусто — тенант по умолчанию)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleCreateClient(ctx, req, st)
@@ -300,13 +300,11 @@ func handleGetDeadlines(ctx context.Context, req mcp.CallToolRequest, ds store.D
 }
 
 func handleListClients(ctx context.Context, req mcp.CallToolRequest, st store.ClientStore) (*mcp.CallToolResult, error) {
+	// tenant_id опционален: пустое значение → клиенты всех тенантов
+	// (store.ListClients трактует "" как «без фильтра по тенанту»).
 	tenantID := req.GetString("tenant_id", "")
 	stageStr := req.GetString("stage", "")
 	limit := req.GetInt("limit", 50)
-
-	if tenantID == "" {
-		return mcp.NewToolResultError("параметр tenant_id обязателен для list_clients"), nil
-	}
 
 	var stage model.ResidencyStage
 	if stageStr != "" {
@@ -354,13 +352,26 @@ func handleCreateClient(ctx context.Context, req mcp.CallToolRequest, st store.C
 		return mcp.NewToolResultError("параметр inn обязателен"), nil
 	}
 
+	// tenant_id опционален: если не передан — берём (или создаём) тенант по умолчанию,
+	// иначе INSERT упрётся в NOT NULL-ограничение clients.tenant_id.
+	tenantID := req.GetString("tenant_id", "")
+	if tenantID == "" {
+		if ts, ok := st.(store.DefaultTenantEnsurer); ok {
+			tenant, terr := store.GetOrCreateDefaultTenant(ctx, ts)
+			if terr != nil {
+				return mcp.NewToolResultError("не удалось определить тенант по умолчанию: " + terr.Error()), nil
+			}
+			tenantID = tenant.ID
+		}
+	}
+
 	client := &model.Client{
 		ID:             uuid.New().String(),
 		Name:           name,
 		INN:            inn,
 		ContactEmail:   req.GetString("contact_email", ""),
 		ContactPhone:   req.GetString("contact_phone", ""),
-		TenantID:       req.GetString("tenant_id", ""),
+		TenantID:       tenantID,
 		ResidencyStage: model.StageApplication,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),

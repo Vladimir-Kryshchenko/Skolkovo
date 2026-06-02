@@ -544,6 +544,17 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	ctx := r.Context()
+
+	// Тенант «Default» создаётся идемпотентно: если он уже есть — переиспользуем
+	// существующий, а не плодим дубли строк «Default» при каждом обращении.
+	if strings.EqualFold(name, store.DefaultTenantName) {
+		if existing, err := store.GetOrCreateDefaultTenant(ctx, s.stores.TenantStore); err == nil {
+			residencyRedirect(w, r, "/tenants", "Тенант по умолчанию: "+existing.Name, "ok")
+			return
+		}
+	}
+
 	tenant := &model.Tenant{
 		ID:        generateUUID(),
 		Name:      name,
@@ -552,7 +563,6 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 		Active:    true,
 	}
 
-	ctx := r.Context()
 	if err := s.stores.TenantStore.CreateTenant(ctx, tenant); err != nil {
 		residencyRedirect(w, r, "/tenants", "Ошибка создания тенанта: "+err.Error(), "err")
 		return
@@ -754,11 +764,11 @@ func (s *ResidencyServer) handleAPIClientCreate(w http.ResponseWriter, r *http.R
 
 	ctx := r.Context()
 
-	// Если tenant_id не указан — автоматически берём первый доступный тенант.
+	// Если tenant_id не указан — берём (или идемпотентно создаём) тенант по умолчанию.
 	tenantID := req.TenantID
 	if tenantID == "" && s.stores.TenantStore != nil {
-		if tenants, err := s.stores.TenantStore.ListTenants(ctx); err == nil && len(tenants) > 0 {
-			tenantID = tenants[0].ID
+		if tenant, err := store.GetOrCreateDefaultTenant(ctx, s.stores.TenantStore); err == nil {
+			tenantID = tenant.ID
 		}
 	}
 	if tenantID == "" {
@@ -991,7 +1001,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .stat .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; font-weight: 500; }
 .toolbar { background: var(--surface); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .toolbar label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
-.filter-tabs { display: flex; gap: 4px; }
+.filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .filter-tab { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; text-decoration: none; color: var(--text-secondary); transition: all .15s; border: 1px solid transparent; cursor: pointer; }
 .filter-tab:hover { background: var(--primary-light); color: var(--primary); }
 .filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }

@@ -236,16 +236,7 @@ func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Reques
 		checklists, _ = s.stores.ChecklistStore.GetClientChecklists(ctx, id)
 	}
 
-	stageLabels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
+	stageLabels := model.StageLabels()
 
 	data := clientCardData{
 		Client:      client,
@@ -319,26 +310,12 @@ func (s *ResidencyServer) handleClientStageTransition(w http.ResponseWriter, r *
 
 // autoReportingDeadline создаёт дедлайн квартальной отчётности при переходе на
 // стадию «отчётность» (если ещё нет незакрытого). No-op без DeadlineStore.
+// Делегирует единой логике store.EnsureReportingDeadline (общей с MCP).
 func (s *ResidencyServer) autoReportingDeadline(ctx context.Context, clientID string, to model.ResidencyStage) {
-	if to != model.StageReporting || s.stores.DeadlineStore == nil {
+	if s.stores.DeadlineStore == nil {
 		return
 	}
-	if existing, err := s.stores.DeadlineStore.ListDeadlines(ctx, clientID, 0); err == nil {
-		for _, d := range existing {
-			if d.Type == model.DeadlineReporting && d.Status != model.DeadlineCompleted {
-				return
-			}
-		}
-	}
-	_ = s.stores.DeadlineStore.CreateDeadline(ctx, &model.Deadline{
-		ID:        generateUUID(),
-		ClientID:  clientID,
-		Title:     "Квартальный отчёт резидента",
-		DueDate:   time.Now().AddDate(0, 0, 90),
-		Type:      model.DeadlineReporting,
-		Status:    model.DeadlineUpcoming,
-		CreatedAt: time.Now(),
-	})
+	store.EnsureReportingDeadline(ctx, s.stores.DeadlineStore, clientID, to)
 }
 
 // ---------------------------------------------------------------------------
@@ -884,20 +861,7 @@ var residencyFuncs = template.FuncMap{
 }
 
 func formatStage(s model.ResidencyStage) string {
-	labels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
-	if l, ok := labels[s]; ok {
-		return l
-	}
-	return string(s)
+	return model.StageLabel(s)
 }
 
 func stepsCount(raw json.RawMessage) int {
@@ -1104,21 +1068,7 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Клиенты — Резидентство</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" title="Документы базы знаний" data-tooltip="Перейти к документам базы знаний"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Документы</a>
-    <a href="/clients" title="Список всех клиентов" data-tooltip="Список всех клиентов резидентства">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур" data-tooltip="Чек-листы по процедурам резидентства">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов" data-tooltip="Дашборд дедлайнов клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Организации и API-ключи" data-tooltip="Организации и их API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Список мероприятий" data-tooltip="Мероприятия Сколково из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы и гранты" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <a href="/ai/models" title="ИИ-модели и агенты" data-tooltip="Настройка ИИ-моделей и агентов"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/><circle cx="18" cy="8" r="3"/><circle cx="6" cy="8" r="3"/></svg>ИИ</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1207,7 +1157,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон карточки клиента.
 var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1221,15 +1171,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{{.Client.Name}}</h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <a href="/clients" title="Вернуться к списку клиентов" data-tooltip="Назад к списку клиентов">← Клиенты</a>
-    <a href="/deadlines" title="Дедлайны" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/checklists" title="Чек-листы" data-tooltip="Чек-листы процедур">Чек-листы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1334,7 +1276,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон чек-листов.
 var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1348,19 +1290,7 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Чек-листы</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты и API-ключи" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы и гранты" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1420,7 +1350,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон дедлайнов.
 var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1434,19 +1364,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Дедлайны</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов" data-tooltip="Дашборд дедлайнов клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1493,7 +1411,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон шаблонов документов.
 var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1507,19 +1425,7 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Шаблоны документов</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1564,7 +1470,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон тенантов.
 var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1578,19 +1484,7 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Тенанты</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты и API-ключи" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1648,7 +1542,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон мероприятий.
 var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1662,19 +1556,7 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Мероприятия</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Клиенты" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1737,7 +1619,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон конкурсов.
 var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1751,19 +1633,7 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>Конкурсы и гранты</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Клиенты" data-tooltip="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы" data-tooltip="Чек-листы по процедурам">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны" data-tooltip="Дашборд дедлайнов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны" data-tooltip="Шаблоны для генерации документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты" data-tooltip="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия" data-tooltip="Мероприятия из парсинга">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы" data-tooltip="Конкурсы и гранты из парсинга">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" data-tooltip="Светлая или тёмная тема" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1825,4 +1695,4 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))

@@ -288,7 +288,7 @@ tbody tr:last-child td { border-bottom: none; }
 .doc-meta .id-code { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; color: var(--text-secondary); background: var(--gray-bg); padding: 1px 6px; border-radius: 3px; font-size: 10px; }
 
 /* Badge */
-.badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .2px; }
+.badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 11px; font-weight: 600; letter-spacing: .2px; white-space: nowrap; }
 .s-на_проверке { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-border); }
 .s-действует { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
 .s-устарел { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
@@ -384,44 +384,21 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
   .logo-icon { width: 28px; height: 28px; }
   .logo-icon svg { width: 16px; height: 16px; }
 }
+/* Панель операций (страница «Документы») */
+.ops-panel { display:flex; gap:10px; flex-wrap:wrap; align-items:stretch; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; margin-bottom:16px; box-shadow:var(--shadow-sm); }
+.ops-group { display:flex; flex-direction:column; gap:7px; padding:0 14px; border-right:1px solid var(--border); }
+.ops-group:first-child { padding-left:0; }
+.ops-group:last-child { border-right:none; padding-right:0; }
+.ops-label { font-size:10px; font-weight:700; letter-spacing:.5px; text-transform:uppercase; color:var(--text-secondary); }
+.ops-row { display:flex; gap:6px; flex-wrap:wrap; }
+/* Подсказки делаем переносимыми, чтобы длинные описания не уезжали за экран */
+[data-tooltip]:hover::after { white-space:normal; max-width:280px; width:max-content; line-height:1.35; text-align:left; }
+@media (max-width: 768px) { .ops-group { border-right:none; padding:8px 0 0; } .ops-group:first-child { padding-top:0; } }
 </style>
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <div class="logo-wrap">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
-    </div>
-    <h1>База Сколково</h1>
-  </div>
-  <div class="header-actions">
-    <a href="/" title="Список всех документов базы знаний">Документы</a>
-    <a href="/changes" title="История изменений: что нового появилось в базе">Изменения</a>
-    <a href="/sitepages" title="Страницы публичного сайта Сколково: просмотр и переход на сайт">Страницы сайта</a>
-    <a href="/diff" title="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" title="Граф связей между документами">Граф</a>
-    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
-    <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" title="Проверить сайт Сколково и добавить новые документы (RSS-каталог)">Обновить из источников</button>
-    <button onclick="runAction('index', this)" title="Перестроить поисковый индекс по всем действующим документам">Переиндексировать поиск</button>
-    <button onclick="runAction('sync', this)" title="Полное обновление: загрузка документов и новостей + переиндексация поиска">Полное обновление</button>
-    <button onclick="runAction('fetch', this)" title="Скачать тела файлов (PDF/DOCX) для документов без файла на сервере. Идёт через активный прокси/обход WAF — настройте прокси на странице «Прокси», иначе WAF режет дата-центровый IP (403)">Скачать файлы</button>
-    <button onclick="runAction('approve-all', this)" style="background:#00875a;color:#fff" title="Одобрить все документы «на проверке» и запустить их индексацию в RAG — документы с метаданными попадут в поиск даже без локального файла">✓ Одобрить все ({{.PendingCount}})</button>
-    <button onclick="runAction('seed-local', this)" title="Добавить в поиск локальные .md-файлы из папки документов">Локальные файлы</button>
-    <button onclick="runAction('navindex', this)" title="Пересобрать карту навигации сайта для чат-бота">Карта навигации</button>
-    <a href="/proxy" class="btn" title="Настройка прокси для обхода WAF dochub (нужно, чтобы скачивались тела файлов)" style="padding:5px 10px">Прокси</a>
-    <div class="header-divider"></div>
-    <span class="header-user" title="Текущий пользователь">{{if .CurrentUser}}{{.CurrentUser.Username}}{{end}}</span>
-    <a href="/logout" title="Выйти из системы" style="padding: 5px 10px">Выход</a>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{template "content" .}}
 </main>
@@ -556,6 +533,31 @@ document.addEventListener('DOMContentLoaded', function() {
   </div>
   <div class="stat indexed" title="Документы, проиндексированные в Qdrant (векторный поиск)">
     <div class="n">{{.Stats.Indexed}}</div><div class="l">В индексе (RAG (поиск по векторам))</div>
+  </div>
+</div>
+
+<div class="ops-panel">
+  <div class="ops-group">
+    <span class="ops-label">Сбор данных</span>
+    <div class="ops-row">
+      <button class="btn btn-ghost btn-sm" onclick="runAction('scrape', this)" data-tooltip="Проверить RSS-каталог Сколково и завести новые документы в реестр">Обновить из источников</button>
+      <button class="btn btn-ghost btn-sm" onclick="runAction('fetch', this)" data-tooltip="Скачать тела файлов (PDF/DOCX) для документов без файла. Идёт через активный прокси (обход WAF), иначе 403 — настройте «Прокси/VPN»">Скачать файлы</button>
+      <button class="btn btn-ghost btn-sm" onclick="runAction('seed-local', this)" data-tooltip="Добавить в поиск локальные .md-файлы из папки документов">Локальные файлы</button>
+    </div>
+  </div>
+  <div class="ops-group">
+    <span class="ops-label">Индексация</span>
+    <div class="ops-row">
+      <button class="btn btn-ghost btn-sm" onclick="runAction('index', this)" data-tooltip="Перестроить поисковый индекс (RAG) по всем действующим документам">Переиндексировать поиск</button>
+      <button class="btn btn-ghost btn-sm" onclick="runAction('sync', this)" data-tooltip="Полный цикл: загрузка документов и новостей + переиндексация поиска">Полное обновление</button>
+      <button class="btn btn-ghost btn-sm" onclick="runAction('navindex', this)" data-tooltip="Пересобрать карту навигации сайта для чат-бота">Карта навигации</button>
+    </div>
+  </div>
+  <div class="ops-group">
+    <span class="ops-label">Модерация</span>
+    <div class="ops-row">
+      <button class="btn btn-success btn-sm" onclick="runAction('approve-all', this)" data-tooltip="Одобрить все документы «на проверке» и проиндексировать их в RAG (даже без локального файла на сервере)">✓ Одобрить все ({{.PendingCount}})</button>
+    </div>
   </div>
 </div>
 
@@ -697,7 +699,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
   </div>
   <p><strong>Нет документов</strong></p>
-  <p>Запустите парсинг кнопкой <strong>«Парсинг RSS (каналы)»</strong> в шапке страницы<br>
+  <p>Запустите сбор кнопкой <strong>«Обновить из источников»</strong> на панели операций выше<br>
   или выполните в терминале: <code>skolkovo scrape</code></p>
 </div>
 {{end}}
@@ -837,32 +839,7 @@ main { max-width: 1200px; margin: 0 auto; padding: 24px 28px; }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <div class="logo-wrap">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
-    </div>
-    <h1>База Сколково</h1>
-  </div>
-  <div class="header-actions">
-    <a href="/" title="Список всех документов базы знаний">Документы</a>
-    <a href="/diff" class="active-link" title="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" title="Граф связей между документами">Граф</a>
-    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
-    <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" title="Проверить сайт Сколково и добавить новые документы (RSS-каталог)">Обновить из источников</button>
-    <button onclick="runAction('index', this)" title="Перестроить поисковый индекс по всем действующим документам">Переиндексировать поиск</button>
-    <button onclick="runAction('sync', this)" title="Полное обновление: документы + новости + переиндексация">Полное обновление</button>
-    <button onclick="runAction('seed-local', this)" title="Добавить в поиск локальные .md-файлы">Локальные файлы</button>
-    <button onclick="runAction('navindex', this)" title="Пересобрать карту навигации сайта для чат-бота">Карта навигации</button>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 <div class="card">
   <h2>
@@ -1055,32 +1032,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <div class="logo-wrap">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
-    </div>
-    <h1>База Сколково</h1>
-  </div>
-  <div class="header-actions">
-    <a href="/" title="Список всех документов базы знаний">Документы</a>
-    <a href="/diff" title="Сравнение версий документов">Сравнение</a>
-    <a href="/analytics" title="Статистика и аналитика базы">Аналитика</a>
-    <a href="/graph" class="active-link" title="Граф связей между документами">Граф</a>
-    <a href="/clients" title="Управление клиентами резидентства">Клиенты</a>
-    <a href="/ai/models" title="Настройка ИИ-моделей и агентов">ИИ</a>
-    <div class="header-divider"></div>
-    <button onclick="runAction('scrape', this)" title="Проверить сайт Сколково и добавить новые документы (RSS-каталог)">Обновить из источников</button>
-    <button onclick="runAction('index', this)" title="Перестроить поисковый индекс по всем действующим документам">Переиндексировать поиск</button>
-    <button onclick="runAction('sync', this)" title="Полное обновление: документы + новости + переиндексация">Полное обновление</button>
-    <button onclick="runAction('seed-local', this)" title="Добавить в поиск локальные .md-файлы">Локальные файлы</button>
-    <button onclick="runAction('navindex', this)" title="Пересобрать карту навигации сайта для чат-бота">Карта навигации</button>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()" title="Переключить тему">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 <div class="card">
   <h2>
@@ -1342,30 +1294,7 @@ tbody tr:hover { background: var(--surface-alt); }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <div class="logo-wrap">
-    <div class="logo-icon">
-      <svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg>
-    </div>
-    <h1>База Сколково</h1>
-  </div>
-  <div class="header-actions">
-    <a href="/">Документы</a>
-    <a href="/changes" class="active-link">Изменения</a>
-    <a href="/sitepages">Страницы сайта</a>
-    <a href="/diff">Сравнение</a>
-    <a href="/analytics">Аналитика</a>
-    <a href="/graph">Граф</a>
-    <a href="/clients">Клиенты</a>
-    <a href="/ai/models">ИИ</a>
-    <div class="header-divider"></div>
-    <a href="/logout" style="padding: 5px 10px">Выход</a>
-    <button class="theme-btn" id="themeBtn" onclick="toggleTheme()">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{template "changes-content" .}}
 </main>
@@ -1676,26 +1605,7 @@ tbody tr:hover { background: var(--surface-alt); }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>{{end}}
 
 {{/* Шапка раздела «Страницы сайта» (общая для списка и просмотрщика) */}}
-{{define "sp-header"}}<header>
-  <div class="logo-wrap">
-    <div class="logo-icon"><svg viewBox="0 0 24 24"><path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12zM12 5.5v6l3.5-1.75z"/></svg></div>
-    <h1>База Сколково</h1>
-  </div>
-  <div class="header-actions">
-    <a href="/">Документы</a>
-    <a href="/changes">Изменения</a>
-    <a href="/sitepages" class="active-link">Страницы сайта</a>
-    <a href="/diff">Сравнение</a>
-    <a href="/analytics">Аналитика</a>
-    <a href="/graph">Граф</a>
-    <a href="/clients">Клиенты</a>
-    <div class="header-divider"></div>
-    <a href="/logout" style="padding:5px 10px">Выход</a>
-    <button class="theme-btn header-actions-btn" onclick="spToggleTheme()" title="Переключить тему">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    </button>
-  </div>
-</header>{{end}}
+{{define "sp-header"}}{{template "sidebar" .}}{{end}}
 
 {{define "sp-theme-script"}}<script>
 function spToggleTheme(){var r=document.documentElement;var cur=r.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');var next=cur==='dark'?'light':'dark';r.setAttribute('data-theme',next);localStorage.setItem('theme',next);}
@@ -1936,4 +1846,4 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
 <div class="text-pane text-empty">Текст страницы не сохранён. Откройте оригинал на сайте Сколково по кнопке выше.</div>
 {{end}}
 {{end}}
-`))
+` + sidebarMainDefine))

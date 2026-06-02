@@ -329,6 +329,7 @@ a.source-link:hover { text-decoration: underline; }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
+{{template "sidebar" .}}
 <div class="page-top">
   <a href="/" class="back-link" data-tooltip="Вернуться в административную панель">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
@@ -537,4 +538,4 @@ document.addEventListener('DOMContentLoaded', function() {
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))

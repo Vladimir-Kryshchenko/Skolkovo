@@ -234,36 +234,7 @@ tbody tr:last-child td { border-bottom: none; }
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4c0 1.1-.9 2-2 2h-4a2 2 0 0 1-2-2 4 4 0 0 1 4-4z"/><path d="M12 8v4"/><circle cx="12" cy="16" r="4"/><path d="M8 16h8"/><path d="M10 20h4"/></svg>
-    База Сколково — ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/clients" class="nav-btn" data-tooltip="Управление клиентами резидентства">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      Клиенты
-    </a>
-    <a href="/ai/models" class="nav-btn{{if eq .Tab "models"}} active{{end}}" data-tooltip="ИИ-модели: API-ключи, провайдеры, параметры">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn{{if eq .Tab "agents"}} active{{end}}" data-tooltip="ИИ-агенты: промпты, типы, настройки">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
-      Агенты
-    </a>
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="font-size:16px;min-width:36px;cursor:pointer;border:1px solid var(--border);padding:6px">
-      <!-- sun icon (shown in dark) -->
-      <svg class="theme-icon-sun" style="display:none" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-      <!-- moon icon (shown in light) -->
-      <svg class="theme-icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-    </button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 {{template "ai-content" .}}
@@ -379,7 +350,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
 {{define "ai-content"}}
 {{end}}
-`))
+` + sidebarMainDefine))
 
 // Отдельные шаблоны контента
 var aiModelsTmpl = template.Must(template.New("ai-models").Funcs(template.FuncMap{
@@ -555,34 +526,7 @@ tr.disabled-row td{opacity:.55}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/ai/models" class="nav-btn active" data-tooltip="Управление ИИ-моделями">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn" data-tooltip="Управление ИИ-агентами">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-      Агенты
-    </a>
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="min-width:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:6px">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none;width:18px;height:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-    <a href="/ai/models/new" class="btn btn-primary" data-tooltip="Добавить новую модель">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Добавить модель
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 
@@ -751,7 +695,7 @@ document.addEventListener('DOMContentLoaded',function(){var cur=document.documen
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiModelFormTmpl = template.Must(template.New("ai-model-form").Funcs(template.FuncMap{
 	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -807,22 +751,7 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-    {{if .Model.ID}}Редактировать модель{{else}}Добавить ИИ-модель{{end}}
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="min-width:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:6px">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none;width:18px;height:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-    <a href="/ai/models" class="nav-btn" data-tooltip="Вернуться к списку моделей">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Назад
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 <div class="card">
@@ -905,7 +834,7 @@ document.addEventListener('DOMContentLoaded',function(){var cur=document.documen
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiAgentsTmpl = template.Must(template.New("ai-agents").Funcs(template.FuncMap{
 	"string":         func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -1020,34 +949,7 @@ tr.disabled-row td{opacity:.55}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-    ИИ Конфигурация
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <a href="/" class="nav-btn" data-tooltip="Вернуться к документам">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Документы
-    </a>
-    <a href="/ai/models" class="nav-btn" data-tooltip="Управление ИИ-моделями">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-      Модели
-    </a>
-    <a href="/ai/agents" class="nav-btn active" data-tooltip="Управление ИИ-агентами">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-      Агенты
-    </a>
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="min-width:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:6px">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none;width:18px;height:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-    <a href="/ai/agents/new" class="btn btn-primary" data-tooltip="Создать нового агента">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-      Добавить агента
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashClass}}">{{.Flash}}</div>{{end}}
 <div class="card">
@@ -1184,7 +1086,7 @@ document.addEventListener('DOMContentLoaded',function(){var cur=document.documen
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 var aiAgentFormTmpl = template.Must(template.New("ai-agent-form").Funcs(template.FuncMap{
 	"string": func(v interface{}) string { return fmt.Sprintf("%s", v) },
@@ -1244,22 +1146,7 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})()</script>
 </head>
 <body>
-<header>
-  <h1>
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4"/></svg>
-    {{if .Agent.ID}}Редактировать агента{{else}}Добавить ИИ-агента{{end}}
-  </h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
-    <button id="themeBtn" onclick="toggleTheme()" data-tooltip="Переключить тему" class="nav-btn" style="min-width:36px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;padding:6px">
-      <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
-      <svg class="icon-sun" style="display:none;width:18px;height:18px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-    </button>
-    <a href="/ai/agents" class="nav-btn" data-tooltip="Вернуться к списку агентов">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><polyline points="12 19 5 12 12 5"/></svg>
-      Назад
-    </a>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Error}}<div class="flash flash-err">{{.Error}}</div>{{end}}
 <div class="card">
@@ -1342,7 +1229,7 @@ document.addEventListener('DOMContentLoaded',function(){var cur=document.documen
 </script>
 </body>
 </html>
-`))
+` + sidebarMainDefine))
 
 // ─── views ────────────────────────────────────────────────────────────────────
 

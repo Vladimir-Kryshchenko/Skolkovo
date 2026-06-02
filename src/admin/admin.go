@@ -2392,6 +2392,9 @@ func (s *Server) extractDocText(ctx context.Context, id string) (string, model.D
 func (s *Server) handleAnalyticsPage(w http.ResponseWriter, r *http.Request) {
 	report := s.collectAnalyticsReport(r.Context())
 	htmlContent := analytics.ToHTML(report)
+	// Страница аналитики рендерится отдельным пакетом — встраиваем общий левый сайдбар,
+	// чтобы навигация была единой со всей админкой (:8090).
+	htmlContent = strings.Replace(htmlContent, "<body>", "<body>\n"+sidebarMainHTML, 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, htmlContent)
 }

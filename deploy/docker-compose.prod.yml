@@ -126,8 +126,9 @@ services:
       - reports_data:/data/reports
     networks: [internal]
 
-    # Reverse-proxy + TLS. Единственный публичный вход.
-  # Для Let's Encrypt: замените volume certs → certbot и используйте nginx-letsencrypt.conf
+  # Reverse-proxy + TLS. Единственный публичный вход. По умолчанию — self-signed
+  # (nginx.conf + ./certs/server.crt|key). Для Let's Encrypt (когда появится домен):
+  # смонтируйте ./nginx/nginx-letsencrypt.conf и ./certs:/etc/letsencrypt + certbot.
   nginx:
     image: nginx:alpine
     restart: unless-stopped
@@ -137,11 +138,9 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx-letsencrypt.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./certs:/etc/letsencrypt:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
       - certbot-webroot:/var/www/certbot
-    environment:
-      - DOMAIN=${DOMAIN:-skolkovo.example.com}
     networks: [internal]
 
   # ─── Monitoring Stack ────────────────────────────────────────────────

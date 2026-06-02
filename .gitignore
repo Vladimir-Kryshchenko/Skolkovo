@@ -11,7 +11,10 @@
 .env
 .env.local
 *.key
+*.crt
 secrets/
+# TLS-сертификаты сервера (self-signed/letsencrypt) — не в git, генерятся на сервере
+deploy/certs/
 
 # Python
 __pycache__/

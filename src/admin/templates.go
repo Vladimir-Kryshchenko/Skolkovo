@@ -139,16 +139,6 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
-  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
-  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
-  var fs = document.querySelector('.filters-sticky');
-  if (fs) {
-    var syncFiltersH = function() {
-      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
-    };
-    syncFiltersH();
-    window.addEventListener('resize', syncFiltersH);
-  }
 });
 </script>
 </body>
@@ -270,7 +260,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .doc-filters input, .doc-filters select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); color: var(--text); font-family: inherit; outline: none; }
 .doc-filters input:focus, .doc-filters select:focus { border-color: var(--primary); }
 .filter-actions-inline { display: flex; gap: 8px; align-items: flex-end; }
-.filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; min-width: 0; }
 .filter-tab { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; text-decoration: none; color: var(--text-secondary); transition: all .15s; border: 1px solid var(--border); cursor: pointer; background: var(--surface); }
 .filter-tab:hover { background: var(--primary-light); color: var(--primary); border-color: var(--primary); }
 .filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
@@ -290,7 +280,11 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 900px; }
-thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: var(--filters-h, 0); z-index: 1; }
+/* Шапка таблицы прилипает к верху прокручиваемой области таблицы (.table-scroll).
+   Важно: top:0, а не высота панели фильтров — из-за overflow на .table-wrap/.table-scroll
+   контейнером прокрутки для sticky становится сама .table-scroll, и положительный top
+   сдвигал бы шапку вниз на высоту фильтров (пустая полоса сверху, заголовок под первой строкой). */
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: 0; z-index: 1; }
 tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; word-break: break-word; }
 tbody tr { transition: background .1s; }
 tbody tr:hover { background: var(--surface-alt); }
@@ -389,6 +383,8 @@ select:focus, input[type=text]:focus { border-color: var(--primary); box-shadow:
   .toolbar { flex-direction: column; align-items: stretch; }
   .filter-tabs { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
   .search-box { max-width: 100%; }
+  .toolbar > *, .toolbar form { min-width: 0; max-width: 100%; }
+  .toolbar select, .toolbar label { max-width: 100%; }
   table { font-size: 12px; }
   thead th, tbody td { padding: 8px 10px; }
   .actions { flex-direction: row; flex-wrap: wrap; }
@@ -522,16 +518,6 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
-  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
-  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
-  var fs = document.querySelector('.filters-sticky');
-  if (fs) {
-    var syncFiltersH = function() {
-      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
-    };
-    syncFiltersH();
-    window.addEventListener('resize', syncFiltersH);
-  }
 });
 </script>
 </body>
@@ -969,16 +955,6 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
-  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
-  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
-  var fs = document.querySelector('.filters-sticky');
-  if (fs) {
-    var syncFiltersH = function() {
-      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
-    };
-    syncFiltersH();
-    window.addEventListener('resize', syncFiltersH);
-  }
 });
 </script>
 </body>
@@ -1095,6 +1071,11 @@ var edges = new vis.DataSet(graphData.edges.map(function(e) {
   return { from: e.from, to: e.to, label: e.label, color: { color: e.color || '#6b7280' }, dashes: e.dashes || false, font: { size: 10, align: 'middle' }, smooth: { type: 'continuous' } };
 }));
 var container = document.getElementById('graph-container');
+if (!graphData.nodes || graphData.nodes.length === 0) {
+  container.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;padding:24px;text-align:center;color:var(--text-secondary);font-size:14px;line-height:1.6;">'
+    + '<div><div style="font-size:32px;margin-bottom:8px;">🔗</div>'
+    + 'Пока нет связей между документами.<br>Свяжите документы на странице документа или укажите, что один документ замещает другой (Supersedes), — связи появятся здесь.</div></div>';
+} else {
 var data = { nodes: nodes, edges: edges };
 var options = {
   physics: {
@@ -1116,6 +1097,7 @@ network.on('click', function(params) {
     }
   }
 });
+}
 async function runAction(action, btn) {
   var orig = btn.innerHTML;
   btn.innerHTML = '<span class="spinner"></span>';
@@ -1144,16 +1126,6 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
-  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
-  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
-  var fs = document.querySelector('.filters-sticky');
-  if (fs) {
-    var syncFiltersH = function() {
-      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
-    };
-    syncFiltersH();
-    window.addEventListener('resize', syncFiltersH);
-  }
 });
 </script>
 </body>
@@ -1300,17 +1272,28 @@ tbody tr:hover { background: var(--surface-alt); }
 .tag-chip.mini { padding: 1px 8px; font-size: 11px; }
 .row-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
 
+/* Searchable tag list */
+.tag-search-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
+.tag-search-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.tag-search-input { flex: 1; min-width: 180px; padding: 8px 12px 8px 32px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; font-family: var(--font); background: var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23676879' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.3-4.3'/%3E%3C/svg%3E") no-repeat 10px center / 14px; color: var(--text); }
+.tag-search-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(0,115,234,.1); }
+.tag-count-label { font-size: 11px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 8px; max-height: 220px; overflow-y: auto; padding: 2px 4px 2px 0; }
+.tag-chip.hidden { display: none; }
+.tag-empty { font-size: 12px; color: var(--text-secondary); padding: 6px 0; }
+
 /* Source freshness panel */
 .health-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
 .health-title { font-size: 11px; font-weight: 700; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 10px; }
 .health-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 10px; }
-.health-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); }
+.health-card { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt); min-width: 0; overflow: hidden; }
+.health-body { min-width: 0; flex: 1; overflow: hidden; }
 .health-dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; background: var(--gray); }
 .health-ok .health-dot { background: var(--green); }
 .health-stale .health-dot { background: var(--yellow); }
 .health-failing .health-dot { background: var(--red); }
-.health-name { font-size: 13px; font-weight: 600; }
-.health-meta { font-size: 11px; color: var(--text-secondary); }
+.health-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-meta { font-size: 11px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Empty */
 .empty { text-align: center; padding: 48px 24px; color: var(--text-secondary); }
@@ -1372,6 +1355,28 @@ document.addEventListener('DOMContentLoaded', function() {
     };
     syncFiltersH();
     window.addEventListener('resize', syncFiltersH);
+  }
+  // Живой поиск по списку тегов
+  var tagInput = document.getElementById('tag-search');
+  if (tagInput) {
+    var tagList = document.getElementById('tag-list');
+    var tagEmpty = document.getElementById('tag-empty');
+    var tagLabel = document.getElementById('tag-count-label');
+    var chips = Array.prototype.slice.call(tagList.querySelectorAll('.tag-chip[data-tag]'));
+    var applyTagFilter = function() {
+      var q = tagInput.value.trim().toLowerCase();
+      var shown = 0;
+      for (var i = 0; i < chips.length; i++) {
+        var t = (chips[i].getAttribute('data-tag') || '').toLowerCase();
+        var ok = !q || t.indexOf(q) !== -1;
+        chips[i].classList.toggle('hidden', !ok);
+        if (ok) shown++;
+      }
+      if (tagEmpty) tagEmpty.style.display = shown ? 'none' : '';
+      if (tagLabel) tagLabel.textContent = q ? (shown + ' из ' + chips.length) : (chips.length + ' тегов');
+    };
+    tagInput.addEventListener('input', applyTagFilter);
+    applyTagFilter();
   }
 });
 </script>
@@ -1442,14 +1447,21 @@ document.addEventListener('DOMContentLoaded', function() {
   </form>
 </div>
 
-{{/* Tag cloud (auto-derived) */}}
+{{/* Tag list with live search (auto-derived) */}}
 {{if .AllTags}}
-<div class="tag-bar">
-  <span class="tag-bar-label">Теги:</span>
-  {{if .Tag}}<a class="tag-chip tag-reset" href="/changes{{if .BaseQS}}?{{.BaseQS}}{{end}}" title="Сбросить фильтр по тегу">× {{.Tag}}</a>{{end}}
-  {{range .AllTags}}
-    <a class="tag-chip{{if eq .Name $.Tag}} active{{end}}" href="/changes?tag={{.Enc}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" title="Фильтровать по тегу «{{.Name}}»">{{.Name}}<span class="tag-count">{{.Count}}</span></a>
-  {{end}}
+<div class="tag-search-wrap">
+  <div class="tag-search-head">
+    <span class="tag-bar-label">Теги:</span>
+    {{if .Tag}}<a class="tag-chip tag-reset" href="/changes{{if .BaseQS}}?{{.BaseQS}}{{end}}" title="Сбросить фильтр по тегу">× {{.Tag}}</a>{{end}}
+    <input type="text" id="tag-search" class="tag-search-input" placeholder="Поиск тега по названию…" autocomplete="off" spellcheck="false">
+    <span class="tag-count-label" id="tag-count-label"></span>
+  </div>
+  <div class="tag-list" id="tag-list">
+    {{range .AllTags}}
+    <a class="tag-chip{{if eq .Name $.Tag}} active{{end}}" data-tag="{{.Name}}" href="/changes?tag={{.Enc}}{{if $.BaseQS}}&{{$.BaseQS}}{{end}}" title="Фильтровать по тегу «{{.Name}}»">{{.Name}}<span class="tag-count">{{.Count}}</span></a>
+    {{end}}
+  </div>
+  <div class="tag-empty" id="tag-empty" style="display:none">Теги не найдены</div>
 </div>
 {{end}}
 
@@ -1776,7 +1788,8 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
     <th style="width:180px">Раздел</th>
     <th>Заголовок</th>
     <th style="width:120px">Статус</th>
-    <th style="width:130px">Обновлено</th>
+    <th style="width:130px" title="Дата публикации на сайте Сколково">Опубликовано</th>
+    <th style="width:130px" title="Когда страница обновлялась в нашей базе">Обновлено</th>
     <th style="width:200px">Действия</th>
   </tr></thead>
   <tbody>
@@ -1789,6 +1802,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
       {{if .Tags}}<div class="sp-tags">{{range .Tags}}<span class="sp-tag muted">{{.}}</span>{{end}}</div>{{end}}
     </td>
     <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
+    <td style="font-size:12px;white-space:nowrap" title="Дата публикации на сайте Сколково">{{.Published}}</td>
     <td style="font-size:12px;white-space:nowrap" title="{{.LastChanged.Format "02.01.2006 15:04:05"}}">{{.LastChanged.Format "02.01.2006"}}</td>
     <td>
       <a class="act-link" href="/sitepages/{{.ID}}" title="Прочитать сохранённую информацию">Просмотр</a>
@@ -1845,8 +1859,9 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
 </div>
 <div class="page-meta">
   <span>Статус: <b>{{.StatusLabel}}</b></span>
-  <span>Изменено: <b>{{.LastChanged.Format "02.01.2006 15:04"}}</b></span>
-  <span>Найдено: <b>{{.FirstSeen.Format "02.01.2006"}}</b></span>
+  <span title="Дата публикации на сайте Сколково">Опубликовано на сайте: <b>{{.Published}}</b></span>
+  <span title="Когда страница обновлялась в нашей базе">Изменено: <b>{{.LastChanged.Format "02.01.2006 15:04"}}</b></span>
+  <span title="Когда мы впервые увидели страницу при обходе">Найдено: <b>{{.FirstSeen.Format "02.01.2006"}}</b></span>
   <span>URL: <a href="{{.URL}}" target="_blank" rel="noopener" style="font-family:monospace;word-break:break-all">{{.URL}}</a></span>
 </div>
 

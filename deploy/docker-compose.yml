@@ -59,6 +59,12 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       TEI_URL: http://tei:80
+      # Qdrant-коллекции и размерность эмбеддингов — заданы явно (как в prod),
+      # чтобы конфиги окружений не расходились при смене модели/коллекций.
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-skolkovo_docs}
+      NAV_COLLECTION: ${NAV_COLLECTION:-skolkovo_navigation}
+      SITEPAGES_COLLECTION: ${SITEPAGES_COLLECTION:-skolkovo_sitepages}
       POSTGRES_DSN: postgres://${POSTGRES_USER:-skolkovo}:${POSTGRES_PASSWORD:-skolkovo}@postgres:5432/${POSTGRES_DB:-skolkovo}?sslmode=disable
       STORE_BACKEND: postgres
       MCP_API_KEY: ${MCP_API_KEY:-change-me-please}
@@ -82,6 +88,10 @@ services:
       CONTESTS_URL: ${CONTESTS_URL:-https://sk.ru/foundation/contests/}
       GRANTS_URL: ${GRANTS_URL:-https://sk.ru/foundation/grants/}
       FAQ_URL: ${FAQ_URL:-https://sk.ru/foundation/faq/}
+      # Страницы публичного сайта (search_site_pages) — как в prod
+      SITEPAGES_ENABLED: ${SITEPAGES_ENABLED:-true}
+      SITEPAGES_SEEDS: ${SITEPAGES_SEEDS:-https://sk.ru/,https://dochub.sk.ru/foundation/documents/}
+      SITEPAGES_ENRICH_ENABLED: ${SITEPAGES_ENRICH_ENABLED:-true}
       # Дашборд консультанта (BasicAuth)
       CONSULTANT_USER: ${CONSULTANT_USER:-consultant}
       CONSULTANT_PASS: ${CONSULTANT_PASS:-change-me-please}

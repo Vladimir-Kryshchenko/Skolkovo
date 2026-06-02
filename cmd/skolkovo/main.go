@@ -1271,9 +1271,18 @@ func cmdServe(cfg config.Config) error {
 
 	// --- Навигационный индекс сайта (для get_navigation) ---
 	// Пересобираем при старте из src/navindex (источник истины), чтобы чат-бот
-	// всегда знал актуальную структуру страниц/блоков. Фоном, не блокируя старт.
+	// всегда знал актуальную структуру страниц/блоков.
+	navIndexer := newNavIndexer(cfg)
+	// Коллекцию создаём СИНХРОННО до приёма запросов — иначе ранний get_navigation
+	// мог попасть в несуществующую коллекцию и вернуть «коллекция не найдена».
+	// Сами эмбеддинги (через TEI) считаем фоном, чтобы не блокировать старт на
+	// возможном холодном старте/недоступности TEI: до завершения поиск вернёт
+	// пустой, но валидный результат.
+	if err := navIndexer.EnsureCollection(context.Background()); err != nil {
+		log.Printf("[serve:navindex] коллекция навигации недоступна: %v", err)
+	}
 	go func() {
-		if n, err := newNavIndexer(cfg).Reindex(context.Background()); err != nil {
+		if n, err := navIndexer.Reindex(context.Background()); err != nil {
 			log.Printf("[serve:navindex] навигация не проиндексирована: %v", err)
 		} else {
 			log.Printf("[serve:navindex] навигация проиндексирована: %d узлов", n)
@@ -1960,6 +1969,10 @@ func registerExtraMCPTools(mcpSrv *server.MCPServer, st store.Store, cfg config.
 
 	// Регистрируем инструменты источников (включая реестр резидентов).
 	mcpserver.RegisterSourceTools(mcpSrv, pss, pss, pss, pss, nil)
+
+	// Инструменты льгот и НПА: search_preferences/get_preference/search_npa/get_npa.
+	// PostgresSourceStore реализует и PreferenceStore, и NPAStore.
+	mcpserver.RegisterRegulationTools(mcpSrv, pss, pss)
 
 	// Лента изменений: get_recent_changes.
 	ctx := context.Background()

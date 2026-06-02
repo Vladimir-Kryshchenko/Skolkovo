@@ -22,6 +22,15 @@ func NewIndexer(qdr *qdrant.Client, emb embed.Embedder, dim int) *Indexer {
 	return &Indexer{Qdr: qdr, Emb: emb, Dim: dim}
 }
 
+// EnsureCollection синхронно гарантирует существование коллекции навигации
+// (без обращения к TEI). Вызывается на старте до приёма запросов, чтобы ранний
+// get_navigation не попал в несуществующую коллекцию («коллекция не найдена»):
+// пока фоновый Reindex не закончил эмбеддинги, поиск вернёт пустой, но валидный
+// результат, а не ошибку.
+func (ix *Indexer) EnsureCollection(ctx context.Context) error {
+	return ix.Qdr.EnsureCollection(ctx, ix.Dim)
+}
+
 // Reindex полностью пересобирает навигационный индекс из Tree(): гарантирует
 // коллекцию, считает эмбеддинги всех узлов и перезаписывает точки (ID
 // детерминированы, поэтому устаревшие узлы перезаписываются, а не дублируются).

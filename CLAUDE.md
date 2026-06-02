@@ -93,6 +93,14 @@
 | `search_residents` | Поиск резидентов (query, industry, status) |
 | `get_document_links` | Связи документа (document_id, link_type) |
 
+### Льготы и НПА
+| Инструмент | Описание |
+| :--- | :--- |
+| `search_preferences` | Поиск льгот (query, pref_type: tax_profit/insurance/vat/customs/other, status: active/outdated, limit) |
+| `get_preference` | Льгота по идентификатору (preference_id) |
+| `search_npa` | Поиск нормативно-правовых актов (query, npa_type: law/decree/order/decision, status: active/amended/revoked, limit) |
+| `get_npa` | НПА по идентификатору (npa_id) |
+
 ### Актуальность и мониторинг
 | Инструмент | Описание |
 | :--- | :--- |
@@ -117,7 +125,7 @@
 | Инструмент | Описание |
 | :--- | :--- |
 | `ask_consultant` | Вопрос ИИ-консультанту с источниками (question, client_id) — основной канал чат-виджета и Telegram-бота; при навигационных вопросах подмешивает `get_navigation` («где это и как попасть») |
-| `validate_document` | Проверка документа против чек-листа (document_id, client_id) |
+| `validate_document` | Проверка документа против чек-листа процедуры (document_text, procedure_type: entry/reporting/extension/exit, опц. client_id) |
 | `get_next_steps` | Рекомендации координатора по следующим шагам (client_id) |
 | `subscribe_to_changes` | Подписка клиента на изменения категории документов (client_id, category) |
 | `check_eligibility` | Проверка квалификации компании по ИНН (inn) |

@@ -1165,6 +1165,7 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
             <option value="validator" {{selected (string .Agent.AgentType) "validator"}}>Валидатор документов</option>
             <option value="monitor" {{selected (string .Agent.AgentType) "monitor"}}>Монитор изменений</option>
             <option value="coordinator" {{selected (string .Agent.AgentType) "coordinator"}}>Координатор</option>
+            <option value="page_annotator" {{selected (string .Agent.AgentType) "page_annotator"}}>Аннотатор страниц</option>
           </select>
         </div>
         <div class="form-group">
@@ -1186,6 +1187,7 @@ main{max-width:900px;margin:32px auto;padding:0 28px}
           <button type="button" class="preset-btn" onclick="loadDefaultPrompt('validator')">Валидатор</button>
           <button type="button" class="preset-btn" onclick="loadDefaultPrompt('monitor')">Монитор</button>
           <button type="button" class="preset-btn" onclick="loadDefaultPrompt('coordinator')">Координатор</button>
+          <button type="button" class="preset-btn" onclick="loadDefaultPrompt('page_annotator')">Аннотатор страниц</button>
         </div>
         <textarea name="system_prompt" id="system-prompt" placeholder="Системный промпт агента…">{{.Agent.SystemPrompt}}</textarea>
         <div class="hint">Инструкции для агента. Определяют его поведение и специализацию.</div>

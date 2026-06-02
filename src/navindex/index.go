@@ -3,6 +3,7 @@ package navindex
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"baza-skolkovo/src/common/embed"
 	"baza-skolkovo/src/common/qdrant"
@@ -78,7 +79,46 @@ func (ix *Indexer) Reindex(ctx context.Context) (int, error) {
 	if err := ix.Qdr.Upsert(ctx, points); err != nil {
 		return 0, fmt.Errorf("upsert навигации в Qdrant: %w", err)
 	}
+	// Удаляем устаревшие узлы: ID детерминированы по «порт|маршрут|блок», поэтому
+	// при переименовании/удалении блока его старая точка оставалась «сиротой»
+	// (Reindex только upsert-ил). Без этого get_navigation мог вернуть надпись,
+	// которой больше нет в UI. Чистим точки, которых нет в текущем наборе.
+	if err := ix.pruneStale(ctx, points); err != nil {
+		// Очистка — «лучший эффорт»: основной индекс уже записан, поэтому не валим
+		// Reindex (иначе временный сбой Qdrant/scroll обнулил бы навигацию).
+		log.Printf("[navindex] предупреждение: не удалось очистить устаревшие узлы навигации: %v", err)
+	}
 	return len(points), nil
+}
+
+// pruneStale удаляет из коллекции навигации точки, чьих ID нет в текущем наборе
+// узлов (синхронизация Qdrant с Tree()). Коллекция мала (~170 точек).
+func (ix *Indexer) pruneStale(ctx context.Context, current []qdrant.Point) error {
+	keep := make(map[string]struct{}, len(current))
+	for _, p := range current {
+		keep[p.ID] = struct{}{}
+	}
+	var stale []string
+	var offset *string
+	for {
+		pts, next, err := ix.Qdr.Scroll(ctx, 256, offset, nil, false)
+		if err != nil {
+			return err
+		}
+		for _, p := range pts {
+			if _, ok := keep[p.ID]; !ok {
+				stale = append(stale, p.ID)
+			}
+		}
+		if next == nil {
+			break
+		}
+		offset = next
+	}
+	if len(stale) == 0 {
+		return nil
+	}
+	return ix.Qdr.Delete(ctx, stale)
 }
 
 // Searcher выполняет семантический поиск по навигационной коллекции.

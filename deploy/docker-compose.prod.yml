@@ -88,6 +88,10 @@ services:
       MCP_ADDR: ":8080"
       MCP_API_KEY: ${MCP_API_KEY}
       MCP_RATE_LIMIT_RPS: ${MCP_RATE_LIMIT_RPS:-5}
+      # Публичный базовый URL для ссылок на скачанные копии документов в ответах
+      # консультанта (<base>/files/{id} обслуживает MCP, проксируется nginx → :8080).
+      # Пусто — отдаём только фолбэк на страницу категории dochub.
+      DOC_PUBLIC_BASE_URL: ${DOC_PUBLIC_BASE_URL:-}
       ADMIN_ADDR: ":8090"
       ADMIN_USER: ${ADMIN_USER:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}

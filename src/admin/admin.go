@@ -40,8 +40,16 @@ import (
 )
 
 // SitePageReader — что админке нужно от хранилища страниц публичного сайта.
+// List/CountFiltered/Sections/ListTags обеспечивают фильтрацию и пагинацию на
+// стороне БД, чтобы в админке были доступны ВСЕ страницы, а не первые N.
 type SitePageReader interface {
 	ListRecent(ctx context.Context, limit int) ([]*sitepages.Page, error)
+	List(ctx context.Context, f sitepages.PageFilter) ([]*sitepages.Page, error)
+	Count(ctx context.Context) (int, error)
+	CountFiltered(ctx context.Context, f sitepages.PageFilter) (int, error)
+	Sections(ctx context.Context) ([]string, error)
+	ListTags(ctx context.Context) ([]string, error)
+	LastSeenMax(ctx context.Context) (time.Time, error)
 	GetWithText(ctx context.Context, id string) (*sitepages.Page, error)
 	RelatedByTags(ctx context.Context, id string, tags []string, limit int) ([]sitepages.RelatedPage, error)
 }
@@ -1560,14 +1568,17 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
     <a href="javascript:window.close()" class="btn btn-danger" data-tooltip="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Закрыть</a>
   </div>
 </div>
-<iframe src="/documents/%s/download"></iframe>
+<iframe src="/documents/%s/download?inline=1" title="Просмотр PDF"></iframe>
 <div class="meta">Файл: %s | Хеш: %s | Размер: %s</div>
 </body></html>`, doc.Title, doc.Title, doc.ID, doc.ID, doc.LocalPath, doc.FileHash, formatFileSize(doc.LocalPath))
 		return
 	}
 
-	// Остальные форматы — извлекаем текст
+	// Остальные форматы — извлекаем текст. Бинарные форматы, которые мы не умеем
+	// разбирать (старый .doc, .xls, архивы …), показывать как «кашу» из байтов нельзя —
+	// вместо этого выводим аккуратную плашку с предложением скачать файл.
 	var text string
+	binary := false
 	if extract.IsSupported(doc.LocalPath) {
 		text, err = extract.Text(doc.LocalPath)
 		if err != nil {
@@ -1580,7 +1591,11 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 			http.Error(w, "Ошибка чтения файла: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		text = string(data)
+		if looksBinary(data) {
+			binary = true
+		} else {
+			text = string(data)
+		}
 	}
 
 	// Ограничиваем вывод для производительности (первые 50000 символов)
@@ -1667,13 +1682,32 @@ body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; ba
 </div>
 `, doc.Title, doc.Title, doc.ID)
 
-	if truncated {
-		fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
+	if binary {
+		fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Файл в формате <b>%s</b> нельзя показать как текст в браузере. Нажмите «Скачать», чтобы открыть его в подходящей программе.</div>`, html.EscapeString(strings.TrimPrefix(ext, ".")))
+	} else {
+		if truncated {
+			fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
+		}
+		fmt.Fprintf(w, `<div class="content">%s</div>`, html.EscapeString(text))
 	}
-
-	fmt.Fprintf(w, `<div class="content">%s</div>`, html.EscapeString(text))
 	fmt.Fprintf(w, `<div class="meta">Файл: %s | Размер: %s | Хеш: %s</div>`, doc.LocalPath, formatFileSize(doc.LocalPath), doc.FileHash)
 	fmt.Fprint(w, `</body></html>`)
+}
+
+// looksBinary эвристически определяет, что содержимое — двоичное (не текст):
+// наличие нулевого байта в первых килобайтах — надёжный признак (так же
+// различает текст/бинарь Git). Пустой файл считаем текстом.
+func looksBinary(data []byte) bool {
+	n := len(data)
+	if n > 8192 {
+		n = 8192
+	}
+	for i := 0; i < n; i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func formatFileSize(path string) string {
@@ -1913,9 +1947,15 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		mimeType = "text/html"
 	}
 
-	// Отдаём файл
+	// Отдаём файл. По умолчанию — как вложение (скачивание); с ?inline=1
+	// отдаём для встроенного просмотра (используется iframe-просмотрщиком),
+	// чтобы браузер рендерил PDF/текст, а не предлагал скачать.
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" {
+		disposition = "inline"
+	}
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(doc.LocalPath)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=\"%s\"", disposition, filepath.Base(doc.LocalPath)))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize(doc.LocalPath)))
 	http.ServeFile(w, r, doc.LocalPath)
 }
@@ -3140,9 +3180,29 @@ type sitePagesPageData struct {
 	AllTags      []string        // все теги для фильтра множественного выбора
 	SelectedTags []string        // выбранные теги
 	SelectedSet  map[string]bool // для отметки checkbox в шаблоне
-	Total        int
+	Total        int             // число страниц по текущему фильтру
+	GrandTotal   int             // всего страниц в базе (без фильтра)
 	LastCrawl    time.Time
 	HasStore     bool
+
+	// Пагинация (фильтрация и постраничная выборка — на стороне БД).
+	Page       int        // текущая страница (1-based)
+	PerPage    int        // строк на странице
+	TotalPages int        // всего страниц при текущем фильтре
+	RangeFrom  int        // номер первой строки на странице (для «N–M из Total»)
+	RangeTo    int        // номер последней строки
+	HasPrev    bool       //
+	HasNext    bool       //
+	PrevURL    string     //
+	NextURL    string     //
+	PageLinks  []pageLink // номера страниц для навигации
+}
+
+// pageLink — ссылка на конкретную страницу в пагинаторе.
+type pageLink struct {
+	Num     int
+	URL     string
+	Current bool
 }
 
 type sitePageRow struct {
@@ -3213,37 +3273,33 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 	dateTo := r.URL.Query().Get("date_to")
 	selectedTags := normalizeTagParams(r.URL.Query()["tags"])
 
-	var pages []*sitepages.Page
-	if s.sitePages != nil {
-		if ps, err := s.sitePages.ListRecent(r.Context(), 2000); err == nil {
-			pages = ps
-		} else {
-			log.Printf("[admin/sitepages] ошибка загрузки: %v", err)
-		}
+	selectedSet := make(map[string]bool, len(selectedTags))
+	for _, t := range selectedTags {
+		selectedSet[t] = true
 	}
 
-	// Списки разделов и тегов для фильтров (по всем страницам, до фильтрации).
-	sectionSet := map[string]bool{}
-	tagSet := map[string]bool{}
-	var lastCrawl time.Time
-	for _, p := range pages {
-		if p.Section != "" {
-			sectionSet[p.Section] = true
-		}
-		for _, t := range p.Tags {
-			tagSet[t] = true
-		}
-		if p.LastSeen.After(lastCrawl) {
-			lastCrawl = p.LastSeen
-		}
-	}
-	// Время последнего обхода — точнее из мониторинга свежести.
-	if s.healthStore != nil {
-		if src, err := s.healthStore.Get(r.Context(), "sitepages"); err == nil && src.LastSuccessAt != nil {
-			lastCrawl = *src.LastSuccessAt
-		}
+	data := sitePagesPageData{
+		Query:        query,
+		Section:      section,
+		Status:       status,
+		DateFrom:     dateFrom,
+		DateTo:       dateTo,
+		SelectedTags: selectedTags,
+		SelectedSet:  selectedSet,
+		HasStore:     s.sitePages != nil,
+		Page:         1,
+		PerPage:      sitePagesPerPage,
 	}
 
+	if s.sitePages == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "sitepages-layout", data); err != nil {
+			log.Println("[admin] sitepages шаблон:", err)
+		}
+		return
+	}
+
+	// Период по дате изменения.
 	var since, until time.Time
 	if dateFrom != "" {
 		if t, err := time.ParseInLocation("2006-01-02", dateFrom, time.Local); err == nil {
@@ -3256,33 +3312,46 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	qLower := strings.ToLower(query)
+	// Номер страницы и размер.
+	perPage := sitePagesPerPage
+	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v >= 10 && v <= 500 {
+		perPage = v
+	}
+	page := 1
+	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 1 {
+		page = v
+	}
+
+	filter := sitepages.PageFilter{
+		Query:   query,
+		Section: section,
+		Status:  status,
+		Tags:    selectedTags,
+		Since:   since,
+		Until:   until,
+	}
+
+	ctx := r.Context()
+	total, err := s.sitePages.CountFiltered(ctx, filter)
+	if err != nil {
+		log.Printf("[admin/sitepages] подсчёт: %v", err)
+	}
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	filter.Limit = perPage
+	filter.Offset = (page - 1) * perPage
+
+	pages, err := s.sitePages.List(ctx, filter)
+	if err != nil {
+		log.Printf("[admin/sitepages] выборка: %v", err)
+	}
 	rows := make([]sitePageRow, 0, len(pages))
 	for _, p := range pages {
-		if query != "" {
-			if !strings.Contains(strings.ToLower(p.Title), qLower) &&
-				!strings.Contains(strings.ToLower(p.URL), qLower) &&
-				!strings.Contains(strings.ToLower(p.Section), qLower) &&
-				!strings.Contains(strings.ToLower(p.Summary), qLower) {
-				continue
-			}
-		}
-		if section != "" && p.Section != section {
-			continue
-		}
-		if status != "" && p.Status != status {
-			continue
-		}
-		if !since.IsZero() && p.LastChanged.Before(since) {
-			continue
-		}
-		if !until.IsZero() && p.LastChanged.After(until) {
-			continue
-		}
-		// Фильтр по тегам: страница должна содержать ВСЕ выбранные теги (AND).
-		if len(selectedTags) > 0 && !hasAllTags(p.Tags, selectedTags) {
-			continue
-		}
 		rows = append(rows, sitePageRow{
 			ID:          p.ID,
 			URL:         p.URL,
@@ -3295,43 +3364,104 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	sections := make([]string, 0, len(sectionSet))
-	for sec := range sectionSet {
-		sections = append(sections, sec)
+	// Справочники фильтров — из БД (по всей базе, а не по текущей странице).
+	sections, err := s.sitePages.Sections(ctx)
+	if err != nil {
+		log.Printf("[admin/sitepages] разделы: %v", err)
 	}
-	sort.Strings(sections)
-
-	allTags := make([]string, 0, len(tagSet))
-	for t := range tagSet {
-		allTags = append(allTags, t)
+	allTags, err := s.sitePages.ListTags(ctx)
+	if err != nil {
+		log.Printf("[admin/sitepages] теги: %v", err)
 	}
 	sort.Strings(allTags)
+	grandTotal, _ := s.sitePages.Count(ctx)
 
-	selectedSet := make(map[string]bool, len(selectedTags))
-	for _, t := range selectedTags {
-		selectedSet[t] = true
+	// Время последнего обхода: мониторинг свежести точнее, иначе max(last_seen).
+	var lastCrawl time.Time
+	if s.healthStore != nil {
+		if src, err := s.healthStore.Get(ctx, "sitepages"); err == nil && src.LastSuccessAt != nil {
+			lastCrawl = *src.LastSuccessAt
+		}
+	}
+	if lastCrawl.IsZero() {
+		if t, err := s.sitePages.LastSeenMax(ctx); err == nil {
+			lastCrawl = t
+		}
 	}
 
-	data := sitePagesPageData{
-		Rows:         rows,
-		Query:        query,
-		Section:      section,
-		Status:       status,
-		DateFrom:     dateFrom,
-		DateTo:       dateTo,
-		Sections:     sections,
-		AllTags:      allTags,
-		SelectedTags: selectedTags,
-		SelectedSet:  selectedSet,
-		Total:        len(rows),
-		LastCrawl:    lastCrawl,
-		HasStore:     s.sitePages != nil,
+	data.Rows = rows
+	data.Sections = sections
+	data.AllTags = allTags
+	data.Total = total
+	data.GrandTotal = grandTotal
+	data.LastCrawl = lastCrawl
+	data.Page = page
+	data.PerPage = perPage
+	data.TotalPages = totalPages
+	if total > 0 {
+		data.RangeFrom = filter.Offset + 1
+		data.RangeTo = filter.Offset + len(rows)
 	}
+	data.HasPrev = page > 1
+	data.HasNext = page < totalPages
+	if data.HasPrev {
+		data.PrevURL = sitePagesPageURL(r.URL.Query(), page-1)
+	}
+	if data.HasNext {
+		data.NextURL = sitePagesPageURL(r.URL.Query(), page+1)
+	}
+	data.PageLinks = sitePagesPageLinks(r.URL.Query(), page, totalPages)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "sitepages-layout", data); err != nil {
 		log.Println("[admin] sitepages шаблон:", err)
 	}
+}
+
+// sitePagesPerPage — размер страницы списка по умолчанию.
+const sitePagesPerPage = 50
+
+// sitePagesPageURL строит ссылку на страницу списка с номером n, сохраняя
+// текущие фильтры (q, section, status, tags, даты, per_page).
+func sitePagesPageURL(q url.Values, n int) string {
+	out := url.Values{}
+	for _, k := range []string{"q", "section", "status", "date_from", "date_to", "per_page"} {
+		if v := q.Get(k); v != "" {
+			out.Set(k, v)
+		}
+	}
+	for _, t := range q["tags"] {
+		if t != "" {
+			out.Add("tags", t)
+		}
+	}
+	out.Set("page", strconv.Itoa(n))
+	return "/sitepages?" + out.Encode()
+}
+
+// sitePagesPageLinks возвращает скользящее окно номеров страниц вокруг текущей
+// (не более 7), чтобы пагинатор не разрастался на больших базах.
+func sitePagesPageLinks(q url.Values, page, totalPages int) []pageLink {
+	if totalPages <= 1 {
+		return nil
+	}
+	const window = 7
+	start := page - window/2
+	if start < 1 {
+		start = 1
+	}
+	end := start + window - 1
+	if end > totalPages {
+		end = totalPages
+		if start = end - window + 1; start < 1 {
+			start = 1
+		}
+	}
+	links := make([]pageLink, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		links = append(links, pageLink{Num: i, URL: sitePagesPageURL(q, i), Current: i == page})
+	}
+	return links
 }
 
 // handleSitePageView — просмотрщик одной страницы сайта: сохранённая информация
@@ -3484,36 +3614,40 @@ func normalizeTagParams(raw []string) []string {
 	return out
 }
 
-// hasAllTags сообщает, содержит ли страница все указанные теги (регистронезависимо).
-func hasAllTags(pageTags, want []string) bool {
-	set := make(map[string]bool, len(pageTags))
-	for _, t := range pageTags {
-		set[strings.ToLower(t)] = true
-	}
-	for _, w := range want {
-		if !set[strings.ToLower(w)] {
-			return false
-		}
-	}
-	return true
-}
-
 // handleAPISitePages отдаёт страницы сайта в JSON (для интеграций).
 func (s *Server) handleAPISitePages(w http.ResponseWriter, r *http.Request) {
 	if s.sitePages == nil {
 		jsonResp(w, false, "", "Хранилище страниц сайта не подключено")
 		return
 	}
-	pages, err := s.sitePages.ListRecent(r.Context(), 2000)
+	ctx := r.Context()
+	// limit/offset — постраничная выдача всей базы (limit<=0 — без ограничения).
+	filter := sitepages.PageFilter{
+		Query:   strings.TrimSpace(r.URL.Query().Get("q")),
+		Section: r.URL.Query().Get("section"),
+		Status:  r.URL.Query().Get("status"),
+		Tags:    normalizeTagParams(r.URL.Query()["tags"]),
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		filter.Limit = v
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+		filter.Offset = v
+	}
+	pages, err := s.sitePages.List(ctx, filter)
 	if err != nil {
 		jsonResp(w, false, "", err.Error())
 		return
 	}
+	total, _ := s.sitePages.CountFiltered(ctx, filter)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"ok":    true,
-		"pages": pages,
-		"count": len(pages),
+		"ok":     true,
+		"pages":  pages,
+		"count":  len(pages),
+		"total":  total,
+		"limit":  filter.Limit,
+		"offset": filter.Offset,
 	})
 }
 

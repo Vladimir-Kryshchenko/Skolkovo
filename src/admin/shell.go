@@ -66,7 +66,7 @@ body{padding-left:var(--app-sb-w);transition:padding-left .18s ease}
 .app-sb-foot .sb-theme svg{width:17px;height:17px}
 .app-sb-foot .sb-logout{flex:1}
 .app-sb-foot .sb-logout svg{width:15px;height:15px}
-.app-sb-toggle{position:absolute;top:62px;right:-12px;width:24px;height:24px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:201;box-shadow:0 1px 5px rgba(0,0,0,.14);transition:color .12s,transform .18s}
+.app-sb-toggle{position:absolute;top:16px;right:-12px;width:24px;height:24px;border-radius:50%;background:var(--surface);border:1px solid var(--border);color:var(--text-secondary);display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:201;box-shadow:0 1px 5px rgba(0,0,0,.14);transition:color .12s,transform .18s}
 .app-sb-toggle:hover{color:var(--primary)}
 .app-sb-toggle svg{width:14px;height:14px}
 html.sb-collapsed .app-sb-toggle svg{transform:rotate(180deg)}

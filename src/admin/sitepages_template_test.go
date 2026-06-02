@@ -23,7 +23,15 @@ func TestSitePagesListTemplateRenders(t *testing.T) {
 		AllTags:      []string{"льготы", "резиденты", "гранты"},
 		SelectedTags: []string{"льготы"},
 		SelectedSet:  map[string]bool{"льготы": true},
-		Total:        1, LastCrawl: now, HasStore: true,
+		Total:        120, GrandTotal: 2500, LastCrawl: now, HasStore: true,
+		Page: 2, PerPage: 50, TotalPages: 3, RangeFrom: 51, RangeTo: 100,
+		HasPrev: true, HasNext: true,
+		PrevURL: "/sitepages?page=1", NextURL: "/sitepages?page=3",
+		PageLinks: []pageLink{
+			{Num: 1, URL: "/sitepages?page=1"},
+			{Num: 2, URL: "/sitepages?page=2", Current: true},
+			{Num: 3, URL: "/sitepages?page=3"},
+		},
 	}
 	var buf bytes.Buffer
 	if err := tmpl.ExecuteTemplate(&buf, "sitepages-layout", data); err != nil {
@@ -32,9 +40,13 @@ func TestSitePagesListTemplateRenders(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"Льготы резидентам", "Последний обход", "/sitepages/abc", "На сайте ↗", "Страницы сайта",
-		"ms-panel",          // мультиселект тегов отрендерился
-		`value="гранты"`,    // опция тега
-		"sp-tag",            // чипы тегов в строке
+		"ms-panel",                   // мультиселект тегов отрендерился
+		`value="гранты"`,             // опция тега
+		"sp-tag",                     // чипы тегов в строке
+		"51–100", "120",              // диапазон строк и общий счётчик по фильтру
+		"всего в базе: 2500",         // grand total
+		"/sitepages?page=3", "Вперёд", // пагинатор
+		"стр. 2 из 3",                // индикатор страницы
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в выводе списка нет %q", want)

@@ -139,6 +139,16 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
+  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
+  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
+  var fs = document.querySelector('.filters-sticky');
+  if (fs) {
+    var syncFiltersH = function() {
+      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
+    };
+    syncFiltersH();
+    window.addEventListener('resize', syncFiltersH);
+  }
 });
 </script>
 </body>
@@ -248,6 +258,12 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 /* Toolbar */
 .toolbar { background: var(--surface); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 12px; box-shadow: var(--shadow-sm); display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border: 1px solid var(--border); }
 .toolbar label { font-size: 13px; color: var(--text); font-weight: 600; white-space: nowrap; }
+/* Закреплённая панель фильтров: статус-вкладки + поиск/категория/даты.
+   При скролле остаётся вверху, а записи прокручиваются под ней.
+   Фон страницы (var(--bg)) непрозрачный, поэтому контент сверху не просвечивает. */
+.filters-sticky { position: sticky; top: 0; z-index: 60; background: var(--bg); padding-top: 12px; margin: 0 -4px 16px; padding-left: 4px; padding-right: 4px; }
+.filters-sticky .toolbar { margin-bottom: 12px; }
+.filters-sticky .doc-filters { margin-bottom: 0; }
 .doc-filters { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); }
 .doc-filters .filter-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 150px; }
 .doc-filters .filter-field label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .4px; }
@@ -274,7 +290,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .table-wrap { background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow-sm); overflow: hidden; border: 1px solid var(--border); }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 900px; }
-thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: 0; }
+thead th { background: var(--surface-alt); padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; border-bottom: 2px solid var(--border); position: sticky; top: var(--filters-h, 0); z-index: 1; }
 tbody td { padding: 12px 14px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; word-break: break-word; }
 tbody tr { transition: background .1s; }
 tbody tr:hover { background: var(--surface-alt); }
@@ -506,6 +522,16 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
+  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
+  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
+  var fs = document.querySelector('.filters-sticky');
+  if (fs) {
+    var syncFiltersH = function() {
+      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
+    };
+    syncFiltersH();
+    window.addEventListener('resize', syncFiltersH);
+  }
 });
 </script>
 </body>
@@ -561,6 +587,7 @@ document.addEventListener('DOMContentLoaded', function() {
   </div>
 </div>
 
+<div class="filters-sticky">
 <div class="toolbar">
   <label>Статус:</label>
   <div class="filter-tabs">
@@ -607,6 +634,7 @@ document.addEventListener('DOMContentLoaded', function() {
     <a href="/" class="btn btn-ghost btn-sm">Сбросить</a>
   </div>
 </form>
+</div>
 
 {{if .Docs}}
 <div class="table-wrap">
@@ -645,9 +673,9 @@ document.addEventListener('DOMContentLoaded', function() {
         <div class="file-ok"><span class="file-ok-icon"><svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg></span>Файл на сервере</div>
         <div style="font-size:11px;color:var(--text-secondary);margin-top:2px">{{.FileSize}} · {{.FileAge}}</div>
         <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">
-          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-ghost btn-sm" title="Открыть файл в просмотрщике">Просмотр</a>
-          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" title="Скачать файл документа">Скачать</a>
-          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" title="Текст документа, как он проиндексирован для поиска">Текст для поиска</a>{{end}}
+          <a href="/documents/{{.ID}}/view-original" target="_blank" class="btn btn-primary btn-sm" title="Открыть файл во встроенном просмотрщике (PDF и текст прямо в браузере)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg> Просмотр</a>
+          <a href="/documents/{{.ID}}/download" class="btn btn-ghost btn-sm" title="Скачать файл документа на компьютер"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> Скачать</a>
+          {{if .Indexed}}<a href="/documents/{{.ID}}/view-processed" target="_blank" class="btn btn-ghost btn-sm" title="Текст документа, как он проиндексирован для поиска"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"/><line x1="21" y1="6" x2="3" y2="6"/><line x1="21" y1="14" x2="3" y2="14"/><line x1="21" y1="18" x2="7" y2="18"/></svg> Текст для поиска</a>{{end}}
         </div>
       {{else}}
         {{if .WebURL}}<a href="{{.WebURL}}" target="_blank" rel="noopener" class="btn btn-primary btn-sm" title="Открыть оригинал на сайте Сколково (откроется или скачается в вашем браузере)">Открыть на сайте ↗</a>{{end}}
@@ -941,6 +969,16 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
+  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
+  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
+  var fs = document.querySelector('.filters-sticky');
+  if (fs) {
+    var syncFiltersH = function() {
+      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
+    };
+    syncFiltersH();
+    window.addEventListener('resize', syncFiltersH);
+  }
 });
 </script>
 </body>
@@ -1106,6 +1144,16 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
+  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
+  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
+  var fs = document.querySelector('.filters-sticky');
+  if (fs) {
+    var syncFiltersH = function() {
+      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
+    };
+    syncFiltersH();
+    window.addEventListener('resize', syncFiltersH);
+  }
 });
 </script>
 </body>
@@ -1204,7 +1252,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .stat-card.total { border-top: 3px solid var(--primary); }
 
 /* Filter bar */
-.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); position: sticky; top: 0; z-index: 60; }
 .filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .filter-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
 .filter-group label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
@@ -1315,6 +1363,16 @@ function updateThemeIcons(theme) {
 document.addEventListener('DOMContentLoaded', function() {
   var cur = document.documentElement.getAttribute('data-theme') || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   updateThemeIcons(cur);
+  // Закреплённые фильтры: задаём шапке таблицы отступ, равный высоте панели,
+  // чтобы строки заголовков столбцов прилипали ровно под фильтрами, а не за ними.
+  var fs = document.querySelector('.filters-sticky');
+  if (fs) {
+    var syncFiltersH = function() {
+      document.documentElement.style.setProperty('--filters-h', fs.offsetHeight + 'px');
+    };
+    syncFiltersH();
+    window.addEventListener('resize', syncFiltersH);
+  }
 });
 </script>
 </body>
@@ -1522,7 +1580,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .parse-info { background: var(--primary-light); border: 1px solid var(--primary); border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; font-size: 13px; }
 .parse-info .label { font-weight: 600; color: var(--primary); }
 .parse-info .time { color: var(--text); font-weight: 500; }
-.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+.filter-bar { background: var(--surface); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); position: sticky; top: 0; z-index: 60; }
 .filter-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .filter-group { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
 .filter-group label { font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; }
@@ -1546,6 +1604,13 @@ tbody tr:hover { background: var(--surface-alt); }
 .empty-icon { width: 48px; height: 48px; margin: 0 auto 12px; background: var(--gray-bg); border-radius: 12px; display: flex; align-items: center; justify-content: center; }
 .empty-icon svg { width: 24px; height: 24px; stroke: var(--text-secondary); fill: none; stroke-width: 2; }
 .act-link { font-size: 12px; color: var(--primary); margin-right: 12px; }
+/* ── Пагинатор ── */
+.pager { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 18px 0 4px; }
+.pager .pg { min-width: 36px; text-align: center; padding: 7px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--primary); font-size: 13px; font-weight: 600; text-decoration: none; }
+.pager .pg:hover { background: var(--primary-light); }
+.pager .pg-cur { background: var(--primary); color: #fff; border-color: var(--primary); cursor: default; }
+.pager .pg-off { color: var(--text-secondary); background: var(--surface-alt); cursor: not-allowed; }
+.pager .pg-info { margin-left: auto; font-size: 12px; color: var(--text-secondary); }
 .breadcrumb { font-size: 13px; color: var(--text-secondary); margin-bottom: 6px; }
 .page-meta { display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: var(--text-secondary); margin: 12px 0 20px; }
 .page-meta b { color: var(--text); font-weight: 600; }
@@ -1637,7 +1702,10 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
     <span class="label">Последний обход сайта:</span>
     {{if .LastCrawl.IsZero}}<span class="time">ещё не выполнялся</span>{{else}}<span class="time" title="Когда краулер последний раз успешно прошёл по сайту">{{.LastCrawl.Format "02.01.2006 15:04"}}</span>{{end}}
   </div>
-  <div style="font-size:12px;color:var(--text-secondary)">Показано страниц: <strong>{{.Total}}</strong></div>
+  <div style="font-size:12px;color:var(--text-secondary)">
+    {{if .Total}}Страницы <strong>{{.RangeFrom}}–{{.RangeTo}}</strong> из <strong>{{.Total}}</strong>{{else}}Найдено: <strong>0</strong>{{end}}
+    {{if and .GrandTotal (ne .Total .GrandTotal)}}<span title="Всего страниц в базе">(всего в базе: {{.GrandTotal}})</span>{{end}}
+  </div>
 </div>
 
 {{if not .HasStore}}
@@ -1731,6 +1799,16 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
   </tbody>
 </table>
 </div></div>
+{{if gt .TotalPages 1}}
+<nav class="pager" aria-label="Постраничная навигация">
+  {{if .HasPrev}}<a class="pg" href="{{.PrevURL}}" rel="prev" title="Предыдущая страница">← Назад</a>{{else}}<span class="pg pg-off">← Назад</span>{{end}}
+  {{range .PageLinks}}
+    {{if .Current}}<span class="pg pg-cur" aria-current="page">{{.Num}}</span>{{else}}<a class="pg" href="{{.URL}}">{{.Num}}</a>{{end}}
+  {{end}}
+  {{if .HasNext}}<a class="pg" href="{{.NextURL}}" rel="next" title="Следующая страница">Вперёд →</a>{{else}}<span class="pg pg-off">Вперёд →</span>{{end}}
+  <span class="pg-info">стр. {{.Page}} из {{.TotalPages}}</span>
+</nav>
+{{end}}
 {{else}}
 <div class="empty">
   <div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg></div>

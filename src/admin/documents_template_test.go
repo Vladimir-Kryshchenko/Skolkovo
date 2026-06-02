@@ -51,6 +51,7 @@ func TestDocumentsTemplateRenders(t *testing.T) {
 		"Просмотр", // действие для документа с файлом
 		"Скачать",
 		"Переиндексировать поиск", // переименованная кнопка обслуживания
+		"filters-sticky",          // панель фильтров закрепляется при скролле
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("в выводе документов нет %q", want)

@@ -3,6 +3,8 @@ package sitepages
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -163,6 +165,115 @@ func (s *PostgresStore) Count(ctx context.Context) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM site_pages`).Scan(&n)
 	return n, err
+}
+
+// ─── Фильтрация и пагинация (для списка в админке) ───────────────────────────
+
+// PageFilter — параметры выборки страниц списка. Фильтрация и пагинация идут на
+// стороне БД, поэтому в админке доступны ВСЕ страницы, а не первые N.
+type PageFilter struct {
+	Query   string    // подстрока в title/url/section/summary (ILIKE)
+	Section string    // точный раздел
+	Status  string    // active | gone (пусто — любой)
+	Tags    []string  // страница должна содержать ВСЕ теги (оператор @>)
+	Since   time.Time // last_changed >= Since
+	Until   time.Time // last_changed <= Until
+	Limit   int       // размер страницы (<=0 — без лимита)
+	Offset  int       // сдвиг для пагинации
+}
+
+// buildSitePageWhere собирает условие WHERE и аргументы по фильтру (без лимита).
+func buildSitePageWhere(f PageFilter) (string, []any) {
+	var conds []string
+	var args []any
+	if q := strings.TrimSpace(f.Query); q != "" {
+		args = append(args, "%"+q+"%")
+		n := len(args)
+		conds = append(conds, fmt.Sprintf(
+			"(title ILIKE $%d OR url ILIKE $%d OR section ILIKE $%d OR summary ILIKE $%d)", n, n, n, n))
+	}
+	if f.Section != "" {
+		args = append(args, f.Section)
+		conds = append(conds, fmt.Sprintf("section = $%d", len(args)))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		conds = append(conds, fmt.Sprintf("status = $%d", len(args)))
+	}
+	if len(f.Tags) > 0 {
+		args = append(args, f.Tags)
+		conds = append(conds, fmt.Sprintf("tags @> $%d::text[]", len(args)))
+	}
+	if !f.Since.IsZero() {
+		args = append(args, f.Since)
+		conds = append(conds, fmt.Sprintf("last_changed >= $%d", len(args)))
+	}
+	if !f.Until.IsZero() {
+		args = append(args, f.Until)
+		conds = append(conds, fmt.Sprintf("last_changed <= $%d", len(args)))
+	}
+	if len(conds) == 0 {
+		return "", nil
+	}
+	return " WHERE " + strings.Join(conds, " AND "), args
+}
+
+// List возвращает страницы по фильтру с пагинацией, новейшие — первыми.
+func (s *PostgresStore) List(ctx context.Context, f PageFilter) ([]*Page, error) {
+	where, args := buildSitePageWhere(f)
+	q := selectCols + where + ` ORDER BY last_changed DESC`
+	if f.Limit > 0 {
+		args = append(args, f.Limit)
+		q += fmt.Sprintf(" LIMIT $%d", len(args))
+		args = append(args, f.Offset)
+		q += fmt.Sprintf(" OFFSET $%d", len(args))
+	}
+	rows, err := s.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanPages(rows)
+}
+
+// CountFiltered возвращает число страниц, удовлетворяющих фильтру (без пагинации).
+func (s *PostgresStore) CountFiltered(ctx context.Context, f PageFilter) (int, error) {
+	f.Limit, f.Offset = 0, 0
+	where, args := buildSitePageWhere(f)
+	var n int
+	err := s.pool.QueryRow(ctx, `SELECT count(*) FROM site_pages`+where, args...).Scan(&n)
+	return n, err
+}
+
+// Sections возвращает отсортированный список непустых разделов (для фильтра).
+func (s *PostgresStore) Sections(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT DISTINCT section FROM site_pages WHERE section <> '' ORDER BY section`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sec string
+		if err := rows.Scan(&sec); err != nil {
+			return nil, err
+		}
+		out = append(out, sec)
+	}
+	return out, rows.Err()
+}
+
+// LastSeenMax возвращает время последнего успешного обхода (max last_seen).
+// Используется как запасной источник, если мониторинг свежести недоступен.
+func (s *PostgresStore) LastSeenMax(ctx context.Context) (time.Time, error) {
+	var t *time.Time
+	if err := s.pool.QueryRow(ctx, `SELECT max(last_seen) FROM site_pages`).Scan(&t); err != nil {
+		return time.Time{}, err
+	}
+	if t == nil {
+		return time.Time{}, nil
+	}
+	return *t, nil
 }
 
 // ─── ИИ-обогащение ──────────────────────────────────────────────────────────

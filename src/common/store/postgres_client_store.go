@@ -39,26 +39,55 @@ func (s *PostgresClientStore) CreateClient(ctx context.Context, client *model.Cl
 	client.CreatedAt = now
 	client.UpdatedAt = now
 
+	deriveClientKey(client)
 	_, err := s.db.Exec(ctx, `
-INSERT INTO clients (id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+INSERT INTO clients (id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.CreatedAt, client.UpdatedAt)
+		nullStrPtr(client.TenantID),
+		nullStrPtr(client.APIKeyHash), nullStrPtr(client.APIKeyPrefix),
+		client.CreatedAt, client.UpdatedAt)
 	return err
+}
+
+// deriveClientKey выводит hash+prefix из открытого APIKey клиента (если задан).
+func deriveClientKey(c *model.Client) {
+	if c.APIKey != "" {
+		c.APIKeyHash = hashAPIKey(c.APIKey)
+		c.APIKeyPrefix = keyPrefix(c.APIKey)
+	}
+}
+
+// GetClientByAPIKey ищет клиента по личному API-ключу (открытый ключ, хэшируется внутри).
+func (s *PostgresClientStore) GetClientByAPIKey(ctx context.Context, apiKey string) (*model.Client, error) {
+	row := s.db.QueryRow(ctx, `
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
+FROM clients WHERE api_key_hash = $1`, hashAPIKey(apiKey))
+	return scanClient(row)
 }
 
 func (s *PostgresClientStore) GetClient(ctx context.Context, id string) (*model.Client, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients WHERE id = $1`, id)
 	return scanClient(row)
 }
 
 func (s *PostgresClientStore) GetClientByINN(ctx context.Context, inn string) (*model.Client, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients WHERE inn = $1`, inn)
+	return scanClient(row)
+}
+
+// GetClientByEmail ищет клиента по email; если tenantID не пуст — только в рамках тенанта.
+func (s *PostgresClientStore) GetClientByEmail(ctx context.Context, tenantID, email string) (*model.Client, error) {
+	row := s.db.QueryRow(ctx, `
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
+FROM clients
+WHERE lower(contact_email) = lower($1) AND ($2 = '' OR tenant_id = $2)
+LIMIT 1`, email, tenantID)
 	return scanClient(row)
 }
 
@@ -68,13 +97,16 @@ func (s *PostgresClientStore) UpdateClient(ctx context.Context, client *model.Cl
 	}
 	client.UpdatedAt = time.Now()
 
+	deriveClientKey(client)
 	tag, err := s.db.Exec(ctx, `
 UPDATE clients SET name=$2, inn=$3, contact_email=$4, contact_phone=$5,
-       residency_stage=$6, tenant_id=$7, updated_at=$8
+       residency_stage=$6, tenant_id=$7, api_key_hash=$8, api_key_prefix=$9, updated_at=$10
 WHERE id = $1`,
 		client.ID, client.Name, client.INN, nullStrPtr(client.ContactEmail),
 		nullStrPtr(client.ContactPhone), string(client.ResidencyStage),
-		client.TenantID, client.UpdatedAt)
+		nullStrPtr(client.TenantID),
+		nullStrPtr(client.APIKeyHash), nullStrPtr(client.APIKeyPrefix),
+		client.UpdatedAt)
 	if err != nil {
 		return err
 	}
@@ -101,22 +133,22 @@ func (s *PostgresClientStore) ListClients(ctx context.Context, tenantID string, 
 
 	if tenantID == "" && stage == "" {
 		rows, err = s.db.Query(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients
 ORDER BY created_at DESC`)
 	} else if tenantID == "" {
 		rows, err = s.db.Query(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients WHERE residency_stage = $1
 ORDER BY created_at DESC`, string(stage))
 	} else if stage == "" {
 		rows, err = s.db.Query(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients WHERE tenant_id = $1
 ORDER BY created_at DESC`, tenantID)
 	} else {
 		rows, err = s.db.Query(ctx, `
-SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, created_at, updated_at
+SELECT id, name, inn, contact_email, contact_phone, residency_stage, tenant_id, api_key_hash, api_key_prefix, created_at, updated_at
 FROM clients WHERE tenant_id = $1 AND residency_stage = $2
 ORDER BY created_at DESC`, tenantID, string(stage))
 	}
@@ -606,31 +638,51 @@ func (s *PostgresClientStore) CreateTenant(ctx context.Context, tenant *model.Te
 		tenant.CreatedAt = time.Now()
 	}
 
+	settings := tenant.Settings
+	if settings == nil {
+		settings = json.RawMessage("{}")
+	}
+	// Открытый ключ не сохраняем: из него выводим hash+prefix.
+	deriveTenantKey(tenant)
 	_, err := s.db.Exec(ctx, `
-INSERT INTO tenants (id, name, api_key, settings, created_at, active)
-VALUES ($1, $2, $3, $4, $5, $6)`,
-		tenant.ID, tenant.Name, tenant.APIKey, tenant.Settings,
-		tenant.CreatedAt, tenant.Active)
+INSERT INTO tenants (id, name, api_key_hash, api_key_prefix, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+		tenant.ID, tenant.Name,
+		nullStrPtr(tenant.APIKeyHash), nullStrPtr(tenant.APIKeyPrefix),
+		nullStrPtr(tenant.TelegramBotToken), nullStrPtr(tenant.TelegramBotUsername),
+		settings, tenant.CreatedAt, tenant.KeyRotatedAt, tenant.Active)
 	return err
+}
+
+// deriveTenantKey выводит hash+prefix из открытого APIKey (если он задан).
+func deriveTenantKey(t *model.Tenant) {
+	if t.APIKey != "" {
+		t.APIKeyHash = hashAPIKey(t.APIKey)
+		t.APIKeyPrefix = keyPrefix(t.APIKey)
+	}
 }
 
 func (s *PostgresClientStore) GetTenant(ctx context.Context, id string) (*model.Tenant, error) {
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, api_key, settings, created_at, active
+SELECT id, name, api_key, api_key_hash, api_key_prefix, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
 FROM tenants WHERE id = $1`, id)
 	return scanTenant(row)
 }
 
 func (s *PostgresClientStore) GetTenantByAPIKey(ctx context.Context, apiKey string) (*model.Tenant, error) {
+	// Двойной lookup: по хэшу (новые ключи) ИЛИ по legacy открытому ключу
+	// (старые тенанты до ротации). Принимает открытый ключ, хэширует внутри.
 	row := s.db.QueryRow(ctx, `
-SELECT id, name, api_key, settings, created_at, active
-FROM tenants WHERE api_key = $1`, apiKey)
+SELECT id, name, api_key, api_key_hash, api_key_prefix, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
+FROM tenants
+WHERE api_key_hash = $1 OR (api_key IS NOT NULL AND api_key = $2)`,
+		hashAPIKey(apiKey), apiKey)
 	return scanTenant(row)
 }
 
 func (s *PostgresClientStore) ListTenants(ctx context.Context) ([]*model.Tenant, error) {
 	rows, err := s.db.Query(ctx, `
-SELECT id, name, api_key, settings, created_at, active
+SELECT id, name, api_key, api_key_hash, api_key_prefix, telegram_bot_token, telegram_bot_username, settings, created_at, key_rotated_at, active
 FROM tenants ORDER BY created_at DESC`)
 	if err != nil {
 		return nil, err
@@ -652,10 +704,18 @@ func (s *PostgresClientStore) UpdateTenant(ctx context.Context, tenant *model.Te
 	if err := validateTenant(tenant); err != nil {
 		return err
 	}
+	// При обновлении ключа выводим hash+prefix и затираем legacy открытый ключ
+	// (api_key=NULL), иначе старый ключ продолжал бы работать через двойной lookup.
+	deriveTenantKey(tenant)
 	tag, err := s.db.Exec(ctx, `
-UPDATE tenants SET name=$2, api_key=$3, settings=$4, active=$5
+UPDATE tenants SET name=$2, api_key=NULL, api_key_hash=$3, api_key_prefix=$4,
+                   telegram_bot_token=$5, telegram_bot_username=$6,
+                   settings=$7, key_rotated_at=$8, active=$9
 WHERE id = $1`,
-		tenant.ID, tenant.Name, tenant.APIKey, tenant.Settings, tenant.Active)
+		tenant.ID, tenant.Name,
+		nullStrPtr(tenant.APIKeyHash), nullStrPtr(tenant.APIKeyPrefix),
+		nullStrPtr(tenant.TelegramBotToken), nullStrPtr(tenant.TelegramBotUsername),
+		tenant.Settings, tenant.KeyRotatedAt, tenant.Active)
 	if err != nil {
 		return err
 	}
@@ -671,9 +731,9 @@ WHERE id = $1`,
 
 func scanClient(r row) (*model.Client, error) {
 	var c model.Client
-	var email, phone, stage *string
+	var email, phone, stage, apiKeyHash, apiKeyPrefix *string
 	err := r.Scan(&c.ID, &c.Name, &c.INN, &email, &phone, &stage,
-		&c.TenantID, &c.CreatedAt, &c.UpdatedAt)
+		&c.TenantID, &apiKeyHash, &apiKeyPrefix, &c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -682,6 +742,8 @@ func scanClient(r row) (*model.Client, error) {
 	}
 	c.ContactEmail = deref(email)
 	c.ContactPhone = deref(phone)
+	c.APIKeyHash = deref(apiKeyHash)
+	c.APIKeyPrefix = deref(apiKeyPrefix)
 	if stage != nil {
 		c.ResidencyStage = model.ResidencyStage(*stage)
 	}
@@ -793,14 +855,25 @@ func scanClientDocument(r row) (*model.ClientDocument, error) {
 func scanTenant(r row) (*model.Tenant, error) {
 	var t model.Tenant
 	var settings json.RawMessage
-	err := r.Scan(&t.ID, &t.Name, &t.APIKey, &settings, &t.CreatedAt, &t.Active)
+	var apiKey, apiKeyHash, apiKeyPrefix, tgToken, tgUsername *string
+	var keyRotatedAt *time.Time
+	err := r.Scan(&t.ID, &t.Name, &apiKey, &apiKeyHash, &apiKeyPrefix,
+		&tgToken, &tgUsername, &settings, &t.CreatedAt, &keyRotatedAt, &t.Active)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	// APIKey заполняется только для legacy-строк (открытый ключ до ротации) —
+	// для отображения маски; новые строки несут только hash+prefix.
+	t.APIKey = deref(apiKey)
+	t.APIKeyHash = deref(apiKeyHash)
+	t.APIKeyPrefix = deref(apiKeyPrefix)
+	t.TelegramBotToken = deref(tgToken)
+	t.TelegramBotUsername = deref(tgUsername)
 	t.Settings = settings
+	t.KeyRotatedAt = keyRotatedAt
 	return &t, nil
 }
 
@@ -813,4 +886,52 @@ func nullStrPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// ============================================================================
+// SubscriptionStore
+// ============================================================================
+
+func (s *PostgresClientStore) GetSubscriptions(ctx context.Context, clientID string) ([]string, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT category FROM client_subscriptions WHERE client_id = $1 ORDER BY category`, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var cats []string
+	for rows.Next() {
+		var c string
+		if err := rows.Scan(&c); err != nil {
+			return nil, err
+		}
+		cats = append(cats, c)
+	}
+	return cats, rows.Err()
+}
+
+func (s *PostgresClientStore) SetSubscriptions(ctx context.Context, clientID string, categories []string) error {
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM client_subscriptions WHERE client_id = $1`, clientID); err != nil {
+		return err
+	}
+
+	for _, cat := range categories {
+		if cat == "" {
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO client_subscriptions (client_id, category) VALUES ($1, $2)
+			 ON CONFLICT (client_id, category) DO NOTHING`, clientID, cat); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }

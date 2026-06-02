@@ -18,6 +18,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -27,6 +28,17 @@ import (
 	rag "baza-skolkovo/src/rag_service"
 )
 
+// TenantKeyValidator проверяет per-tenant API-ключи (store.TenantStore ему удовлетворяет).
+type TenantKeyValidator interface {
+	GetTenantByAPIKey(ctx context.Context, apiKey string) (*model.Tenant, error)
+}
+
+// ClientKeyValidator проверяет личные API-ключи клиентов-резидентов
+// (*store.PostgresClientStore ему удовлетворяет).
+type ClientKeyValidator interface {
+	GetClientByAPIKey(ctx context.Context, apiKey string) (*model.Client, error)
+}
+
 // Server — HTTP-обёртка над MCP с авторизацией и лимитом запросов.
 type Server struct {
 	rag      *rag.Service
@@ -35,6 +47,14 @@ type Server struct {
 	limiters *limiterSet
 	addr     string
 	mcpSrv   *server.MCPServer // кэшированный MCPServer (ленивая инициализация)
+
+	// tenants — валидатор per-tenant ключей (nil → только глобальный apiKey).
+	tenants TenantKeyValidator
+	// clients — валидатор личных ключей клиентов-резидентов (nil → не проверяются).
+	clients  ClientKeyValidator
+	keyCache *keyCache
+	// audit — аудит-логгер MCP-запросов (nil → аудит отключён).
+	audit *AuditLogger
 }
 
 // New создаёт MCP-сервер.
@@ -46,6 +66,32 @@ func New(addr, apiKey string, rateRPS int, ragSvc *rag.Service, st store.Store) 
 		limiters: newLimiterSet(rateRPS),
 		addr:     addr,
 	}
+}
+
+// WithTenantAuth включает проверку per-tenant API-ключей против хранилища тенантов.
+// Глобальный apiKey при этом продолжает работать (проверяется первым).
+func (s *Server) WithTenantAuth(v TenantKeyValidator) *Server {
+	s.tenants = v
+	if s.keyCache == nil {
+		s.keyCache = newKeyCache(60 * time.Second)
+	}
+	return s
+}
+
+// WithClientAuth включает проверку личных API-ключей клиентов-резидентов.
+// Проверяются после глобального и tenant-ключей; tenant_id атрибутируется тенанту клиента.
+func (s *Server) WithClientAuth(v ClientKeyValidator) *Server {
+	s.clients = v
+	if s.keyCache == nil {
+		s.keyCache = newKeyCache(60 * time.Second)
+	}
+	return s
+}
+
+// WithAudit включает запись аудит-лога MCP-запросов в PostgreSQL.
+func (s *Server) WithAudit(logger *AuditLogger) *Server {
+	s.audit = logger
+	return s
 }
 
 // buildMCP регистрирует базовые инструменты MCP и возвращает MCPServer.
@@ -62,6 +108,7 @@ func (s *Server) buildMCP() *server.MCPServer {
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithOpenWorldHintAnnotation(false),
 			mcp.WithString("query", mcp.Required(), mcp.Description("Поисковый запрос на естественном языке")),
+			mcp.WithString("tags", mcp.Description("Фильтр по тегам через запятую (документ должен содержать ВСЕ указанные теги); необязательно")),
 			mcp.WithNumber("limit", mcp.Description("Сколько фрагментов вернуть (по умолчанию 5)")),
 		),
 		s.handleSearch,
@@ -112,7 +159,13 @@ func (s *Server) handleSearch(ctx context.Context, req mcp.CallToolRequest) (*mc
 		return mcp.NewToolResultError("параметр query обязателен"), nil
 	}
 	limit := req.GetInt("limit", 5)
-	results, err := s.rag.Search(ctx, query, limit)
+	tags := splitTags(req.GetString("tags", ""))
+	var results []rag.Result
+	if len(tags) > 0 {
+		results, err = s.rag.SearchWithTags(ctx, query, limit, tags)
+	} else {
+		results, err = s.rag.Search(ctx, query, limit)
+	}
 	if err != nil {
 		return mcp.NewToolResultError("ошибка поиска: " + err.Error()), nil
 	}
@@ -222,10 +275,18 @@ func (s *Server) ListenAndServe() error {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"baza-skolkovo-mcp"}`))
 	})
-	mux.Handle("/mcp", s.middleware(streamSrv))
+	// /files/{id} — открытая отдача скачанной копии документа (см. files.go).
+	// Нужна для кликабельных ссылок на источники в ответах консультанта.
+	mux.HandleFunc("/files/", s.handleDocumentFile)
+	// Порядок обёрток: аудит (внешний, кладёт auditInfo в контекст) →
+	// middleware (внутренний, заполняет tenant_id и проверяет ключ).
+	mux.Handle("/mcp", AuditMiddleware(s.audit, s.middleware(streamSrv)))
 
-	if s.apiKey == "" {
+	if s.apiKey == "" && s.tenants == nil {
 		log.Println("[mcp] ВНИМАНИЕ: MCP_API_KEY не задан — сервер работает без авторизации")
+	}
+	if s.tenants != nil {
+		log.Println("[mcp] per-tenant авторизация включена (ключи тенантов + глобальный ключ)")
 	}
 	log.Printf("[mcp] открытый MCP-сервер слушает %s (endpoint /mcp)", s.addr)
 	return http.ListenAndServe(s.addr, mux)
@@ -240,10 +301,18 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
-		if s.apiKey != "" && !s.authorized(r) {
-			log.Printf("[mcp] 401 %s unauthorized", ip)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
+		// Авторизация требуется, если задан глобальный ключ ИЛИ включена
+		// per-tenant проверка. Если оба отсутствуют — сервер открыт.
+		if s.apiKey != "" || s.tenants != nil || s.clients != nil {
+			tenantID, clientID, ok := s.resolveAuth(r)
+			if !ok {
+				log.Printf("[mcp] 401 %s unauthorized", ip)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			if tenantID != "" || clientID != "" {
+				setAuditIdentity(r.Context(), tenantID, clientID)
+			}
 		}
 		log.Printf("[mcp] %s %s %s", ip, r.Method, r.URL.Path)
 		next.ServeHTTP(w, r)
@@ -264,15 +333,66 @@ func clientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
-func (s *Server) authorized(r *http.Request) bool {
+// extractAPIKey достаёт API-ключ из заголовка X-API-Key или Authorization: Bearer.
+func extractAPIKey(r *http.Request) string {
 	if k := r.Header.Get("X-API-Key"); k != "" {
-		return k == s.apiKey
+		return k
 	}
 	const pfx = "Bearer "
 	if a := r.Header.Get("Authorization"); strings.HasPrefix(a, pfx) {
-		return strings.TrimPrefix(a, pfx) == s.apiKey
+		return strings.TrimPrefix(a, pfx)
 	}
-	return false
+	return ""
+}
+
+// resolveAuth проверяет API-ключ запроса. Возвращает (tenantID, clientID, ok):
+//   - глобальный apiKey → ("", "", true) [совместимость; не атрибутируется];
+//   - ключ активного тенанта → (tenant.ID, "", true);
+//   - личный ключ клиента → (client.TenantID, client.ID, true);
+//   - иначе → ("", "", false).
+//
+// Результаты кэшируются (положительные и отрицательные) на короткий TTL.
+func (s *Server) resolveAuth(r *http.Request) (tenantID, clientID string, ok bool) {
+	key := extractAPIKey(r)
+	if key == "" {
+		return "", "", false
+	}
+	// Глобальный ключ проверяется первым — обратная совместимость.
+	if s.apiKey != "" && key == s.apiKey {
+		return "", "", true
+	}
+	if s.tenants == nil && s.clients == nil {
+		return "", "", false
+	}
+	if tid, cid, found, hit := s.keyCache.get(key); hit {
+		return tid, cid, found
+	}
+
+	// 1) Ключ тенанта.
+	if s.tenants != nil {
+		if t, err := s.tenants.GetTenantByAPIKey(r.Context(), key); err == nil && t != nil && t.Active {
+			s.keyCache.set(key, t.ID, "", true)
+			return t.ID, "", true
+		}
+	}
+	// 2) Личный ключ клиента-резидента.
+	if s.clients != nil {
+		if c, err := s.clients.GetClientByAPIKey(r.Context(), key); err == nil && c != nil {
+			s.keyCache.set(key, c.TenantID, c.ID, true)
+			return c.TenantID, c.ID, true
+		}
+	}
+
+	s.keyCache.set(key, "", "", false)
+	return "", "", false
+}
+
+// setAuditIdentity проставляет tenant_id/client_id в аудит-информацию запроса.
+func setAuditIdentity(ctx context.Context, tenantID, clientID string) {
+	if info := auditInfoFromCtx(ctx); info != nil {
+		info.TenantID = tenantID
+		info.ClientID = clientID
+	}
 }
 
 func toJSON(v any) string {

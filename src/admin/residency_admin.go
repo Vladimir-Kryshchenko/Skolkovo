@@ -3,6 +3,8 @@ package admin
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -12,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
@@ -60,6 +64,8 @@ func RegisterResidencyRoutes(mux *http.ServeMux, stores Stores) *http.ServeMux {
 	mux.HandleFunc("GET /clients", s.handleClientsList)
 	mux.HandleFunc("GET /clients/{id}", s.handleClientCard)
 	mux.HandleFunc("POST /clients/{id}/stage", s.handleClientStageTransition)
+	mux.HandleFunc("POST /clients/{id}/generate-key", s.handleClientGenerateKey)
+	mux.HandleFunc("POST /clients/{id}/revoke-key", s.handleClientRevokeKey)
 
 	// Чек-листы
 	mux.HandleFunc("GET /checklists", s.handleChecklists)
@@ -73,6 +79,9 @@ func RegisterResidencyRoutes(mux *http.ServeMux, stores Stores) *http.ServeMux {
 	// Тенанты
 	mux.HandleFunc("GET /tenants", s.handleTenants)
 	mux.HandleFunc("POST /tenants", s.handleTenantCreate)
+	mux.HandleFunc("POST /tenants/{id}/regenerate-key", s.handleTenantRegenerateKey)
+	mux.HandleFunc("POST /tenants/{id}/telegram-token", s.handleTenantTelegramToken)
+	mux.HandleFunc("POST /tenants/{id}/toggle-active", s.handleTenantToggleActive)
 
 	// Мероприятия (контроль парсинга)
 	mux.HandleFunc("GET /events-admin", s.handleEventsAdmin)
@@ -212,6 +221,8 @@ type clientCardData struct {
 	Flash       string
 	FlashKind   string
 	StageLabels map[model.ResidencyStage]string
+	// RevealKey — полный личный ключ клиента для одноразового показа после генерации.
+	RevealKey string
 }
 
 func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Request) {
@@ -234,16 +245,7 @@ func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Reques
 		checklists, _ = s.stores.ChecklistStore.GetClientChecklists(ctx, id)
 	}
 
-	stageLabels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
+	stageLabels := model.StageLabels()
 
 	data := clientCardData{
 		Client:      client,
@@ -253,6 +255,9 @@ func (s *ResidencyServer) handleClientCard(w http.ResponseWriter, r *http.Reques
 		Flash:       r.URL.Query().Get("msg"),
 		FlashKind:   orDefault(r.URL.Query().Get("kind"), "ok"),
 		StageLabels: stageLabels,
+	}
+	if key, ok := keyReveals.take(r.URL.Query().Get("reveal_nonce")); ok {
+		data.RevealKey = key
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -315,28 +320,65 @@ func (s *ResidencyServer) handleClientStageTransition(w http.ResponseWriter, r *
 		fmt.Sprintf("Стадия изменена: %s → %s", transition.FromStage, transition.ToStage), "ok")
 }
 
-// autoReportingDeadline создаёт дедлайн квартальной отчётности при переходе на
-// стадию «отчётность» (если ещё нет незакрытого). No-op без DeadlineStore.
-func (s *ResidencyServer) autoReportingDeadline(ctx context.Context, clientID string, to model.ResidencyStage) {
-	if to != model.StageReporting || s.stores.DeadlineStore == nil {
+// handleClientGenerateKey генерирует (или ротирует) личный MCP API-ключ клиента.
+func (s *ResidencyServer) handleClientGenerateKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	client, err := s.stores.ClientStore.GetClient(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/clients", "Клиент не найден", "err")
 		return
 	}
-	if existing, err := s.stores.DeadlineStore.ListDeadlines(ctx, clientID, 0); err == nil {
-		for _, d := range existing {
-			if d.Type == model.DeadlineReporting && d.Status != model.DeadlineCompleted {
-				return
-			}
-		}
+
+	newKey := generateAPIKey()
+	client.APIKey = newKey // стор сохранит только hash+prefix
+	client.UpdatedAt = time.Now()
+	if err := s.stores.ClientStore.UpdateClient(ctx, client); err != nil {
+		residencyRedirect(w, r, "/clients/"+id, "Ошибка генерации ключа: "+err.Error(), "err")
+		return
 	}
-	_ = s.stores.DeadlineStore.CreateDeadline(ctx, &model.Deadline{
-		ID:        generateUUID(),
-		ClientID:  clientID,
-		Title:     "Квартальный отчёт резидента",
-		DueDate:   time.Now().AddDate(0, 0, 90),
-		Type:      model.DeadlineReporting,
-		Status:    model.DeadlineUpcoming,
-		CreatedAt: time.Now(),
-	})
+
+	w.Header().Set("Cache-Control", "no-store")
+	nonce := keyReveals.put(newKey)
+	http.Redirect(w, r, "/clients/"+id+"?reveal_nonce="+url.QueryEscape(nonce)+
+		"&msg="+url.QueryEscape("Личный ключ клиента создан. Скопируйте — позже он будет скрыт.")+"&kind=ok",
+		http.StatusSeeOther)
+}
+
+// handleClientRevokeKey отзывает личный ключ клиента (очищает hash+prefix).
+func (s *ResidencyServer) handleClientRevokeKey(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	ctx := r.Context()
+
+	client, err := s.stores.ClientStore.GetClient(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/clients", "Клиент не найден", "err")
+		return
+	}
+
+	// Явно очищаем хэш/префикс: deriveClientKey не трогает их при пустом APIKey,
+	// поэтому сбрасываем напрямую перед UpdateClient.
+	client.APIKey = ""
+	client.APIKeyHash = ""
+	client.APIKeyPrefix = ""
+	client.UpdatedAt = time.Now()
+	if err := s.stores.ClientStore.UpdateClient(ctx, client); err != nil {
+		residencyRedirect(w, r, "/clients/"+id, "Ошибка отзыва ключа: "+err.Error(), "err")
+		return
+	}
+
+	residencyRedirect(w, r, "/clients/"+id, "Личный ключ клиента отозван", "ok")
+}
+
+// autoReportingDeadline создаёт дедлайн квартальной отчётности при переходе на
+// стадию «отчётность» (если ещё нет незакрытого). No-op без DeadlineStore.
+// Делегирует единой логике store.EnsureReportingDeadline (общей с MCP).
+func (s *ResidencyServer) autoReportingDeadline(ctx context.Context, clientID string, to model.ResidencyStage) {
+	if s.stores.DeadlineStore == nil {
+		return
+	}
+	store.EnsureReportingDeadline(ctx, s.stores.DeadlineStore, clientID, to)
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +562,8 @@ type tenantsPageData struct {
 	Tenants   []*model.Tenant
 	Flash     string
 	FlashKind string
+	// RevealKey — полный API-ключ для одноразового показа (после создания/ротации).
+	RevealKey string
 }
 
 func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) {
@@ -544,6 +588,10 @@ func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) 
 		Flash:     r.URL.Query().Get("msg"),
 		FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
 	}
+	// Одноразовый показ свежесгенерированного ключа по nonce.
+	if key, ok := keyReveals.take(r.URL.Query().Get("reveal_nonce")); ok {
+		data.RevealKey = key
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tenantsTmpl.Execute(w, data); err != nil {
@@ -558,11 +606,26 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 	}
 
 	name := strings.TrimSpace(r.FormValue("name"))
-	apiKey := strings.TrimSpace(r.FormValue("api_key"))
-
-	if name == "" || apiKey == "" {
-		residencyRedirect(w, r, "/tenants", "Имя и API-ключ обязательны", "err")
+	if name == "" {
+		residencyRedirect(w, r, "/tenants", "Название обязательно", "err")
 		return
+	}
+
+	// API-ключ можно задать вручную, но обычно генерируется автоматически.
+	apiKey := strings.TrimSpace(r.FormValue("api_key"))
+	if apiKey == "" {
+		apiKey = generateAPIKey()
+	}
+
+	ctx := r.Context()
+
+	// Тенант «Default» создаётся идемпотентно: если он уже есть — переиспользуем
+	// существующий, а не плодим дубли строк «Default» при каждом обращении.
+	if strings.EqualFold(name, store.DefaultTenantName) {
+		if existing, err := store.GetOrCreateDefaultTenant(ctx, s.stores.TenantStore); err == nil {
+			residencyRedirect(w, r, "/tenants", "Тенант по умолчанию: "+existing.Name, "ok")
+			return
+		}
 	}
 
 	tenant := &model.Tenant{
@@ -573,13 +636,123 @@ func (s *ResidencyServer) handleTenantCreate(w http.ResponseWriter, r *http.Requ
 		Active:    true,
 	}
 
-	ctx := r.Context()
 	if err := s.stores.TenantStore.CreateTenant(ctx, tenant); err != nil {
 		residencyRedirect(w, r, "/tenants", "Ошибка создания тенанта: "+err.Error(), "err")
 		return
 	}
 
-	residencyRedirect(w, r, "/tenants", "Тенант создан: "+name, "ok")
+	// Показываем полный ключ один раз (в БД он хранится только как hash+prefix).
+	s.redirectTenantReveal(w, r, apiKey, "Тенант создан: "+name+". Скопируйте API-ключ — позже он будет скрыт.")
+}
+
+// handleTenantRegenerateKey ротирует MCP API-ключ тенанта.
+func (s *ResidencyServer) handleTenantRegenerateKey(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	now := time.Now()
+	newKey := generateAPIKey()
+	tenant.APIKey = newKey
+	tenant.KeyRotatedAt = &now
+
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка ротации ключа: "+err.Error(), "err")
+		return
+	}
+
+	s.redirectTenantReveal(w, r, newKey, "Ключ обновлён. Старый ключ больше не действует — скопируйте новый.")
+}
+
+// handleTenantTelegramToken сохраняет/сбрасывает токен Telegram-бота тенанта.
+func (s *ResidencyServer) handleTenantTelegramToken(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	token := strings.TrimSpace(r.FormValue("telegram_token"))
+	tenant.TelegramBotToken = token
+	if token == "" {
+		// Токен убран — сбрасываем и кэш @username (бот будет остановлен менеджером).
+		tenant.TelegramBotUsername = ""
+	}
+
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка сохранения токена: "+err.Error(), "err")
+		return
+	}
+
+	msg := "Токен Telegram-бота сохранён. Бот поднимется в течение минуты."
+	if token == "" {
+		msg = "Токен Telegram-бота убран. Бот будет остановлен."
+	}
+	residencyRedirect(w, r, "/tenants", msg, "ok")
+}
+
+// handleTenantToggleActive включает/выключает тенанта.
+func (s *ResidencyServer) handleTenantToggleActive(w http.ResponseWriter, r *http.Request) {
+	if s.stores.TenantStore == nil {
+		http.Error(w, "TenantStore не настроен", http.StatusInternalServerError)
+		return
+	}
+	ctx := r.Context()
+	id := r.PathValue("id")
+
+	tenant, err := s.stores.TenantStore.GetTenant(ctx, id)
+	if err != nil {
+		residencyRedirect(w, r, "/tenants", "Тенант не найден: "+err.Error(), "err")
+		return
+	}
+
+	tenant.Active = !tenant.Active
+	if err := s.stores.TenantStore.UpdateTenant(ctx, tenant); err != nil {
+		residencyRedirect(w, r, "/tenants", "Ошибка обновления: "+err.Error(), "err")
+		return
+	}
+
+	state := "активирован"
+	if !tenant.Active {
+		state = "деактивирован"
+	}
+	residencyRedirect(w, r, "/tenants", "Тенант "+state+": "+tenant.Name, "ok")
+}
+
+// redirectTenantReveal перенаправляет на /tenants с одноразовым показом ключа.
+// Открытый ключ кладётся в keyReveals под nonce; в URL попадает только nonce.
+func (s *ResidencyServer) redirectTenantReveal(w http.ResponseWriter, r *http.Request, apiKey, msg string) {
+	w.Header().Set("Cache-Control", "no-store")
+	nonce := keyReveals.put(apiKey)
+	target := "/tenants?reveal_nonce=" + url.QueryEscape(nonce) +
+		"&msg=" + url.QueryEscape(msg) + "&kind=ok"
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// generateAPIKey генерирует сильный MCP API-ключ вида sk_skolkovo_<32 hex>.
+func generateAPIKey() string {
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand практически не падает; на всякий случай — UUID без дефисов.
+		return "sk_skolkovo_" + strings.ReplaceAll(generateUUID(), "-", "")
+	}
+	return "sk_skolkovo_" + hex.EncodeToString(buf)
 }
 
 // ---------------------------------------------------------------------------
@@ -773,6 +946,20 @@ func (s *ResidencyServer) handleAPIClientCreate(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	ctx := r.Context()
+
+	// Если tenant_id не указан — берём (или идемпотентно создаём) тенант по умолчанию.
+	tenantID := req.TenantID
+	if tenantID == "" && s.stores.TenantStore != nil {
+		if tenant, err := store.GetOrCreateDefaultTenant(ctx, s.stores.TenantStore); err == nil {
+			tenantID = tenant.ID
+		}
+	}
+	if tenantID == "" {
+		residencyJSONResp(w, false, "", "tenant_id обязателен (нет ни одного тенанта)", nil)
+		return
+	}
+
 	client := &model.Client{
 		ID:             generateUUID(),
 		Name:           req.Name,
@@ -780,12 +967,11 @@ func (s *ResidencyServer) handleAPIClientCreate(w http.ResponseWriter, r *http.R
 		ContactEmail:   req.ContactEmail,
 		ContactPhone:   req.ContactPhone,
 		ResidencyStage: model.StageApplication,
-		TenantID:       req.TenantID,
+		TenantID:       tenantID,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 	}
 
-	ctx := r.Context()
 	if err := s.stores.ClientStore.CreateClient(ctx, client); err != nil {
 		residencyJSONResp(w, false, "", err.Error(), nil)
 		return
@@ -869,20 +1055,7 @@ var residencyFuncs = template.FuncMap{
 }
 
 func formatStage(s model.ResidencyStage) string {
-	labels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
-	if l, ok := labels[s]; ok {
-		return l
-	}
-	return string(s)
+	return model.StageLabel(s)
 }
 
 func stepsCount(raw json.RawMessage) int {
@@ -960,9 +1133,9 @@ func daysUntil(due time.Time, now time.Time) int {
 	return int(due.Sub(now).Hours() / 24)
 }
 
-// generateUUID — простая генерация UUID-подобного ID.
+// generateUUID генерирует UUID v4.
 func generateUUID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
+	return uuid.New().String()
 }
 
 // ---------------------------------------------------------------------------
@@ -1012,7 +1185,7 @@ main { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
 .stat .l { font-size: 11px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-top: 4px; font-weight: 500; }
 .toolbar { background: var(--surface); border-radius: var(--radius); padding: 14px 18px; margin-bottom: 16px; box-shadow: var(--shadow); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .toolbar label { font-size: 13px; color: var(--text-secondary); font-weight: 500; }
-.filter-tabs { display: flex; gap: 4px; }
+.filter-tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .filter-tab { padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; text-decoration: none; color: var(--text-secondary); transition: all .15s; border: 1px solid transparent; cursor: pointer; }
 .filter-tab:hover { background: var(--primary-light); color: var(--primary); }
 .filter-tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
@@ -1072,6 +1245,9 @@ a.link:hover { text-decoration: underline; }
   .grid-2, .grid-3 { grid-template-columns: 1fr; }
   .toolbar { flex-direction: column; }
 }
+[data-tooltip] { position: relative; }
+[data-tooltip]:hover::after { content: attr(data-tooltip); position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); background: #1a1a2e; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 11px; white-space: nowrap; z-index: 999; pointer-events: none; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+[data-tooltip]:hover::before { content: ''; position: absolute; bottom: calc(100% + 2px); left: 50%; transform: translateX(-50%); border: 5px solid transparent; border-top-color: #1a1a2e; z-index: 999; pointer-events: none; }
 `
 
 // Шаблон списка клиентов.
@@ -1086,48 +1262,34 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Клиенты — Резидентство</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/" title="Документы базы знаний"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>Документы</a>
-    <a href="/clients" title="Список всех клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
-    <a href="/tenants" title="Организации и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Список мероприятий">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
-    <a href="/ai/models" title="ИИ-модели и агенты"><svg style="width:14px;height:14px;vertical-align:-2px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"/><path d="M16 14H8a4 4 0 0 0-4 4v2h16v-2a4 4 0 0 0-4-4z"/><circle cx="18" cy="8" r="3"/><circle cx="6" cy="8" r="3"/></svg>ИИ</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat"><div class="n">{{.TotalCount}}</div><div class="l">Всего</div></div>
+  <div class="stat" data-tooltip="Всего клиентов в текущей выборке"><div class="n">{{.TotalCount}}</div><div class="l">Всего</div></div>
   {{range $stage, $count := .StageCounts}}
-  <div class="stat"><div class="n">{{$count}}</div><div class="l">{{FormatStage $stage}}</div></div>
+  <div class="stat" data-tooltip="Клиентов на стадии «{{FormatStage $stage}}»"><div class="n">{{$count}}</div><div class="l">{{FormatStage $stage}}</div></div>
   {{end}}
 </div>
 
 <div class="toolbar">
   <label>Стадия:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterStage ""}} active{{end}}" href="/clients">Все</a>
-    <a class="filter-tab{{if eq .FilterStage "подача_заявки"}} active{{end}}" href="/clients?stage=подача_заявки">Подача заявки</a>
-    <a class="filter-tab{{if eq .FilterStage "экспертиза"}} active{{end}}" href="/clients?stage=экспертиза">Экспертиза</a>
-    <a class="filter-tab{{if eq .FilterStage "решение"}} active{{end}}" href="/clients?stage=решение">Решение</a>
-    <a class="filter-tab{{if eq .FilterStage "договор"}} active{{end}}" href="/clients?stage=договор">Договор</a>
-    <a class="filter-tab{{if eq .FilterStage "резидент"}} active{{end}}" href="/clients?stage=резидент">Резидент</a>
-    <a class="filter-tab{{if eq .FilterStage "отчётность"}} active{{end}}" href="/clients?stage=отчётность">Отчётность</a>
-    <a class="filter-tab{{if eq .FilterStage "продление"}} active{{end}}" href="/clients?stage=продление">Продление</a>
-    <a class="filter-tab{{if eq .FilterStage "выход"}} active{{end}}" href="/clients?stage=выход">Выход</a>
+    <a class="filter-tab{{if eq .FilterStage ""}} active{{end}}" href="/clients" data-tooltip="Показать клиентов всех стадий">Все</a>
+    <a class="filter-tab{{if eq .FilterStage "подача_заявки"}} active{{end}}" href="/clients?stage=подача_заявки" data-tooltip="Только подавшие заявку">Подача заявки</a>
+    <a class="filter-tab{{if eq .FilterStage "экспертиза"}} active{{end}}" href="/clients?stage=экспертиза" data-tooltip="Заявки на экспертизе">Экспертиза</a>
+    <a class="filter-tab{{if eq .FilterStage "решение"}} active{{end}}" href="/clients?stage=решение" data-tooltip="Ожидают решения">Решение</a>
+    <a class="filter-tab{{if eq .FilterStage "договор"}} active{{end}}" href="/clients?stage=договор" data-tooltip="На стадии заключения договора">Договор</a>
+    <a class="filter-tab{{if eq .FilterStage "резидент"}} active{{end}}" href="/clients?stage=резидент" data-tooltip="Действующие резиденты">Резидент</a>
+    <a class="filter-tab{{if eq .FilterStage "отчётность"}} active{{end}}" href="/clients?stage=отчётность" data-tooltip="На стадии отчётности">Отчётность</a>
+    <a class="filter-tab{{if eq .FilterStage "продление"}} active{{end}}" href="/clients?stage=продление" data-tooltip="Продлевают резидентство">Продление</a>
+    <a class="filter-tab{{if eq .FilterStage "выход"}} active{{end}}" href="/clients?stage=выход" data-tooltip="Выходят из резидентства">Выход</a>
   </div>
   <div class="search-box">
     <form method="get" action="/clients">
       <input type="hidden" name="stage" value="{{.FilterStage}}">
-      <input type="text" name="q" value="{{.SearchQuery}}" placeholder="Поиск по ИНН или имени…">
+      <input type="text" name="q" value="{{.SearchQuery}}" placeholder="Поиск по ИНН или имени…" data-tooltip="Введите ИНН или название клиента">
     </form>
   </div>
 </div>
@@ -1139,7 +1301,7 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
     <tr>
       <th style="width:35%">Клиент</th>
       <th>ИНН</th>
-      <th>Email</th>
+      <th>Эл. почта (Email)</th>
       <th>Стадия</th>
       <th>Тенант</th>
       <th>Обновлён</th>
@@ -1152,10 +1314,10 @@ var residencyTmpl = template.Must(template.New("residency-clients").Funcs(reside
     <td><strong>{{.Name}}</strong></td>
     <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px">{{.INN}}</code></td>
     <td>{{.ContactEmail}}</td>
-    <td><span class="badge stage-{{.ResidencyStage}}">{{FormatStage .ResidencyStage}}</span></td>
+    <td><span class="badge stage-{{.ResidencyStage}}" data-tooltip="Текущая стадия резидентства">{{FormatStage .ResidencyStage}}</span></td>
     <td>{{.TenantID}}</td>
-    <td class="meta">{{.UpdatedAt.Format "02.01.2006 15:04"}}</td>
-    <td><a href="/clients/{{.ID}}" class="btn btn-ghost btn-sm"><svg style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Карточка</a></td>
+    <td class="meta" data-tooltip="Дата последнего изменения">{{.UpdatedAt.Format "02.01.2006 15:04"}}</td>
+    <td><a href="/clients/{{.ID}}" class="btn btn-ghost btn-sm" data-tooltip="Открыть карточку клиента"><svg style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Карточка</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -1189,7 +1351,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон карточки клиента.
 var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1203,25 +1365,30 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>{{.Client.Name}}</h1>
-  <div style="display:flex;gap:8px;align-items:center">
-    <a href="/clients" title="Вернуться к списку клиентов">← Клиенты</a>
-    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
-    <a href="/checklists" title="Чек-листы">Чек-листы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему: светлая / тёмная" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
+
+<script>
+function copyText(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.textContent).then(function(){var b=event.target;var t=b.textContent;b.textContent='✓';setTimeout(function(){b.textContent=t},1200);});}
+</script>
+
+{{if .RevealKey}}
+<div class="card" style="border:2px solid var(--yellow);background:var(--yellow-bg)">
+  <h3>🔑 Личный ключ клиента — сохраните сейчас</h3>
+  <p class="meta" style="margin-bottom:8px">Ключ показывается один раз. В базе хранится только его хэш — позже посмотреть нельзя, только перевыпустить.</p>
+  <code id="reveal-key" style="font-size:14px;padding:6px 10px;background:var(--surface);border-radius:4px;user-select:all">{{.RevealKey}}</code>
+  <button type="button" class="btn btn-primary btn-sm" onclick="copyText('reveal-key')" data-tooltip="Скопировать ключ">⧉ Копировать</button>
+</div>
+{{end}}
 
 <div class="grid-2">
   <div class="card">
     <h3>Основная информация</h3>
     <div class="grid-2">
       <div><div class="meta">ИНН</div><strong>{{.Client.INN}}</strong></div>
-      <div><div class="meta">Стадия</div><span class="badge stage-{{.Client.ResidencyStage}}">{{index .StageLabels .Client.ResidencyStage}}</span></div>
-      <div><div class="meta">Email</div>{{or .Client.ContactEmail "—"}}</div>
+      <div><div class="meta">Стадия</div><span class="badge stage-{{.Client.ResidencyStage}}" data-tooltip="Текущая стадия резидентства">{{index .StageLabels .Client.ResidencyStage}}</span></div>
+      <div><div class="meta">Эл. почта (Email)</div>{{or .Client.ContactEmail "—"}}</div>
       <div><div class="meta">Телефон</div>{{or .Client.ContactPhone "—"}}</div>
       <div><div class="meta">Тенант</div>{{.Client.TenantID}}</div>
       <div><div class="meta">Создан</div>{{.Client.CreatedAt.Format "02.01.2006 15:04"}}</div>
@@ -1233,7 +1400,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
     <form method="POST" action="/clients/{{.Client.ID}}/stage">
       <div class="form-group">
         <label>Целевая стадия</label>
-        <select name="to_stage">
+        <select name="to_stage" data-tooltip="Выберите стадию для перехода">
           {{$current := .Client.ResidencyStage}}
           {{range $stage, $label := .StageLabels}}
             <option value="{{$stage}}" {{if eq $stage $current}}disabled{{end}}>{{$label}}</option>
@@ -1242,10 +1409,29 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
       </div>
       <div class="form-group">
         <label>Примечание</label>
-        <textarea name="notes" placeholder="Причина перехода, комментарий…"></textarea>
+        <textarea name="notes" placeholder="Причина перехода, комментарий…" data-tooltip="Причина или комментарий к переходу"></textarea>
       </div>
-      <button type="submit" class="btn btn-primary">Перевести</button>
+      <button type="submit" class="btn btn-primary" data-tooltip="Перевести клиента на выбранную стадию">Перевести</button>
     </form>
+  </div>
+</div>
+
+<div class="card">
+  <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.778-7.778zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>Подключение к MCP (личный ключ агента)</h3>
+  <p class="meta" style="margin-bottom:10px">Личный API-ключ позволяет клиенту подключить своего агента/приложение к MCP-серверу под собственным идентификатором (вызовы атрибутируются клиенту в аудите).</p>
+  <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center">
+    <div>
+      <div class="meta">Текущий ключ</div>
+      {{if .Client.APIKeyPrefix}}<code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Идентификатор ключа (не секрет)">{{.Client.APIKeyPrefix}}…</code>{{else}}<span class="meta">не выдан</span>{{end}}
+    </div>
+    <form method="POST" action="/clients/{{.Client.ID}}/generate-key" {{if .Client.APIKeyPrefix}}onsubmit="return confirm('Перевыпустить ключ? Старый перестанет работать.')"{{end}} style="display:inline">
+      <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Сгенерировать/перевыпустить личный ключ клиента">{{if .Client.APIKeyPrefix}}↻ Перевыпустить{{else}}Сгенерировать ключ{{end}}</button>
+    </form>
+    {{if .Client.APIKeyPrefix}}
+    <form method="POST" action="/clients/{{.Client.ID}}/revoke-key" onsubmit="return confirm('Отозвать ключ клиента?')" style="display:inline">
+      <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Отозвать личный ключ">Отозвать</button>
+    </form>
+    {{end}}
   </div>
 </div>
 
@@ -1271,7 +1457,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
     <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Дедлайны</h3>
     {{if .Deadlines}}
     {{range .Deadlines}}
-    <div class="card deadline-{{.Status}}" style="margin-bottom:8px;padding:12px">
+    <div class="card deadline-{{.Status}}" style="margin-bottom:8px;padding:12px" data-tooltip="Дедлайн клиента, статус: {{.Status}}">
       <div><strong>{{.Title}}</strong></div>
       <div class="meta">Срок: {{.DueDate.Format "02.01.2006"}} | Статус: {{.Status}}</div>
     </div>
@@ -1285,7 +1471,7 @@ var clientCardTmpl = template.Must(template.New("client-card").Funcs(residencyFu
     <h3><svg style="width:16px;height:16px;vertical-align:-3px;margin-right:4px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Чек-листы</h3>
     {{if .Checklists}}
     {{range .Checklists}}
-    <div class="card" style="margin-bottom:8px;padding:12px">
+    <div class="card" style="margin-bottom:8px;padding:12px" data-tooltip="Чек-лист клиента, статус: {{.Status}}">
       <div><strong>{{.ID}}</strong></div>
       <div class="meta">Статус: {{.Status}} | Начат: {{if .StartedAt}}{{.StartedAt.Format "02.01.2006"}}{{else}}—{{end}}</div>
     </div>
@@ -1316,7 +1502,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон чек-листов.
 var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1330,36 +1516,24 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Чек-листы</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы и гранты">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
   {{range $t, $count := .TypeCounts}}
-  <div class="stat"><div class="n">{{$count}}</div><div class="l">{{index $.TypeLabels $t}}</div></div>
+  <div class="stat" data-tooltip="Чек-листов типа «{{index $.TypeLabels $t}}»"><div class="n">{{$count}}</div><div class="l">{{index $.TypeLabels $t}}</div></div>
   {{end}}
 </div>
 
 <div class="toolbar">
   <label>Тип процедуры:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterType ""}} active{{end}}" href="/checklists">Все</a>
-    <a class="filter-tab{{if eq .FilterType "entry"}} active{{end}}" href="/checklists?type=entry">Вступление</a>
-    <a class="filter-tab{{if eq .FilterType "reporting"}} active{{end}}" href="/checklists?type=reporting">Отчётность</a>
-    <a class="filter-tab{{if eq .FilterType "extension"}} active{{end}}" href="/checklists?type=extension">Продление</a>
-    <a class="filter-tab{{if eq .FilterType "exit"}} active{{end}}" href="/checklists?type=exit">Выход</a>
+    <a class="filter-tab{{if eq .FilterType ""}} active{{end}}" href="/checklists" data-tooltip="Чек-листы всех процедур">Все</a>
+    <a class="filter-tab{{if eq .FilterType "entry"}} active{{end}}" href="/checklists?type=entry" data-tooltip="Чек-листы вступления">Вступление</a>
+    <a class="filter-tab{{if eq .FilterType "reporting"}} active{{end}}" href="/checklists?type=reporting" data-tooltip="Чек-листы отчётности">Отчётность</a>
+    <a class="filter-tab{{if eq .FilterType "extension"}} active{{end}}" href="/checklists?type=extension" data-tooltip="Чек-листы продления">Продление</a>
+    <a class="filter-tab{{if eq .FilterType "exit"}} active{{end}}" href="/checklists?type=exit" data-tooltip="Чек-листы выхода">Выход</a>
   </div>
 </div>
 
@@ -1379,10 +1553,10 @@ var checklistsTmpl = template.Must(template.New("checklists").Funcs(residencyFun
   {{range .Checklists}}
   <tr>
     <td><strong>{{.Title}}</strong></td>
-    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px">{{.ProcedureType}}</code></td>
+    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Тип процедуры чек-листа">{{.ProcedureType}}</code></td>
     <td>{{.Version}}</td>
     <td class="meta">{{.CreatedAt.Format "02.01.2006"}}</td>
-    <td class="meta">{{.Steps | StepsCount}} шагов</td>
+    <td class="meta" data-tooltip="Количество шагов в чек-листе">{{.Steps | StepsCount}} шагов</td>
   </tr>
   {{end}}
   </tbody>
@@ -1402,7 +1576,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон дедлайнов.
 var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1416,32 +1590,20 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>Дедлайны</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat" style="border-left:3px solid var(--red)"><div class="n" style="color:var(--red)">{{len .Overdue}}</div><div class="l">Просроченные</div></div>
-  <div class="stat" style="border-left:3px solid var(--yellow)"><div class="n" style="color:var(--yellow)">{{len .Upcoming}}</div><div class="l">Ближайшие (30 дн.)</div></div>
+  <div class="stat" style="border-left:3px solid var(--red)" data-tooltip="Дедлайны с истёкшим сроком"><div class="n" style="color:var(--red)">{{len .Overdue}}</div><div class="l">Просроченные</div></div>
+  <div class="stat" style="border-left:3px solid var(--yellow)" data-tooltip="Дедлайны в ближайшие 30 дней"><div class="n" style="color:var(--yellow)">{{len .Upcoming}}</div><div class="l">Ближайшие (30 дн.)</div></div>
 </div>
 
 {{if .Overdue}}
 <div class="card">
   <h3 style="color:var(--red)"><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--red);margin-right:8px;vertical-align:middle"></span>Просроченные дедлайны</h3>
   {{range .Overdue}}
-  <div class="card deadline-overdue" style="margin-bottom:8px;padding:12px">
+  <div class="card deadline-overdue" style="margin-bottom:8px;padding:12px" data-tooltip="Просрочено на {{DaysSince .DueDate $.Now}} дн.">
     <div><strong>{{.Title}}</strong></div>
     <div class="meta">Клиент: {{.ClientID}} | Срок: {{.DueDate.Format "02.01.2006"}} | Просрочено на {{DaysSince .DueDate $.Now}} дн.</div>
   </div>
@@ -1453,7 +1615,7 @@ var deadlinesTmpl = template.Must(template.New("deadlines").Funcs(residencyFuncs
 <div class="card">
   <h3><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--yellow);margin-right:8px;vertical-align:middle"></span>Ближайшие дедлайны</h3>
   {{range .Upcoming}}
-  <div class="card deadline-upcoming" style="margin-bottom:8px;padding:12px">
+  <div class="card deadline-upcoming" style="margin-bottom:8px;padding:12px" data-tooltip="Осталось {{DaysUntil .DueDate $.Now}} дн.">
     <div><strong>{{.Title}}</strong></div>
     <div class="meta">Клиент: {{.ClientID}} | Срок: {{.DueDate.Format "02.01.2006"}} | Осталось {{DaysUntil .DueDate $.Now}} дн.</div>
   </div>
@@ -1475,7 +1637,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон шаблонов документов.
 var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1489,19 +1651,7 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Шаблоны документов</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
@@ -1522,10 +1672,10 @@ var templatesTmpl = template.Must(template.New("templates").Funcs(residencyFuncs
   {{range .Templates}}
   <tr>
     <td><strong>{{.Name}}</strong></td>
-    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px">{{.Type}}</code></td>
-    <td class="meta">{{.TemplateFile}}</td>
+    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Тип шаблона документа">{{.Type}}</code></td>
+    <td class="meta" data-tooltip="Имя файла шаблона">{{.TemplateFile}}</td>
     <td>{{.Version}}</td>
-    <td class="meta">{{.Variables | VarsCount}} переменных</td>
+    <td class="meta" data-tooltip="Число подстановочных переменных">{{.Variables | VarsCount}} переменных</td>
     <td class="meta">{{.CreatedAt.Format "02.01.2006"}}</td>
   </tr>
   {{end}}
@@ -1546,7 +1696,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон тенантов.
 var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1560,36 +1710,34 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M8 10h.01M16 10h.01M12 10h.01M8 14h.01M16 14h.01M12 14h.01"/></svg>Тенанты</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Список клиентов">Клиенты</a>
-    <a href="/checklists" title="Чек-листы процедур">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны клиентов">Дедлайны</a>
-    <a href="/templates" title="Шаблоны документов">Шаблоны</a>
-    <a href="/tenants" title="Тенанты и API-ключи">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
+<script>
+function copyText(id){var el=document.getElementById(id);if(!el)return;navigator.clipboard.writeText(el.textContent).then(function(){var b=event.target;var t=b.textContent;b.textContent='✓';setTimeout(function(){b.textContent=t},1200);});}
+function submitToken(form,hasToken){var v=form.telegram_token.value.trim();if(v===''&&hasToken){return confirm('Очистить токен и остановить бота тенанта?');}return true;}
+</script>
+
+{{if .RevealKey}}
+<div class="card" style="border:2px solid var(--yellow);background:var(--yellow-bg)">
+  <h3>🔑 Новый API-ключ — сохраните сейчас</h3>
+  <p class="meta" style="margin-bottom:8px">Ключ показывается один раз. В базе хранится только его хэш — позже посмотреть нельзя, только перевыпустить.</p>
+  <code id="reveal-key" style="font-size:14px;padding:6px 10px;background:var(--surface);border-radius:4px;user-select:all">{{.RevealKey}}</code>
+  <button type="button" class="btn btn-primary btn-sm" onclick="copyText('reveal-key')" data-tooltip="Скопировать ключ">⧉ Копировать</button>
+</div>
+{{end}}
+
 <div class="card">
   <h3>Создать тенант</h3>
+  <p class="meta" style="margin-bottom:12px">Тенант — организация-заказчик. После создания получит собственный MCP API-ключ для подключения своей системы/агента и может подключить свой Telegram-бот.</p>
   <form method="POST" action="/tenants">
-    <div class="grid-2">
-      <div class="form-group">
-        <label>Название</label>
-        <input type="text" name="name" placeholder="Название организации" required>
-      </div>
-      <div class="form-group">
-        <label>API-ключ</label>
-        <input type="text" name="api_key" placeholder="sk-xxxxxxxxxxxxxxxx" required>
-      </div>
+    <div class="form-group">
+      <label>Название</label>
+      <input type="text" name="name" placeholder="Название организации" required data-tooltip="Название организации-тенанта">
     </div>
-    <button type="submit" class="btn btn-primary">Создать</button>
+    <p class="meta" style="margin:-4px 0 12px">API-ключ будет сгенерирован автоматически и показан один раз.</p>
+    <button type="submit" class="btn btn-primary" data-tooltip="Создать нового тенанта">Создать</button>
   </form>
 </div>
 
@@ -1599,18 +1747,41 @@ var tenantsTmpl = template.Must(template.New("tenants").Funcs(residencyFuncs).Pa
   <thead>
     <tr>
       <th>Название</th>
-      <th>API-ключ</th>
+      <th>MCP API-ключ</th>
+      <th>Telegram-бот</th>
       <th>Активен</th>
       <th>Создан</th>
+      <th>Действия</th>
     </tr>
   </thead>
   <tbody>
   {{range .Tenants}}
   <tr>
     <td><strong>{{.Name}}</strong></td>
-    <td><code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px">{{maskAPI .APIKey}}</code></td>
-    <td>{{if .Active}}<span class="badge" style="background:var(--green-bg);color:var(--green)">Да</span>{{else}}<span class="badge" style="background:var(--gray-bg);color:var(--gray)">Нет</span>{{end}}</td>
+    <td>
+      <code style="background:var(--gray-bg);padding:2px 6px;border-radius:3px;font-size:12px" data-tooltip="Идентификатор ключа (не секрет); полный ключ виден только при создании/ротации">{{if .APIKeyPrefix}}{{.APIKeyPrefix}}…{{else if .APIKey}}{{maskAPI .APIKey}}{{else}}—{{end}}</code>
+    </td>
+    <td>
+      {{if .TelegramBotUsername}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Бот запущен">@{{.TelegramBotUsername}}</span>
+      {{else if .TelegramBotToken}}<span class="badge" style="background:var(--yellow-bg);color:var(--yellow)" data-tooltip="Токен задан, бот запускается">токен задан</span>
+      {{else}}<span class="meta">не задан</span>{{end}}
+    </td>
+    <td>{{if .Active}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Тенант активен">Да</span>{{else}}<span class="badge" style="background:var(--gray-bg);color:var(--gray)" data-tooltip="Тенант отключён">Нет</span>{{end}}</td>
     <td class="meta">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>
+    <td>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <form method="POST" action="/tenants/{{.ID}}/regenerate-key" onsubmit="return confirm('Сгенерировать новый ключ? Старый перестанет работать.')" style="display:inline">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Ротация MCP-ключа">↻ ключ</button>
+        </form>
+        <form method="POST" action="/tenants/{{.ID}}/toggle-active" style="display:inline">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Включить/выключить тенанта">{{if .Active}}выкл.{{else}}вкл.{{end}}</button>
+        </form>
+        <form method="POST" action="/tenants/{{.ID}}/telegram-token" onsubmit="return submitToken(this, {{if .TelegramBotToken}}true{{else}}false{{end}})" style="display:flex;gap:4px;align-items:center">
+          <input type="text" name="telegram_token" placeholder="{{if .TelegramBotToken}}задан · новый/пусто=стоп{{else}}токен @BotFather{{end}}" style="width:160px;font-size:12px;padding:4px 6px" data-tooltip="Введите токен, чтобы поднять бота тенанта; отправьте пустым — чтобы остановить">
+          <button type="submit" class="btn btn-ghost btn-sm" data-tooltip="Сохранить токен бота">Бот</button>
+        </form>
+      </div>
+    </td>
   </tr>
   {{end}}
   </tbody>
@@ -1630,7 +1801,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон мероприятий.
 var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1644,35 +1815,23 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Мероприятия</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Клиенты">Клиенты</a>
-    <a href="/checklists" title="Чек-листы">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
-    <a href="/templates" title="Шаблоны">Шаблоны</a>
-    <a href="/tenants" title="Тенанты">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat" style="border-left:3px solid var(--green)"><div class="n" style="color:var(--green)">{{.Upcoming}}</div><div class="l">Предстоящие</div></div>
-  <div class="stat" style="border-left:3px solid var(--gray)"><div class="n" style="color:var(--gray)">{{.Past}}</div><div class="l">Прошедшие</div></div>
-  <div class="stat" style="border-left:3px solid var(--red)"><div class="n" style="color:var(--red)">{{.Cancelled}}</div><div class="l">Отменённые</div></div>
+  <div class="stat" style="border-left:3px solid var(--green)" data-tooltip="Предстоящие мероприятия"><div class="n" style="color:var(--green)">{{.Upcoming}}</div><div class="l">Предстоящие</div></div>
+  <div class="stat" style="border-left:3px solid var(--gray)" data-tooltip="Уже прошедшие мероприятия"><div class="n" style="color:var(--gray)">{{.Past}}</div><div class="l">Прошедшие</div></div>
+  <div class="stat" style="border-left:3px solid var(--red)" data-tooltip="Отменённые мероприятия"><div class="n" style="color:var(--red)">{{.Cancelled}}</div><div class="l">Отменённые</div></div>
 </div>
 
 <div class="toolbar">
   <label>Статус:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/events-admin">Все</a>
-    <a class="filter-tab{{if eq .FilterStatus "active"}} active{{end}}" href="/events-admin?status=active">Активные</a>
-    <a class="filter-tab{{if eq .FilterStatus "past"}} active{{end}}" href="/events-admin?status=past">Прошедшие</a>
-    <a class="filter-tab{{if eq .FilterStatus "cancelled"}} active{{end}}" href="/events-admin?status=cancelled">Отменённые</a>
+    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/events-admin" data-tooltip="Мероприятия любого статуса">Все</a>
+    <a class="filter-tab{{if eq .FilterStatus "active"}} active{{end}}" href="/events-admin?status=active" data-tooltip="Только активные мероприятия">Активные</a>
+    <a class="filter-tab{{if eq .FilterStatus "past"}} active{{end}}" href="/events-admin?status=past" data-tooltip="Только прошедшие мероприятия">Прошедшие</a>
+    <a class="filter-tab{{if eq .FilterStatus "cancelled"}} active{{end}}" href="/events-admin?status=cancelled" data-tooltip="Только отменённые мероприятия">Отменённые</a>
   </div>
 </div>
 
@@ -1698,8 +1857,8 @@ var eventsTmpl = template.Must(template.New("events-admin").Funcs(residencyFuncs
     <td>{{.EventDate.Format "02.01.2006"}}</td>
     <td>{{if not .EventEndDate.IsZero}}{{.EventEndDate.Format "02.01.2006"}}{{else}}—{{end}}</td>
     <td class="meta">{{or .Location "—"}}</td>
-    <td><span class="badge" style="background:{{StatusBg .Status}}">{{.Status}}</span></td>
-    <td class="meta"><a href="{{.SourceURL}}" target="_blank" class="link" style="font-size:12px">ссылка</a></td>
+    <td><span class="badge" style="background:{{StatusBg .Status}}" data-tooltip="Статус мероприятия">{{.Status}}</span></td>
+    <td class="meta"><a href="{{.SourceURL}}" target="_blank" class="link" style="font-size:12px" data-tooltip="Открыть источник мероприятия">ссылка</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -1719,7 +1878,7 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))
 
 // Шаблон конкурсов.
 var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyFuncs).Parse(`<!DOCTYPE html>
@@ -1733,34 +1892,22 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
 <script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 </head>
 <body>
-<header>
-  <h1><svg style="width:20px;height:20px;vertical-align:-3px;margin-right:6px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="7"/><polyline points="8.21 13.89 7 23 12 20 17 23 15.79 13.88"/></svg>Конкурсы и гранты</h1>
-  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-    <a href="/clients" title="Клиенты">Клиенты</a>
-    <a href="/checklists" title="Чек-листы">Чек-листы</a>
-    <a href="/deadlines" title="Дедлайны">Дедлайны</a>
-    <a href="/templates" title="Шаблоны">Шаблоны</a>
-    <a href="/tenants" title="Тенанты">Тенанты</a>
-    <a href="/events-admin" title="Мероприятия">Мероприятия</a>
-    <a href="/contests-admin" title="Конкурсы">Конкурсы</a>
-    <button id="themeBtn" onclick="toggleTheme()" title="Переключить тему" style="min-width:36px;padding:7px 10px;cursor:pointer;background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.25);border-radius:6px;display:inline-flex;align-items:center;justify-content:center"><svg id="themeIconMoon" style="width:16px;height:16px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg><svg id="themeIconSun" style="width:16px;height:16px;display:none" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg></button>
-  </div>
-</header>
+{{template "sidebar" .}}
 <main>
 {{if .Flash}}<div class="flash {{.FlashKind}}">{{.Flash}}</div>{{end}}
 
 <div class="stats">
-  <div class="stat" style="border-left:3px solid var(--green)"><div class="n" style="color:var(--green)">{{.Active}}</div><div class="l">Активные</div></div>
-  <div class="stat" style="border-left:3px solid var(--gray)"><div class="n" style="color:var(--gray)">{{.Closed}}</div><div class="l">Закрытые</div></div>
+  <div class="stat" style="border-left:3px solid var(--green)" data-tooltip="Открытые приём заявок конкурсы"><div class="n" style="color:var(--green)">{{.Active}}</div><div class="l">Активные</div></div>
+  <div class="stat" style="border-left:3px solid var(--gray)" data-tooltip="Завершённые конкурсы"><div class="n" style="color:var(--gray)">{{.Closed}}</div><div class="l">Закрытые</div></div>
 </div>
 
 <div class="toolbar">
   <label>Статус:</label>
   <div class="filter-tabs">
-    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/contests-admin">Все</a>
-    <a class="filter-tab{{if eq .FilterStatus "active"}} active{{end}}" href="/contests-admin?status=active">Активные</a>
-    <a class="filter-tab{{if eq .FilterStatus "closed"}} active{{end}}" href="/contests-admin?status=closed">Закрытые</a>
-    <a class="filter-tab{{if eq .FilterStatus "winner_selected"}} active{{end}}" href="/contests-admin?status=winner_selected">Определён победитель</a>
+    <a class="filter-tab{{if eq .FilterStatus ""}} active{{end}}" href="/contests-admin" data-tooltip="Конкурсы любого статуса">Все</a>
+    <a class="filter-tab{{if eq .FilterStatus "active"}} active{{end}}" href="/contests-admin?status=active" data-tooltip="Только активные конкурсы">Активные</a>
+    <a class="filter-tab{{if eq .FilterStatus "closed"}} active{{end}}" href="/contests-admin?status=closed" data-tooltip="Только закрытые конкурсы">Закрытые</a>
+    <a class="filter-tab{{if eq .FilterStatus "winner_selected"}} active{{end}}" href="/contests-admin?status=winner_selected" data-tooltip="Конкурсы с выбранным победителем">Определён победитель</a>
   </div>
 </div>
 
@@ -1786,8 +1933,8 @@ var contestsTmpl = template.Must(template.New("contests-admin").Funcs(residencyF
     <td>{{.StartDate.Format "02.01.2006"}}</td>
     <td>{{.EndDate.Format "02.01.2006"}}</td>
     <td class="meta">{{or .Prize "—"}}</td>
-    <td><span class="badge" style="background:{{ContestStatusBg .Status}}">{{.Status}}</span></td>
-    <td class="meta"><a href="{{.SourceURL}}" target="_blank" class="link" style="font-size:12px">ссылка</a></td>
+    <td><span class="badge" style="background:{{ContestStatusBg .Status}}" data-tooltip="Статус конкурса">{{.Status}}</span></td>
+    <td class="meta"><a href="{{.SourceURL}}" target="_blank" class="link" style="font-size:12px" data-tooltip="Открыть источник конкурса">ссылка</a></td>
   </tr>
   {{end}}
   </tbody>
@@ -1807,4 +1954,4 @@ function updateThemeIcons(t){var m=document.getElementById('themeIconMoon');var 
 document.addEventListener('DOMContentLoaded',function(){var cur=document.documentElement.getAttribute('data-theme')||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');updateThemeIcons(cur);});
 </script>
 </body>
-</html>`))
+</html>` + sidebarResidencyDefine))

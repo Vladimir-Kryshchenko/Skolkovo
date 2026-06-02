@@ -22,10 +22,11 @@ import (
 
 // PortalConfig — конфигурация портала.
 type PortalConfig struct {
-	Addr      string // например ":8081"
-	BaseURL   string // например "http://portal.skolkovo.local"
-	MCPURL    string // URL MCP-сервера для генерации документов
-	MCPAPIKey string // API-ключ для MCP
+	Addr                string // например ":8092"
+	BaseURL             string // например "http://portal.skolkovo.local"
+	MCPURL              string // URL MCP-сервера для генерации документов
+	MCPAPIKey           string // API-ключ для MCP
+	TelegramBotUsername string // @username Telegram-бота, например @SkolkovoBot
 }
 
 // NotificationReader — доступ к персональным уведомлениям клиента (inbox).
@@ -38,16 +39,17 @@ type NotificationReader interface {
 
 // PortalStores — все хранилища, необходимые порталу.
 type PortalStores struct {
-	ClientStore    store.ClientStore
-	ChecklistStore store.ChecklistStore
-	DeadlineStore  store.DeadlineStore
-	TemplateStore  store.TemplateStore
-	DocStore       store.ClientDocumentStore
-	DocumentStore  store.Store                  // реестр документов (для скачивания)
-	ChangeStore    changes.Store                // лента изменений; может быть nil
-	NotifStore     NotificationReader           // inbox уведомлений клиента; может быть nil
-	Generator      *generator.DocumentGenerator // генератор документов; может быть nil
-	Mailer         *mailer.Mailer               // отправка ссылок входа; может быть nil
+	ClientStore       store.ClientStore
+	ChecklistStore    store.ChecklistStore
+	DeadlineStore     store.DeadlineStore
+	TemplateStore     store.TemplateStore
+	DocStore          store.ClientDocumentStore
+	DocumentStore     store.Store                  // реестр документов (для скачивания)
+	ChangeStore       changes.Store                // лента изменений; может быть nil
+	NotifStore        NotificationReader           // inbox уведомлений клиента; может быть nil
+	SubscriptionStore store.SubscriptionStore      // подписки на уведомления; может быть nil
+	Generator         *generator.DocumentGenerator // генератор документов; может быть nil
+	Mailer            *mailer.Mailer               // отправка ссылок входа; может быть nil
 }
 
 // PortalServer — HTTP-сервер личного кабинета.
@@ -102,6 +104,8 @@ func (ps *PortalServer) Start(ctx context.Context) error {
 	mux.HandleFunc("GET /documents/file", ps.requireAuth(ps.handleDocumentFile))
 	mux.HandleFunc("GET /notifications", ps.requireAuth(ps.handleNotifications))
 	mux.HandleFunc("POST /notifications/read", ps.requireAuth(ps.handleNotificationRead))
+	mux.HandleFunc("GET /subscriptions", ps.requireAuth(ps.handleSubscriptions))
+	mux.HandleFunc("POST /subscriptions", ps.requireAuth(ps.handleSubscriptionsSubmit))
 
 	// JSON API
 	mux.HandleFunc("GET /api/me", ps.requireAuthJSON(ps.apiMe))
@@ -343,12 +347,17 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 	}
 
 	data := dashboardData{
-		Client:        client,
-		Deadlines:     ps.getDeadlines(r.Context(), client.ID),
-		Checklists:    ps.getClientChecklists(r.Context(), client.ID),
-		Documents:     ps.getClientDocuments(r.Context(), client.ID),
-		Flash:         r.URL.Query().Get("msg"),
-		RecentChanges: ps.getRecentChanges(r.Context()),
+		baseData: baseData{
+			Client:    client,
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "dashboard",
+		},
+		Deadlines:           ps.getDeadlines(r.Context(), client.ID),
+		Checklists:          ps.enrichChecklists(r.Context(), ps.getClientChecklists(r.Context(), client.ID)),
+		Documents:           ps.enrichClientDocuments(r.Context(), ps.getClientDocuments(r.Context(), client.ID)),
+		RecentChanges:       ps.getRecentChanges(r.Context()),
+		TelegramBotUsername: ps.config.TelegramBotUsername,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -364,8 +373,13 @@ func (ps *PortalServer) handleDashboard(w http.ResponseWriter, r *http.Request) 
 func (ps *PortalServer) handleChecklists(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
 	data := checklistsData{
-		Client:     ps.mustGetClient(r.Context(), sess.ClientID),
-		Checklists: ps.getClientChecklists(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "checklists",
+		},
+		Checklists: ps.enrichChecklists(r.Context(), ps.getClientChecklists(r.Context(), sess.ClientID)),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -381,7 +395,12 @@ func (ps *PortalServer) handleChecklists(w http.ResponseWriter, r *http.Request)
 func (ps *PortalServer) handleDeadlines(w http.ResponseWriter, r *http.Request) {
 	sess := sessionFromContext(r)
 	data := deadlinesData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "deadlines",
+		},
 		Deadlines: ps.getDeadlines(r.Context(), sess.ClientID),
 		Overdue:   ps.getOverdueDeadlines(r.Context()),
 	}
@@ -402,7 +421,12 @@ func (ps *PortalServer) handleDocuments(w http.ResponseWriter, r *http.Request) 
 	docs := ps.enrichClientDocuments(r.Context(), clientDocs)
 
 	data := documentsData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "documents",
+		},
 		Documents: docs,
 	}
 
@@ -433,10 +457,13 @@ func (ps *PortalServer) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := generateData{
-		Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+		baseData: baseData{
+			Client:    ps.mustGetClient(r.Context(), sess.ClientID),
+			Flash:     r.URL.Query().Get("msg"),
+			FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
+			Page:      "generate",
+		},
 		Templates: templates,
-		Flash:     r.URL.Query().Get("msg"),
-		FlashKind: orDefault(r.URL.Query().Get("kind"), "ok"),
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -589,6 +616,80 @@ func (ps *PortalServer) getClientChecklists(ctx context.Context, clientID string
 	return cc
 }
 
+// enrichChecklists обогащает привязки чек-листов клиента данными шаблона
+// (название, тип процедуры, шаги) и статусами шагов, вычисляя прогресс.
+// Используются методы store.ChecklistStore: GetChecklist (шаблон со списком шагов
+// через Checklist.ParseSteps) и GetStepStatuses (статусы шагов по client_checklist_id).
+func (ps *PortalServer) enrichChecklists(ctx context.Context, clientChecklists []*model.ClientChecklist) []*checklistView {
+	if len(clientChecklists) == 0 {
+		return nil
+	}
+	out := make([]*checklistView, 0, len(clientChecklists))
+	for _, cc := range clientChecklists {
+		out = append(out, ps.buildChecklistView(ctx, cc))
+	}
+	return out
+}
+
+// buildChecklistView собирает представление одного чек-листа клиента.
+func (ps *PortalServer) buildChecklistView(ctx context.Context, cc *model.ClientChecklist) *checklistView {
+	v := &checklistView{
+		ID:     cc.ID,
+		Status: cc.Status,
+	}
+
+	var defs []model.ChecklistStepDef
+	if ps.stores.ChecklistStore != nil && cc.ChecklistID != "" {
+		if tpl, err := ps.stores.ChecklistStore.GetChecklist(ctx, cc.ChecklistID); err == nil && tpl != nil {
+			v.Title = tpl.Title
+			v.ProcedureType = procedureTypeLabel(tpl.ProcedureType)
+			if parsed, err := tpl.ParseSteps(); err == nil {
+				defs = parsed
+			}
+		}
+	}
+	if v.Title == "" {
+		v.Title = "Чек-лист"
+	}
+	v.TotalSteps = len(defs)
+
+	// Статусы шагов клиента по индексу шага.
+	statusByIndex := map[int]model.StepStatus{}
+	if ps.stores.ChecklistStore != nil && cc.ID != "" {
+		if statuses, err := ps.stores.ChecklistStore.GetStepStatuses(ctx, cc.ID); err == nil {
+			for _, ss := range statuses {
+				statusByIndex[ss.StepIndex] = ss.Status
+			}
+		}
+	}
+
+	// Собираем шаги из определения шаблона, накладывая статус клиента.
+	v.Steps = make([]checklistStepView, 0, len(defs))
+	for i, def := range defs {
+		st := statusByIndex[i]
+		if st == "" {
+			st = model.StepPending
+		}
+		if st == model.StepDone {
+			v.CompletedSteps++
+		}
+		v.Steps = append(v.Steps, checklistStepView{Title: def.Title, Status: string(st)})
+	}
+
+	switch {
+	case v.TotalSteps > 0:
+		v.Progress = int(float64(v.CompletedSteps) / float64(v.TotalSteps) * 100.0)
+	case cc.Status == model.ChecklistCompleted:
+		// Нет определения шагов — оцениваем прогресс по статусу привязки.
+		v.Progress = 100
+	case cc.Status == model.ChecklistInProgress:
+		v.Progress = 50
+	default:
+		v.Progress = 0
+	}
+	return v
+}
+
 func (ps *PortalServer) getClientDocuments(ctx context.Context, clientID string) []*model.ClientDocument {
 	if ps.stores.DocStore == nil {
 		return nil
@@ -675,39 +776,11 @@ func sanitizeFilename(name string) string {
 }
 
 func stageProgress(stage model.ResidencyStage) int {
-	stages := []model.ResidencyStage{
-		model.StageApplication,
-		model.StageExamination,
-		model.StageDecision,
-		model.StageContract,
-		model.StageResident,
-		model.StageReporting,
-		model.StageExtension,
-		model.StageExit,
-	}
-	for i, s := range stages {
-		if s == stage {
-			return int(float64(i+1) / float64(len(stages)) * 100)
-		}
-	}
-	return 0
+	return model.StageProgress(stage)
 }
 
 func stageLabel(stage model.ResidencyStage) string {
-	labels := map[model.ResidencyStage]string{
-		model.StageApplication: "Подача заявки",
-		model.StageExamination: "Экспертиза",
-		model.StageDecision:    "Решение",
-		model.StageContract:    "Договор",
-		model.StageResident:    "Резидент",
-		model.StageReporting:   "Отчётность",
-		model.StageExtension:   "Продление",
-		model.StageExit:        "Выход",
-	}
-	if l, ok := labels[stage]; ok {
-		return l
-	}
-	return string(stage)
+	return model.StageLabel(stage)
 }
 
 func deadlineStatusClass(d *model.Deadline) string {
@@ -721,17 +794,37 @@ func deadlineStatusClass(d *model.Deadline) string {
 	return "upcoming"
 }
 
+// deadlineStatusLabel — русская подпись статуса дедлайна, согласованная с
+// deadlineStatusClass (Выполнен / Просрочен / Предстоит).
+func deadlineStatusLabel(d *model.Deadline) string {
+	switch deadlineStatusClass(d) {
+	case "completed":
+		return "Выполнен"
+	case "overdue":
+		return "Просрочен"
+	default:
+		return "Предстоит"
+	}
+}
+
+// procedureTypeLabel — читаемое русское название типа процедуры чек-листа.
+func procedureTypeLabel(t model.ChecklistType) string {
+	switch t {
+	case model.ChecklistEntry:
+		return "Вступление"
+	case model.ChecklistReporting:
+		return "Отчётность"
+	case model.ChecklistExtension:
+		return "Продление"
+	case model.ChecklistExit:
+		return "Выход"
+	default:
+		return string(t)
+	}
+}
+
 func docStatusLabel(d *model.ClientDocument) string {
-	labels := map[model.ClientDocStatus]string{
-		model.DocPending:   "Ожидает",
-		model.DocSubmitted: "Отправлен",
-		model.DocApproved:  "Утверждён",
-		model.DocRejected:  "Отклонён",
-	}
-	if l, ok := labels[d.Status]; ok {
-		return l
-	}
-	return string(d.Status)
+	return model.DocStatusLabel(d.Status)
 }
 
 func docStatusClass(d *model.ClientDocument) string {

@@ -59,17 +59,46 @@ services:
     environment:
       QDRANT_URL: http://qdrant:6333
       TEI_URL: http://tei:80
+      # Qdrant-коллекции и размерность эмбеддингов — заданы явно (как в prod),
+      # чтобы конфиги окружений не расходились при смене модели/коллекций.
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      QDRANT_COLLECTION: ${QDRANT_COLLECTION:-skolkovo_docs}
+      NAV_COLLECTION: ${NAV_COLLECTION:-skolkovo_navigation}
+      SITEPAGES_COLLECTION: ${SITEPAGES_COLLECTION:-skolkovo_sitepages}
       POSTGRES_DSN: postgres://${POSTGRES_USER:-skolkovo}:${POSTGRES_PASSWORD:-skolkovo}@postgres:5432/${POSTGRES_DB:-skolkovo}?sslmode=disable
       STORE_BACKEND: postgres
       MCP_API_KEY: ${MCP_API_KEY:-change-me-please}
+      MCP_RATE_LIMIT_RPS: ${MCP_RATE_LIMIT_RPS:-20}
       ADMIN_USER: ${ADMIN_USER:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-please}
       NEWS_RSS_URL: ${NEWS_RSS_URL:-https://sk.ru/news/rss/}
       NOTIFY_WEBHOOK: ${NOTIFY_WEBHOOK:-}
       DOCS_DIR: /data/docs
       REGISTRY_PATH: /data/docs/Метаданные/реестр_документов.json
       REPORT_DIR: /data/reports
       CHROME_PATH: /usr/bin/chromium
+      # Портал клиента и чат-виджет
+      PORTAL_ENABLED: "true"
+      PORTAL_ADDR: ":8092"
+      PORTAL_DEV_LOGIN_LINK: "true"
+      CHAT_WIDGET_ENABLED: "true"
+      CHAT_WIDGET_ADDR: ":8093"
+      # Источники данных
+      EVENTS_SOURCE_URL: ${EVENTS_SOURCE_URL:-https://sk.ru/events/}
+      CONTESTS_URL: ${CONTESTS_URL:-https://sk.ru/foundation/contests/}
+      GRANTS_URL: ${GRANTS_URL:-https://sk.ru/foundation/grants/}
+      FAQ_URL: ${FAQ_URL:-https://sk.ru/foundation/faq/}
+      # Страницы публичного сайта (search_site_pages) — как в prod
+      SITEPAGES_ENABLED: ${SITEPAGES_ENABLED:-true}
+      SITEPAGES_SEEDS: ${SITEPAGES_SEEDS:-https://sk.ru/,https://dochub.sk.ru/foundation/documents/}
+      SITEPAGES_ENRICH_ENABLED: ${SITEPAGES_ENRICH_ENABLED:-true}
+      # Дашборд консультанта (BasicAuth)
+      CONSULTANT_USER: ${CONSULTANT_USER:-consultant}
+      CONSULTANT_PASS: ${CONSULTANT_PASS:-change-me-please}
+      # ИИ-модели
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      # Классификатор
+      CLASSIFIER_ENABLED: ${CLASSIFIER_ENABLED:-false}
     ports:
       - "8080:8080"   # MCP
       - "8090:8090"   # админка

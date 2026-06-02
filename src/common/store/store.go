@@ -8,6 +8,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"baza-skolkovo/src/common/model"
 )
@@ -17,8 +18,10 @@ var ErrNotFound = errors.New("документ не найден")
 
 // Filter ограничивает выборку документов.
 type Filter struct {
-	Status   model.Status // пустое значение — без фильтра по статусу
-	Category string       // пустое значение — без фильтра по категории
+	Status      model.Status // пустое значение — без фильтра по статусу
+	Category    string       // пустое значение — без фильтра по категории
+	Subcategory string       // пустое значение — без фильтра по подкатегории
+	Tags        []string     // пусто — без фильтра; иначе документ должен содержать ВСЕ теги
 }
 
 // Store — интерфейс реестра документов.
@@ -39,5 +42,23 @@ func match(doc model.Document, f Filter) bool {
 	if f.Category != "" && doc.Category != f.Category {
 		return false
 	}
+	if f.Subcategory != "" && doc.Subcategory != f.Subcategory {
+		return false
+	}
+	for _, want := range f.Tags {
+		if !hasTag(doc.Tags, want) {
+			return false
+		}
+	}
 	return true
+}
+
+// hasTag сообщает, есть ли тег в списке (без учёта регистра).
+func hasTag(tags []string, want string) bool {
+	for _, t := range tags {
+		if strings.EqualFold(t, want) {
+			return true
+		}
+	}
+	return false
 }

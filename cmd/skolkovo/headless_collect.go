@@ -3,11 +3,15 @@ package main
 import (
 	"context"
 	"log"
+	"os"
+	"path/filepath"
 
+	"baza-skolkovo/src/admin"
 	"baza-skolkovo/src/common/config"
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/fetcher"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/scraper"
 )
 
 // headlessCollect выполняет headless-обход сайта (обход WAF) и скачивание
@@ -16,10 +20,84 @@ import (
 // EnrichMissing выкачивает тела (за WAF, через headless) и индексирует
 // «действующие». Возвращает (найдено, скачано).
 //
-// onWAF (может быть nil) вызывается при WAF-бане для смены прокси.
+// pm (может быть nil) используется для динамической ротации прокси при WAF-бане.
 // No-op при недоступном Chrome — это не критичная ошибка для общего цикла.
-func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, onWAF func() string) (found, fetched int, err error) {
-	f, ferr := fetcher.New(cfg.ChromePath, cfg.ProxyURL, cfg.FetchWait, func() string { return cfg.ProxyURL })
+func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager) (found, fetched int, err error) {
+	// Основной путь — по сессионной куке dochub (из админки или env DOCHUB_COOKIE):
+	// HTTP-скачивание тел файлов БЕЗ браузера и БЕЗ прокси. Обходит WAF, т.к. кука
+	// выдана реальному браузеру, прошедшему проверку. Если кука есть — идём только
+	// этим путём (headless всё равно блокируется WAF).
+	cookie := cfg.DochubCookie
+	if cookie == "" {
+		cookie = admin.LoadDochubCookie(cfg.DocsDir)
+	}
+	if cookie != "" {
+		cf, cerr := fetcher.New("", "", cfg.FetchWait, nil)
+		if cerr != nil {
+			return 0, 0, cerr
+		}
+		applyFetchProfile(cf, cfg)
+		cf.Cookie = cookie
+		outDir := filepath.Join(cfg.DocsDir, "На_проверке", "Загружено")
+		// Возобновляемость: не качаем уже скачанное.
+		cf.SkipURL = func(u string) bool {
+			if d, derr := st.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+				if _, serr := os.Stat(d.LocalPath); serr == nil {
+					return true
+				}
+			}
+			return false
+		}
+		n := 0
+		docs, errs := cf.CollectViaCookie(ctx, cfg.SourceURL, catalogSpecs(), outDir, cfg.FetchLimit,
+			func(m string) { log.Printf("[collect] %s", m) },
+			func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+				if registerOneCookieDocCmd(ctx, st, svc, cd) {
+					n++
+				}
+			})
+		log.Printf("[collect] по куке dochub: скачано файлов %d, в реестр %d, ошибок %d", len(docs), n, len(errs))
+		return len(docs), n, nil
+	}
+
+	// Используем активный прокси из ProxyManager если есть — он приоритетнее cfg.ProxyURL.
+	activeProxy := cfg.ProxyURL
+	if pm != nil {
+		if url := pm.GetActiveURL(); url != "" {
+			activeProxy = url
+		}
+	}
+
+	// onWAF вызывается fetcher'ом при обнаружении WAF-блокировки.
+	// Переключает на следующий прокси в ProxyManager или запускает auto-discovery.
+	onWAF := func() string {
+		if pm == nil {
+			return activeProxy
+		}
+		// Попытка переключить на другой уже известный прокси.
+		if next := pm.AutoSwitch(); next != "" {
+			log.Printf("[collect] WAF: переключился на прокси %s", next)
+			activeProxy = next
+			return next
+		}
+		// Все известные прокси исчерпаны — пробуем найти новый российский.
+		log.Printf("[collect] WAF: все прокси исчерпаны, ищу новый российский прокси...")
+		finder := &fetcher.RussianProxyFinder{
+			Proxy6APIKey: cfg.Proxy6APIKey,
+		}
+		if newProxy, ferr := finder.Find(ctx); ferr == nil {
+			id := pm.AddProxy("auto-ru-"+newProxy[:8], "http", newProxy)
+			pm.ActivateProxy(id)
+			activeProxy = newProxy
+			log.Printf("[collect] WAF: новый прокси найден и активирован")
+			return newProxy
+		} else {
+			log.Printf("[collect] WAF: не удалось найти прокси: %v", ferr)
+		}
+		return activeProxy
+	}
+
+	f, ferr := fetcher.New(cfg.ChromePath, activeProxy, cfg.FetchWait, func() string { return activeProxy })
 	if ferr != nil {
 		return 0, 0, ferr
 	}
@@ -58,9 +136,9 @@ func headlessCollect(ctx context.Context, cfg config.Config, st store.Store, svc
 
 // runScheduledCollect — обёртка headlessCollect для планировщика: фиксирует
 // результат в мониторинге свежести. No-op при недоступном Chrome.
-func runScheduledCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, recordHealth func(string, int, error)) {
-	log.Printf("[serve:collect] headless-обход сайта + скачивание тел (обход WAF)")
-	found, fetched, err := headlessCollect(ctx, cfg, st, svc, nil)
+func runScheduledCollect(ctx context.Context, cfg config.Config, st store.Store, svc *rag.Service, pm *admin.ProxyManager, recordHealth func(string, int, error)) {
+	log.Printf("[serve:collect] скачивание тел файлов dochub (по куке, если задана)")
+	found, fetched, err := headlessCollect(ctx, cfg, st, svc, pm)
 	if err != nil {
 		log.Printf("[serve:collect] headless-браузер недоступен: %v", err)
 		recordHealth("collect", 0, err)

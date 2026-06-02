@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -28,11 +29,21 @@ func New(baseURL, collection string) *Client {
 }
 
 // EnsureCollection создаёт коллекцию с косинусной метрикой, если её ещё нет.
+// Если коллекция уже существует, её размерность сверяется с dim: при несовпадении
+// возвращается явная ошибка (молчаливый upsert/поиск в коллекции несовместимой
+// размерности приводит к битому поиску — например, после смены модели эмбеддингов).
 func (c *Client) EnsureCollection(ctx context.Context, dim int) error {
-	// Если коллекция уже есть — выходим.
-	if ok, err := c.collectionExists(ctx); err != nil {
+	exists, size, err := c.collectionVectorSize(ctx)
+	if err != nil {
 		return err
-	} else if ok {
+	}
+	if exists {
+		if size > 0 && size != dim {
+			return fmt.Errorf("коллекция %q уже существует с размерностью вектора %d, "+
+				"а текущая конфигурация ожидает %d — сменилась модель эмбеддингов? "+
+				"Пересоздайте коллекцию под новую размерность или верните прежний EMBEDDING_DIM",
+				c.Collection, size, dim)
+		}
 		return nil
 	}
 	body := map[string]any{
@@ -41,18 +52,43 @@ func (c *Client) EnsureCollection(ctx context.Context, dim int) error {
 	return c.do(ctx, http.MethodPut, "/collections/"+c.Collection, body, nil)
 }
 
-func (c *Client) collectionExists(ctx context.Context) (bool, error) {
+// collectionVectorSize сообщает, существует ли коллекция и какова размерность её
+// (безымянного) вектора. size==0 означает «существует, но размер определить не
+// удалось» (например, именованные векторы) — в этом случае сверка не выполняется.
+func (c *Client) collectionVectorSize(ctx context.Context) (exists bool, size int, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/collections/"+c.Collection, nil)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return false, err
+		return false, 0, err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
-	return resp.StatusCode == http.StatusOK, nil
+	if resp.StatusCode == http.StatusNotFound {
+		io.Copy(io.Discard, resp.Body)
+		return false, 0, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		io.Copy(io.Discard, resp.Body)
+		return false, 0, fmt.Errorf("проверка коллекции %q: статус %d", c.Collection, resp.StatusCode)
+	}
+	var info struct {
+		Result struct {
+			Config struct {
+				Params struct {
+					Vectors struct {
+						Size int `json:"size"`
+					} `json:"vectors"`
+				} `json:"params"`
+			} `json:"config"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		// Коллекция есть, но ответ не распарсился — не блокируем (размер неизвестен).
+		return true, 0, nil
+	}
+	return true, info.Result.Config.Params.Vectors.Size, nil
 }
 
 // Point — точка для upsert.
@@ -97,6 +133,19 @@ func (c *Client) Search(ctx context.Context, vector []float32, limit int, filter
 		return nil, err
 	}
 	return out.Result, nil
+}
+
+// Delete удаляет точки по их ID. Пустой список — no-op.
+func (c *Client) Delete(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	pts := make([]any, len(ids))
+	for i, id := range ids {
+		pts[i] = id
+	}
+	body := map[string]any{"points": pts}
+	return c.do(ctx, http.MethodPost, "/collections/"+c.Collection+"/points/delete?wait=true", body, nil)
 }
 
 // DeleteByDocument удаляет все точки документа (payload.document_id == docID).
@@ -178,6 +227,20 @@ func FilterActive() map[string]any {
 			map[string]any{"key": "status", "match": map[string]any{"value": "действует"}},
 		},
 	}
+}
+
+// FilterActiveTags — действующие документы, содержащие ВСЕ указанные теги.
+// Пустой список тегов эквивалентен FilterActive.
+func FilterActiveTags(tags []string) map[string]any {
+	must := []any{
+		map[string]any{"key": "status", "match": map[string]any{"value": "действует"}},
+	}
+	for _, t := range tags {
+		if t = strings.TrimSpace(t); t != "" {
+			must = append(must, map[string]any{"key": "tags", "match": map[string]any{"value": t}})
+		}
+	}
+	return map[string]any{"must": must}
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {

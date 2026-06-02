@@ -11,13 +11,12 @@ import (
 	"time"
 )
 
-// Role — роль пользователя.
+// Role — роль пользователя. В админ-панель допускается только администратор;
+// прочие пользователи работают с базой через MCP, Telegram-бот и ИИ-агентов.
 type Role string
 
 const (
-	RoleAdmin  Role = "admin"
-	RoleUser   Role = "user"
-	RoleViewer Role = "viewer"
+	RoleAdmin Role = "admin"
 )
 
 // AdminUser — пользователь админки.

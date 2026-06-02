@@ -29,6 +29,7 @@ const (
 	EntityPreference = "preference"
 	EntityFAQ        = "faq"
 	EntityTelegram   = "telegram"
+	EntitySitePage   = "sitepage" // отдельная страница публичного сайта (sk.ru/dochub) — не файл-документ
 )
 
 // Notify фиксирует изменение во всех переданных рекордерах (nil-элементы пропускаются).

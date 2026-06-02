@@ -1,0 +1,16 @@
+{
+  "name": "skolkovo-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser E2E (Playwright) для всех веб-интерфейсов «База Сколково»: рендер, вёрстка/переполнение, навигация, RAG-подсветка.",
+  "scripts": {
+    "test": "playwright test",
+    "test:layout": "playwright test specs/layout",
+    "test:headed": "playwright test --headed",
+    "setup": "playwright install chromium",
+    "report": "playwright show-report results/html"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.1"
+  }
+}

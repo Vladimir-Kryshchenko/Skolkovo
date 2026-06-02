@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -78,8 +79,11 @@ func (s *PostgresStore) Get(ctx context.Context, id string) (model.Document, err
 
 func (s *PostgresStore) List(ctx context.Context, f Filter) ([]model.Document, error) {
 	rows, err := s.pool.Query(ctx, selectCols+`
-WHERE ($1='' OR status=$1) AND ($2='' OR category=$2)
-ORDER BY fetched_at DESC`, string(f.Status), f.Category)
+WHERE ($1='' OR status=$1)
+  AND ($2='' OR category=$2)
+  AND ($3='' OR subcategory=$3)
+  AND ($4::text[] IS NULL OR tags @> $4::text[])
+ORDER BY fetched_at DESC`, string(f.Status), f.Category, f.Subcategory, tagsArg(f.Tags))
 	if err != nil {
 		return nil, err
 	}
@@ -124,6 +128,101 @@ func (s *PostgresStore) Pool() *pgxpool.Pool {
 	return s.pool
 }
 
+// UpdateClassification сохраняет ИИ-разметку документа: категорию, подкатегорию,
+// теги и enrich_hash (= file_hash на момент разметки). НЕ трогает прочие поля —
+// безопасно относительно параллельного переобхода (тот не пишет эти колонки).
+func (s *PostgresStore) UpdateClassification(ctx context.Context, id, category, subcategory string, tags []string, enrichHash string) error {
+	if tags == nil {
+		tags = []string{}
+	}
+	return s.exec1Args(ctx, `
+UPDATE documents
+   SET category    = COALESCE(NULLIF($2,''), category),
+       subcategory = $3,
+       tags        = $4,
+       enriched_at = now(),
+       enrich_hash = $5
+ WHERE id = $1`, id, category, subcategory, tags, enrichHash)
+}
+
+// ListNeedingEnrichment возвращает действующие документы, которым нужна ИИ-разметка:
+// ещё не размечены или файл изменился (enrich_hash <> file_hash). limit<=0 — все.
+func (s *PostgresStore) ListNeedingEnrichment(ctx context.Context, limit int) ([]model.Document, error) {
+	q := selectCols + `
+WHERE status = 'действует'
+  AND (enriched_at IS NULL OR enrich_hash <> file_hash)
+ORDER BY fetched_at DESC`
+	if limit > 0 {
+		q += fmt.Sprintf(" LIMIT %d", limit)
+	}
+	rows, err := s.pool.Query(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Document
+	for rows.Next() {
+		d, err := scanDoc(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ListTags возвращает словарь авто-тегов документов, частые — первыми.
+func (s *PostgresStore) ListTags(ctx context.Context) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `SELECT tag FROM document_tags ORDER BY usage_count DESC, tag`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var t string
+		if err := rows.Scan(&t); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
+// BumpTags добавляет теги в словарь или увеличивает их usage_count.
+func (s *PostgresStore) BumpTags(ctx context.Context, tags []string) error {
+	for _, t := range tags {
+		if t == "" {
+			continue
+		}
+		if _, err := s.pool.Exec(ctx,
+			`INSERT INTO document_tags (tag, usage_count) VALUES ($1, 1)
+			 ON CONFLICT (tag) DO UPDATE SET usage_count = document_tags.usage_count + 1`, t); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *PostgresStore) exec1Args(ctx context.Context, sql string, args ...any) error {
+	tag, err := s.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// tagsArg возвращает аргумент для фильтра по тегам: nil (без фильтра) либо срез.
+func tagsArg(tags []string) any {
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
+}
+
 func (s *PostgresStore) exec1(ctx context.Context, sql, id string, arg any) error {
 	tag, err := s.pool.Exec(ctx, sql, id, arg)
 	if err != nil {
@@ -136,7 +235,8 @@ func (s *PostgresStore) exec1(ctx context.Context, sql, id string, arg any) erro
 }
 
 const selectCols = `SELECT id, title, source_url, local_path, published_at, fetched_at,
-       status, category, version_label, valid_from, valid_to, supersedes, file_hash, indexed
+       status, category, version_label, valid_from, valid_to, supersedes, file_hash, indexed,
+       subcategory, tags, enriched_at, enrich_hash
 FROM documents`
 
 // row — общий интерфейс для pgx.Row и pgx.Rows.
@@ -149,7 +249,8 @@ func scanDoc(r row) (model.Document, error) {
 	var status string
 	var localPath, category, versionLabel, supersedes *string
 	err := r.Scan(&d.ID, &d.Title, &d.SourceURL, &localPath, &d.PublishedAt, &d.FetchedAt,
-		&status, &category, &versionLabel, &d.ValidFrom, &d.ValidTo, &supersedes, &d.FileHash, &d.Indexed)
+		&status, &category, &versionLabel, &d.ValidFrom, &d.ValidTo, &supersedes, &d.FileHash, &d.Indexed,
+		&d.Subcategory, &d.Tags, &d.EnrichedAt, &d.EnrichHash)
 	if err != nil {
 		return d, err
 	}

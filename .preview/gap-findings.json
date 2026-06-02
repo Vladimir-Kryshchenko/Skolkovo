@@ -1,0 +1,810 @@
+{
+  "summary": "Audit RAG navigation map (src/navindex/tree.go) vs the real rendered UI source across all 7 interfaces, with adversarial verification",
+  "agentCount": 16,
+  "logs": [
+    "Auditing 8 interfaces: portal, chat, consultant, residency, admin-core, admin-ai-reg, mcp, tgbot",
+    "Личный кабинет клиента (Портал) :8092: 10 findings (3 high) — All 8 Portal pages plus the two special-layout pages (login, notifications) are present in tree.go with correct routes and nav order; remaining gaps are label-level in tree.go plus several UI template binding bugs (fix-ui), not tree omissions.",
+    "Чат-виджет :8093: 8 findings (0 high) — Standalone /chat and both API routes are well covered and accurate; the /chat-widget.js (embeddable) block is shallow (5 real user-visible strings + welcome missing) and the interface HowTo mislabels the floating bubble.",
+    "Дашборд консультанта :8094: 2 findings (0 high) — Near-complete and accurate: all 4 blocks, the single dashboard route, all 6 columns, and every badge/empty-state/deadline string covered; only 2 low-severity nits remain (one wording, one route-hint).",
+    "Резидентство-Админ :8091: 11 findings (0 high) — Pages/routes (8) and sidebar groups/items are complete and correct; drift is confined to block-level columns/filters/empty-states on /clients, /clients/{id}, /deadlines, /templates, /events-admin, /contests-admin.",
+    "Главная Админка :8090 — Документы/Страницы/Изменения/Diff/Аналитика/Граф: 15 findings (1 high) — tree.go covers all 13 routes/pages and the sidebar; page-level structure is mostly right, but the Documents stat-cards block, the Documents table columns, and the entire /analytics block are inaccurate, plus ~9 confirmed low-severity label distortions.",
+    "Главная Админка :8090 — ИИ-модели/ИИ-агенты/Льготы-НПА/Прокси: 16 findings (1 high) — All 4 focus pages and their primary blocks are present in tree.go; confirmed gaps are exact label/column wording, one missing+seeded form option (page_annotator), one missing required form field (proxy Название), the proxy type badge, and several missing empty-state strings.",
+    "MCP-сервер :8080: 2 findings (0 high) — High coverage: all 36 registered MCP tool names appear in tree.go 1:1 (no missing, no stale). Only the /health route (not modeled as a Page) and the conditional registration of 3 agent tools are unmodeled; both are low-impact.",
+    "Telegram-бот: 9 findings (0 high) — High coverage of happy-path screens/menus (all 8 routes, 4 main-menu buttons, StageKeyboard, status/docs emoji sets, empty-states, /help list); gaps are the wrong pagination glyphs, the 8 missing stage strings, and several uncaptured fallback/error/toast messages.",
+    "TOTAL: 73 confirmed findings, 5 high-severity across 8 interfaces"
+  ],
+  "result": {
+    "interfaces": [
+      {
+        "interface": "Личный кабинет клиента (Портал) :8092",
+        "summary": "Re-verified all 9 claimed findings against the actual portal source. All 9 are REAL and confirmed from concrete file:line evidence — none were false positives. tree.go covers all 8 rendered pages with correct routes and nav order; the gaps are (a) three label-text/stale discrepancies in tree.go and (b) a cluster of UI template binding bugs where dashboard/checklists/deadlines templates reference struct fields that do not exist on the raw model types the handlers pass in (model.Client has ContactEmail not Email, and no StageProgress method; model.ClientChecklist has none of Title/Progress/ProcedureType/CompletedSteps/TotalSteps/Steps; model.Deadline has no StatusClass/StatusLabel). These cause html/template execution errors (logged, partial page). I raised severity on the shared-header Email bug (breaks every authenticated page) and the checklists-page bug (whole page body), and ADDED one binding bug the first auditor missed: the dashboard \"Документы сопровождения\" block binds .StatusClass/.StatusLabel on raw []*model.ClientDocument.",
+        "coverageNote": "All 8 Portal pages plus the two special-layout pages (login, notifications) are present in tree.go with correct routes and nav order; remaining gaps are label-level in tree.go plus several UI template binding bugs (fix-ui), not tree omissions.",
+        "findings": [
+          {
+            "kind": "stale",
+            "severity": "low",
+            "route": "/login",
+            "block": "Форма входа",
+            "claim": "tree.go lists logo as «🏛 База Сколково» (building emoji + text)",
+            "actual": "Login template renders an inline SVG building icon followed by plain text «База Сколково» — no emoji character. (Note tree.go already describes the dashboard header logo correctly as «База Сколково» without emoji at line 37.)",
+            "evidence": "src/portal/dashboard.go:447-450 (login logo) vs src/navindex/tree.go:28",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/dashboard",
+            "block": "Текущая стадия",
+            "claim": "tree.go: «бейдж стадии» (implies human-readable stage label)",
+            "actual": "Badge binds {{.Client.ResidencyStage}}, a valid field that renders the raw lowercase enum (e.g. «подача_заявки»); the registered stageLabel template func is never applied to it, so no localized label is shown.",
+            "evidence": "src/portal/dashboard.go:517,523; localized labels exist at src/common/model/stage_labels.go:7-16",
+            "recommendation": "investigate"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/notifications",
+            "block": "Список уведомлений",
+            "claim": "tree.go: header «Непрочитанные: X из Y»",
+            "actual": "Source renders the genitive «Непрочитанных: X из Y».",
+            "evidence": "src/portal/notifications.go:141 vs src/navindex/tree.go:88",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "high",
+            "route": "/dashboard",
+            "block": "Шапка (общая для всех страниц ЛК)",
+            "claim": "tree.go: «email текущего клиента (data-tooltip «Текущий аккаунт»)»",
+            "actual": "Tooltip text is correct, but the value binds {{.Client.Email}} while model.Client has no Email field (only ContactEmail). Since dashboardData.Client is the raw *model.Client, html/template execution errors here. This header is in the shared layout, so the error breaks rendering of dashboard, checklists, deadlines, documents, generate and subscriptions pages.",
+            "evidence": "src/portal/dashboard.go:345 (header tmpl) + 305-306 (layout includes header); model fields at src/common/model/client.go:55-65 (ContactEmail, no Email); no Client.Email method anywhere",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "high",
+            "route": "/dashboard",
+            "block": "Текущая стадия",
+            "claim": "tree.go: «progress bar», «процент»",
+            "actual": "Both bind {{.Client.StageProgress}}, but StageProgress is a package-level func model.StageProgress(stage), not a field or method on model.Client, so this errors at template execution and the progress bar/percent do not render.",
+            "evidence": "src/portal/dashboard.go:520,524; func at src/common/model/stage_labels.go:44; handler passes raw *model.Client at src/portal/server.go:350",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/dashboard",
+            "block": "Прогресс чек-листов",
+            "claim": "tree.go: «название чек-листа», «процент завершения», «progress bar»",
+            "actual": "Block ranges .Checklists ([]*model.ClientChecklist) and binds {{.Title}} and {{.Progress}}, but model.ClientChecklist has neither (only ID, ClientID, ChecklistID, Status, StartedAt, CompletedAt), so the rows error/fail to render.",
+            "evidence": "src/portal/dashboard.go:536-540; model at src/common/model/client.go:126-133; handler at src/portal/server.go:352,589-595",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "high",
+            "route": "/checklists",
+            "block": "Карточки чек-листов",
+            "claim": "tree.go: «название», «тип процедуры», «статус», «progress bar», «X/Y шагов», «шаги: выполнен/в процессе/не начат»",
+            "actual": "Card body binds .Title, .ProcedureType, .Progress, .CompletedSteps, .TotalSteps and ranges .Steps, but model.ClientChecklist (which checklistsData.Checklists holds) exposes none of these — only .Status. The entire card body errors at execution; only the empty-state path is safe.",
+            "evidence": "src/portal/dashboard.go:657-679; model at src/common/model/client.go:126-133; handler at src/portal/server.go:371-374",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/deadlines",
+            "block": "Ближайшие дедлайны",
+            "claim": "tree.go: «Статус» column with completed/overdue/upcoming badge",
+            "actual": "Rows bind row-{{.StatusClass}} and badge {{.StatusLabel}} on each *model.Deadline, but model.Deadline has neither — only the Status enum and IsOverdue(now). The helper funcs deadlineStatusClass/stageLabel are registered but not invoked as functions here. Same bug on the dashboard deadlines table.",
+            "evidence": "src/portal/dashboard.go:711,715 (deadlines page) and 564,567 (dashboard table); model at src/common/model/client.go:175-189; handler passes raw []*model.Deadline at src/portal/server.go:390,573-579",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/deadlines",
+            "block": "Ближайшие дедлайны",
+            "claim": "tree.go lists «Тип» column",
+            "actual": "The Тип cell binds {{.Type}}, which renders the raw lowercase DeadlineType enum (e.g. «reporting», «extension») rather than a localized label; there is no localization helper for DeadlineType.",
+            "evidence": "src/portal/dashboard.go:708 (header), 714 (value); consts at src/common/model/client.go:158-163",
+            "recommendation": "investigate"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/dashboard",
+            "block": "Документы сопровождения",
+            "claim": "tree.go: «бейджи pending/submitted/approved/rejected»",
+            "actual": "MISSED by first auditor. This block ranges dashboardData.Documents which is the RAW []*model.ClientDocument (server.go:353 getClientDocuments), and binds .StatusClass/.StatusLabel — fields that exist only on portalDocInfo, NOT on model.ClientDocument. So unlike the /documents page (which enriches into portalDocInfo), the dashboard badge block errors at execution. Status badges do not render.",
+            "evidence": "src/portal/dashboard.go:587-588; model.ClientDocument at src/common/model/client.go:231-238 (no StatusClass/StatusLabel); handler at src/portal/server.go:353; contrast portalDocInfo at src/portal/dashboard.go:62-64 used only by enrichClientDocuments (server.go:607-637)",
+            "recommendation": "fix-ui"
+          }
+        ]
+      },
+      {
+        "interface": "Чат-виджет :8093",
+        "summary": "Re-verified all 9 claimed findings against src/chat_widget/widget.go and chatWidget() in src/navindex/tree.go (lines 113-154). All 9 are confirmed REAL — no false positives to drop. The standalone /chat block (tree.go:126-128) and both API routes (/api/session, /api/chat) are accurately described (header «Консультант Сколково», theme toggle tooltip «Переключить тему», tab title «Чат — Сколково», welcome, «Печатает…», «Ошибка соединения.», placeholder + tooltip «Нажмите Enter для отправки», send «Отправить» tooltip «Отправить сообщение» all match). The genuine gaps cluster in (a) the interface-level HowTo, which mislabels the floating bubble as «Консультант» (the bubble actually shows only a chat-icon with tooltip «Открыть чат»; «Консультант» is the PANEL header that appears after opening), and (b) the shallow /chat-widget.js block, which omits 5 user-visible strings the widget renders: floating-button tooltip «Открыть чат», close-button tooltip «Закрыть чат», send-button tooltip «Отправить сообщение (Enter)» (note: different wording from the standalone page), typing indicator «Печатает…», and connection-error «Ошибка соединения.» — plus the widget's injected welcome message. One standalone label («Enter — отправить, Shift+Enter — новая строка») is stale: it is keyboard-handler behavior (keydown, no rendered text — grep for «Shift»/«новая строка» returns zero matches), not a visible hint. Adjustment vs. the first auditor: downgraded the widget typing-indicator finding from medium to low for parity with the connection-error finding (both are transient status texts, not navigable controls).",
+        "coverageNote": "Standalone /chat and both API routes are well covered and accurate; the /chat-widget.js (embeddable) block is shallow (5 real user-visible strings + welcome missing) and the interface HowTo mislabels the floating bubble.",
+        "findings": [
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/chat-widget.js",
+            "block": "Interface HowTo / Плавающая кнопка",
+            "claim": "HowTo (tree.go:119): «Кнопка-пузырь \"Консультант\" внизу справа…»",
+            "actual": "The floating toggle button renders only a chat-bubble SVG icon with tooltip «Открыть чат»; it shows no «Консультант» text. «Консультант» is the text of the PANEL header span, visible only after the panel opens.",
+            "evidence": "src/navindex/tree.go:119 vs src/chat_widget/widget.go:521 (title=\"Открыть чат\") and :523 (panel <span>Консультант</span>)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/chat-widget.js",
+            "block": "Плавающая кнопка",
+            "claim": "tree.go:148 lists only «иконка чат-пузыря, низ-право» — no tooltip text",
+            "actual": "Floating button exposes user-visible tooltip «Открыть чат» (title attribute).",
+            "evidence": "src/chat_widget/widget.go:521",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/chat-widget.js",
+            "block": "Панель чата",
+            "claim": "tree.go:149 lists «кнопка закрытия» with no tooltip text",
+            "actual": "Close button has user-visible tooltip «Закрыть чат» (title attribute).",
+            "evidence": "src/chat_widget/widget.go:523",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/chat-widget.js",
+            "block": "Панель чата",
+            "claim": "tree.go:149 lists «кнопка \"Отправить\"» with no tooltip text",
+            "actual": "Send button has user-visible tooltip «Отправить сообщение (Enter)» — different wording from the standalone page's «Отправить сообщение».",
+            "evidence": "src/chat_widget/widget.go:526",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/chat-widget.js",
+            "block": "Панель чата",
+            "claim": "tree.go:147-150 list no typing indicator for the widget panel",
+            "actual": "Widget panel renders a typing indicator «Печатает…» (same as the standalone page, which IS listed in tree.go:127). Transient status text, hence low.",
+            "evidence": "src/chat_widget/widget.go:525",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/chat-widget.js",
+            "block": "Панель чата",
+            "claim": "tree.go:147-150 list no connection-error message for the widget panel",
+            "actual": "Widget panel shows «Ошибка соединения.» on fetch failure (same as the standalone page, listed in tree.go:127).",
+            "evidence": "src/chat_widget/widget.go:627",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/chat-widget.js",
+            "block": "Панель чата",
+            "claim": "tree.go:149 lists «сообщения» generically but not the widget's greeting",
+            "actual": "Widget panel injects a welcome message on init (default «Здравствуйте! Чем могу помочь?»), like the standalone page where tree.go:127 names it explicitly; the widget block records only the generic «сообщения».",
+            "evidence": "src/chat_widget/widget.go:638 (addMsg('assistant', welcome)) with default at :532",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "stale",
+            "severity": "low",
+            "route": "/chat",
+            "block": "Поле ввода",
+            "claim": "tree.go:128 lists label «Enter — отправить, Shift+Enter — новая строка»",
+            "actual": "Not rendered anywhere — it is only the keydown handler's behavior. grep for «Shift»/«новая строка» in widget.go returns no matches. The only visible input hints are placeholder «Введите сообщение…» and tooltip «Нажмите Enter для отправки».",
+            "evidence": "src/chat_widget/widget.go:443 (keydown handler, no visible text); visible hints at :391",
+            "recommendation": "fix-tree"
+          }
+        ]
+      },
+      {
+        "interface": "Дашборд консультанта :8094",
+        "summary": "Confirmed: tree.go consultant() (lines 157-178) faithfully mirrors src/admin/consultant.go. All 4 blocks present (Шапка, Сводные карточки, Важные изменения документации, Таблица клиентов). Independently verified accurate: header title (consultant.go:563), time (566), Документы link label (569), theme toggle (571); 5 summary cards (579-583); doc-change badges Критично/Важно/Инфо via severityBadge (736-741), title/date/Стадии-prefix (599); 6 table headers (619-624); status badges Просрочен/Критично/Внимание/В порядке via urgencyBadge (747-754); deadline phrasings через N дн./просрочен на N дн./dash (669,672,686); empty state Клиенты не найдены (630); stage-letter badge via stageInitial (725-731); sort order overdue-critical-warning-ok via urgencyOrder (173-184). tree.go correctly flags /consultant/client/{id} as not-yet-implemented. Both of the first auditor findings confirmed REAL but low-severity. No high or medium gaps were overlooked.",
+        "coverageNote": "Near-complete and accurate: all 4 blocks, the single dashboard route, all 6 columns, and every badge/empty-state/deadline string covered; only 2 low-severity nits remain (one wording, one route-hint).",
+        "findings": [
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/consultant/dashboard",
+            "block": "Сводные карточки",
+            "claim": "Card labels written uppercase in tree.go: ПРОСРОЧЕНО, КРИТИЧНО (<=3 ДН.), ВНИМАНИЕ (<=7 ДН.), В ПОРЯДКЕ, ВСЕГО КЛИЕНТОВ",
+            "actual": "Source literals are sentence-case: Просрочено, Критично (<=3 дн.), Внимание (<=7 дн.), В порядке, Всего клиентов at consultant.go:579-583. They render uppercase only via .summary-card .label text-transform uppercase at line 405, so the uppercase form matches the on-screen look but not the literal. Note: tree.go inconsistently used sentence-case for the table headers at line 173, which share the same CSS uppercase transform at line 438.",
+            "evidence": "src/admin/consultant.go:579-583 (card label literals); src/admin/consultant.go:405 (text-transform uppercase)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/consultant/dashboard",
+            "block": "Шапка",
+            "claim": "ссылка Документы (возврат на главную админку /)",
+            "actual": "The link is rendered with href set to / and text Документы (tooltip Вернуться к документам). The label text is captured correctly, but the route hint about returning to the main admin is misleading: on port :8094 RegisterConsultantRoutes is called with a nil mux and registers ONLY /consultant/dashboard and the /consultant/ redirect. There is no / handler and no admin routes, so clicking Документы yields a 404 on :8094 and does not reach the main admin, which lives on :8090.",
+            "evidence": "src/admin/consultant.go:567-569 (href / plus Документы); src/admin/consultant.go:197-200 (only /consultant/dashboard and /consultant/ registered); cmd/skolkovo/main.go:1519 (RegisterConsultantRoutes called with nil mux)",
+            "recommendation": "investigate"
+          }
+        ]
+      },
+      {
+        "interface": "Резидентство-Админ :8091",
+        "summary": "Re-verified all 13 claimed findings against src/admin/residency_admin.go and src/admin/shell.go. Confirmed 11, dropped 1 false positive (the /deadlines \\\"клиент value is raw ClientID\\\" note — the label wording matches tree.go in spirit and the auditor itself conceded it; not a label/block discrepancy worth flagging). Adjusted severities: the two combined-vs-separate column issues are real, but pure label-wording mismatches (\\\"Email\\\" vs \\\"Эл. почта (Email)\\\") are cosmetic and downgraded to low. The genuinely meaningful gaps are: (1) /clients table — tree.go combines \\\"Название / ИНН\\\" into one label whereas the UI renders seven distinct columns with \\\"Клиент\\\" and \\\"ИНН\\\" separate; (2) /events-admin and /contests-admin both render a status filter-tabs block that tree.go omits entirely (Contests has a 4th tab \\\"Определён победитель\\\"), inconsistent with /checklists where tree.go DOES list its filter tabs; (3) /templates lists a \\\"фильтр по типу\\\" label that is never rendered in the template (confirmed stale — handler reads ?type= but emits no filter UI), upgraded to fix-tree since it is confirmable from file:lines; (4) /deadlines is missing both its two stat-counter cards and its empty-state; plus three minor missing empty-states on the client card. Sidebar (navResidency in shell.go) matches tree.go exactly. All 8 routes match registered handlers.",
+        "coverageNote": "Pages/routes (8) and sidebar groups/items are complete and correct; drift is confined to block-level columns/filters/empty-states on /clients, /clients/{id}, /deadlines, /templates, /events-admin, /contests-admin.",
+        "findings": [
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/clients",
+            "block": "Таблица клиентов",
+            "claim": "Single column labeled \"Название / ИНН\" (name and INN combined)",
+            "actual": "Two separate columns: \"Клиент\" (th width:35%) and \"ИНН\". The UI renders seven distinct columns: Клиент, ИНН, Эл. почта (Email), Стадия, Тенант, Обновлён, Действия.",
+            "evidence": "src/admin/residency_admin.go:1108-1109",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/clients",
+            "block": "Таблица клиентов",
+            "claim": "Column \"Email\"",
+            "actual": "Column header is \"Эл. почта (Email)\" (cosmetic wording).",
+            "evidence": "src/admin/residency_admin.go:1110",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/clients/{id}",
+            "block": "Основная информация",
+            "claim": "Field label \"Email\"",
+            "actual": "Field label is \"Эл. почта (Email)\" (cosmetic wording).",
+            "evidence": "src/admin/residency_admin.go:1184",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/deadlines",
+            "block": "Счётчики дедлайнов (stat-карточки)",
+            "claim": "— (tree.go lists only the two card sections \"Просроченные дедлайны\" and \"Ближайшие дедлайны\")",
+            "actual": "Page renders two stat counter cards at the top: \"Просроченные\" ({{len .Overdue}}) and \"Ближайшие (30 дн.)\" ({{len .Upcoming}}). This stat block is absent from tree.go.",
+            "evidence": "src/admin/residency_admin.go:1371-1374",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/deadlines",
+            "block": "Пустое состояние",
+            "claim": "— (no empty-state listed for /deadlines)",
+            "actual": "Empty-state rendered when neither overdue nor upcoming: \"Нет активных дедлайнов\" / \"Все дедлайны выполнены или ещё не назначены\".",
+            "evidence": "src/admin/residency_admin.go:1400-1405",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/contests-admin",
+            "block": "Фильтры по статусу",
+            "claim": "— (tree.go lists only counters \"Активные\"/\"Закрытые\" and the table; no filter block)",
+            "actual": "A filter-tabs block with FOUR tabs: \"Все\", \"Активные\", \"Закрытые\", \"Определён победитель\" (status=winner_selected). Entirely absent from tree.go; inconsistent with /checklists where tree.go does list its filter tabs.",
+            "evidence": "src/admin/residency_admin.go:1645-1653",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/events-admin",
+            "block": "Фильтры по статусу",
+            "claim": "— (tree.go lists only counters and the table; no filter block)",
+            "actual": "A filter-tabs block with tabs: \"Все\", \"Активные\", \"Прошедшие\", \"Отменённые\" (status=active/past/cancelled). Absent from tree.go.",
+            "evidence": "src/admin/residency_admin.go:1569-1577",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "stale",
+            "severity": "low",
+            "route": "/templates",
+            "block": "Таблица шаблонов",
+            "claim": "Label \"фильтр по типу\" (a filter-by-type control on the templates page)",
+            "actual": "The templates template renders NO filter UI at all — only the table (headers Название/Тип/Файл/Версия/Переменные/Создан) or the empty-state. No filter tabs/select are emitted (handler reads ?type= but renders nothing). Confirmed from source, so this is a stale tree.go label, not merely \"investigate\".",
+            "evidence": "src/admin/residency_admin.go:1432-1465",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/clients/{id}",
+            "block": "Дедлайны",
+            "claim": "— (tree.go lists labels \"заголовок\"/\"срок\"/\"статус\" but no empty-state)",
+            "actual": "Labels match in spirit (Title + meta \"Срок: ... | Статус: ...\"); tree.go omits the empty-state \"Нет дедлайнов\".",
+            "evidence": "src/admin/residency_admin.go:1239-1241",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/clients/{id}",
+            "block": "Чек-листы",
+            "claim": "— (tree.go lists labels \"ID чек-листа\"/\"статус\"/\"начат\" but no empty-state)",
+            "actual": "Labels match in spirit (.ID + meta \"Статус: ... | Начат: ... (or —)\"); tree.go omits the empty-state \"Нет чек-листов\".",
+            "evidence": "src/admin/residency_admin.go:1253-1255",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/clients/{id}",
+            "block": "История переходов",
+            "claim": "— (tree.go lists labels \"дата\"/\"Стадия1 → Стадия2\"/\"примечание\" but no empty-state)",
+            "actual": "Labels match; tree.go omits the empty-state \"История переходов пуста\" rendered when there are no transitions.",
+            "evidence": "src/admin/residency_admin.go:1224-1226",
+            "recommendation": "fix-tree"
+          }
+        ]
+      },
+      {
+        "interface": "Главная Админка :8090 — Документы/Страницы/Изменения/Diff/Аналитика/Граф",
+        "summary": "Re-verified all 16 claimed findings against the real renderers (src/admin/templates.go, src/admin/shell.go navMain, src/admin/admin.go label helpers, src/analytics/analytics.go) and mainAdmin() in src/navindex/tree.go (lines 270-411). Confirmed and kept 13 findings, dropped 1 false positive (the «Панель операций» item, which the auditor itself labelled a confirmation — the group labels Сбор данных/Индексация/Модерация and buttons all match tree exactly, so it is not a defect), and downgraded 2 over-rated ones (graph legend wording from medium→low; the /changes «Изменение» column item stays low/investigate). The two highest-value confirmed gaps are the Documents stat-card row (tree lists «Активные/Устарелые/Отклонённые/Индексировано» but the UI renders «Действует/Устарело/В индексе (RAG (поиск по векторам))» with NO «Отклонённые» card at all — templates.go:544-562) and the entire /analytics block (tree promises «графики активности/статистика по категориям/экспорт CSV», but the page renders 6 fixed cards — Документы по статусам, Клиенты по стадиям, Дедлайны, Мероприятия и конкурсы, Чек-листы, MCP-запросы — and has NO CSV button; export is API-only at admin.go:2450, the page header at analytics.go:530-538 only has a «Документы» back-link + theme toggle). The Documents table also misses the «Индекс» column. The rest are confirmed low-severity label/wording distortions (status-filter tabs with live counts, missing date filters, missing Documents empty-state, graph legend English suffixes, diff version line detail, sitepages info-bar count phrasing, sitepages badge lowercase «недоступна (404)», changes entity-type option wording, changes health-state literals). All findings are for THIS interface only.",
+        "coverageNote": "tree.go covers all 13 routes/pages and the sidebar; page-level structure is mostly right, but the Documents stat-cards block, the Documents table columns, and the entire /analytics block are inaccurate, plus ~9 confirmed low-severity label distortions.",
+        "findings": [
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/",
+            "block": "Карточки статистики",
+            "claim": "Labels: «Всего», «Активные», «На проверке», «Устарелые», «Архив», «Отклонённые», «Индексировано»",
+            "actual": "The 6 rendered stat cards are «Всего», «Действует», «На проверке», «Устарело», «Архив», «В индексе (RAG (поиск по векторам))». There is NO «Отклонённые» stat card (Отклонён exists only as a status-filter tab and in the /stats JSON). tree's «Активные/Устарелые/Индексировано» should be «Действует/Устарело/В индексе (RAG (поиск по векторам))».",
+            "evidence": "src/admin/templates.go:544-562",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/",
+            "block": "Таблица документов",
+            "claim": "Columns: «Заголовок», «Категория», «Статус», «Файл», действия",
+            "actual": "Real headers are «Документ», «Категория», «Статус», «Файл», «Индекс» (a dedicated centered column with a check / «—» indexed indicator), «Действия». The «Индекс» column is entirely absent from tree.",
+            "evidence": "src/admin/templates.go:643-651, 688-692",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/",
+            "block": "Таблица документов",
+            "claim": "column «Заголовок»",
+            "actual": "The first column header literal is «Документ» (it holds title + source link + ID + date + «заменяет …» meta), not «Заголовок».",
+            "evidence": "src/admin/templates.go:645",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/",
+            "block": "Фильтр по статусу",
+            "claim": "Labels: «Все», «Действует», «На проверке», «Устарел», «Архив», «Отклонён» (order: Действует before На проверке)",
+            "actual": "Tabs render WITH live counts and a different order: «Все (N)» → «На проверке (N)» → «Действует (N)» → «Устарел (N)» → «Архив (N)» → «Отклонён (N)».",
+            "evidence": "src/admin/templates.go:593-600",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/",
+            "block": "Фильтры и поиск",
+            "claim": "Labels: «поиск по заголовку», «фильтр категории»",
+            "actual": "The form has «Поиск по названию» (placeholder «Название документа…»), «Категория» (select, «Все категории»), and four date filters tree omits — «Обновлено от», «Обновлено до», «Загружено на sk.ru от», «Загружено на sk.ru до» — plus buttons «Применить» / «Сбросить».",
+            "evidence": "src/admin/templates.go:603-636",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/",
+            "block": "Таблица документов",
+            "claim": "(no empty-state recorded for the Documents table)",
+            "actual": "Empty-state exists: «Нет документов» + «Запустите сбор кнопкой „Обновить из источников“… или выполните в терминале: skolkovo scrape». tree records empty-states for other tables but not this one.",
+            "evidence": "src/admin/templates.go:724-733",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "stale",
+            "severity": "high",
+            "route": "/analytics",
+            "block": "Дашборд метрик",
+            "claim": "Labels «метрики базы», «графики активности», «статистика по категориям», «экспорт CSV» (and Purpose/HowTo promise «экспорт CSV»)",
+            "actual": "The page renders 6 fixed cards — «Документы по статусам» (pie), «Клиенты по стадиям» (bar), «Дедлайны», «Мероприятия и конкурсы», «Чек-листы», «MCP-запросы» — plus a «Период: …» line. There is NO «статистика по категориям» card and NO CSV export button: export lives only on a separate handler/route, while the analytics page is rendered by ToHTML and its header has only a «Документы» back-link + theme toggle. «графики активности» is also wrong (charts are status/stage distributions, not activity-over-time).",
+            "evidence": "src/analytics/analytics.go:540-593, 530-538; src/admin/admin.go:2432-2440 (page render) vs 2449-2470 (export is a separate API-only handler)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/analytics",
+            "block": "Дашборд метрик",
+            "claim": "Single vague block with 4 generic labels; no concrete card titles",
+            "actual": "The page has concrete navigable card titles a user could ask the bot to point to — «Документы по статусам», «Клиенты по стадиям», «Дедлайны», «Мероприятия и конкурсы», «Чек-листы», «MCP-запросы» — none of which are in tree.",
+            "evidence": "src/analytics/analytics.go:545-591",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/graph",
+            "block": "Легенда",
+            "claim": "Labels: «Ссылается (синяя)», «Замещает (красный пунктир)», «Связано (зелёная)»",
+            "actual": "Legend literals are «Ссылается (references)», «Замещает (supersedes)», «Связано (related)» — English suffixes, not colour names. The core labels Ссылается/Замещает/Связано are correct; only the parenthetical differs (downgraded from medium — minor wording).",
+            "evidence": "src/admin/templates.go:1081-1083",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/diff",
+            "block": "Лента сравнений",
+            "claim": "bullet «Версия N → M»",
+            "actual": "Rendered line is «Версия {OldNo} ({OldAt}) → {NewNo} ({NewAt})» plus «всего версий: N» and «анализ: …»; tree's «Версия N → M» is an acceptable shorthand. The only genuine gap is that the specific severity-badge labels «Инфо»/«Важное»/«Критично» (and «Без ИИ-оценки») are not listed under the generic «бейдж важности».",
+            "evidence": "src/admin/templates.go:896, 899-903; src/admin/admin.go:2988-2999 (severityLabel)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/sitepages",
+            "block": "Инфо-бар",
+            "claim": "Labels include «Показано страниц: N»",
+            "actual": "«Последний обход сайта» ✓ and empty-state «Хранилище страниц сайта не подключено» ✓, but the count renders as «Страницы N–M из Total» (or «Найдено: 0»), optionally «(всего в базе: N)» — there is no literal «Показано страниц: N».",
+            "evidence": "src/admin/templates.go:1700-1709",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/sitepages",
+            "block": "Таблица страниц",
+            "claim": "Status badge «Доступна/Недоступна»",
+            "actual": "The table badge text comes from sitePageStatusLabel: «доступна» / «недоступна (404)» (lowercase, gone label includes «(404)»). The filter dropdown does say «Доступна/Недоступна» capitalised, but the badge in the table differs.",
+            "evidence": "src/admin/admin.go:3254-3263, 3361, 3495; src/admin/templates.go:1791",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/changes",
+            "block": "Фильтры",
+            "claim": "Тип сущности: Документ/Новость/Мероприятие/Конкурс/НПА/Льгота/FAQ/Telegram/Страница сайта",
+            "actual": "Select options are «Все», «Документ», «Новость», «Мероприятие», «Конкурс/грант», «НПА (нормативный акт)», «Льгота», «FAQ (частые вопросы)», «Telegram», «Страница сайта». tree shortens «Конкурс/грант»→«Конкурс», «НПА (нормативный акт)»→«НПА», «FAQ (частые вопросы)»→«FAQ» and omits «Все».",
+            "evidence": "src/admin/templates.go:1417-1426",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/changes",
+            "block": "Свежесть источников",
+            "claim": "состояние (ок/устарел/ошибка)",
+            "actual": "State labels from healthStateLabel are «актуально» / «устарело» / «ошибки» / «нет данных» (rendered as «{StateLabel} · {LastSuccess}»). tree's «ок/устарел/ошибка» does not match the literals.",
+            "evidence": "src/admin/admin.go:3108-3119; src/admin/templates.go:1466",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/changes",
+            "block": "Таблица событий",
+            "claim": "column «Тип» (no sub-labels)",
+            "actual": "Column NAMES (Время/Тип/Сущность/Название/Категория/Изменение) all match the rendered headers — that part is correct. Two minor gaps: the «Тип» column's kind badges «Новая/Обновлена/Устарела/Удалена» are not listed in tree, and the «Изменение» column actually renders links («просмотр» for sitepage rows, «источник ↗»/«—»), not a change-type value.",
+            "evidence": "src/admin/templates.go:1482-1517",
+            "recommendation": "investigate"
+          }
+        ]
+      },
+      {
+        "interface": "Главная Админка :8090 — ИИ-модели/ИИ-агенты/Льготы-НПА/Прокси",
+        "summary": "Re-verified all 17 claimed findings against ai_admin.go, regulations.go, proxy_page.go and tree.go lines 270-411. 15 are genuine and kept (2 severity-downgraded to match the label-wording class); 1 was dropped as a non-issue (the auditor itself admitted the Russian-proxy block is accurate in tree.go and the only nit was an in-page paragraph/button mismatch, not a tree discrepancy); 1 missing element was added (proxy type badge in the proxy list). The single highest-impact issue is confirmed and stands: the /ai/agents creation/edit FORM dropdown (ai_admin.go:1163-1168) and preset buttons (1185-1188) offer only 4 agent types; \\\"Аннотатор страниц\\\" (page_annotator) is absent even though it exists in the enum (types.go:68), is programmatically seeded as a default agent (store.go:313-345, EnsurePageAnnotatorAgent), and IS shown in the agents TABLE via AgentType.Label() (types.go:82-83). tree.go:406 claims the form includes \\\"Аннотатор страниц\\\", so a bot would direct users to a non-existent dropdown option — and the form itself is buggy (a valid, seeded agent type cannot be created/edited). The rest are label/column-wording paraphrases (last-column header is \\\"Действия\\\"/\\\"Действия и тест\\\" not the inline button names; \\\"Идентификатор модели (Model ID)\\\" not \\\"API Model ID\\\"; NPA law option \\\"Федеральный закон\\\" not \\\"ФЗ\\\"; \\\"Описание льготы\\\" not \\\"Описание\\\"), several missing empty-states, one missing required proxy field (\\\"Название\\\"), and the proxy \\\"Автопереключение на рабочий\\\" being a button rather than a toggle.",
+        "coverageNote": "All 4 focus pages and their primary blocks are present in tree.go; confirmed gaps are exact label/column wording, one missing+seeded form option (page_annotator), one missing required form field (proxy Название), the proxy type badge, and several missing empty-state strings.",
+        "findings": [
+          {
+            "kind": "stale",
+            "severity": "high",
+            "route": "/ai/agents",
+            "block": "Форма агента",
+            "claim": "Тип агента (Консультант/Валидатор/Монитор/Координатор/Аннотатор страниц)",
+            "actual": "The agent-form <select name=\"agent_type\"> has only 4 options: Консультант, Валидатор документов, Монитор изменений, Координатор. There is NO 'Аннотатор страниц' (page_annotator) option in the dropdown, nor among the preset buttons (Консультант/Валидатор/Монитор/Координатор). page_annotator exists in the enum (types.go:68), is programmatically seeded as a default agent (store.go EnsurePageAnnotatorAgent, name 'Аннотатор страниц сайта'), and is rendered in the agents TABLE via AgentType.Label() — but it cannot be selected when creating/editing an agent via this form. tree.go promises an option that does not exist.",
+            "evidence": "src/admin/ai_admin.go:1163-1168 (select options, 4 only); src/admin/ai_admin.go:1185-1188 (preset buttons, 4 only); src/aimodels/store.go:336-337 (seeds page_annotator); src/aimodels/types.go:82-83 (table label)",
+            "recommendation": "fix-ui"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/ai/agents",
+            "block": "Форма агента",
+            "claim": "Тип агента … (Консультант/Валидатор/Монитор/…)",
+            "actual": "Form dropdown labels differ from tree.go: 'Валидатор документов' (not 'Валидатор') and 'Монитор изменений' (not 'Монитор'). The agents TABLE uses AgentType.Label() rendering 'Валидатор'/'Монитор изменений', so the form's 'Валидатор документов' is itself inconsistent with the table for the validator type.",
+            "evidence": "src/admin/ai_admin.go:1165 (Валидатор документов), :1166 (Монитор изменений); src/aimodels/types.go:77 (table 'Валидатор'), :79 ('Монитор изменений')",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/ai/agents",
+            "block": "Настроенные агенты",
+            "claim": "столбцы: …, Изменить/Тест/Удалить",
+            "actual": "The last column header text is 'Действия и тест' (not 'Изменить/Тест/Удалить'). The Изменить/Тест/Удалить buttons live inside that column.",
+            "evidence": "src/admin/ai_admin.go:973 (<th style=\"min-width:220px\">Действия и тест</th>)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/ai/agents",
+            "block": "Настроенные агенты",
+            "claim": "—",
+            "actual": "Empty-state when no agents (rendered in the {{else}} branch): heading 'Агенты не настроены', text 'Создайте первого агента — выберите модель и задайте системный промпт', button 'Создать агента'. Not represented in tree.go.",
+            "evidence": "src/admin/ai_admin.go:1030-1034",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/ai/models",
+            "block": "Зарегистрированные модели",
+            "claim": "столбцы: …, API Model ID, …, Изменить/Тест/Удалить",
+            "actual": "Column header is 'Идентификатор модели (Model ID)' (not 'API Model ID'), and the last column header is 'Действия' (not 'Изменить/Тест/Удалить'); the Изменить/Тест/Удалить buttons are inside the 'Действия' column.",
+            "evidence": "src/admin/ai_admin.go:567 (Идентификатор модели (Model ID)), :571 (Действия)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/ai/models",
+            "block": "Зарегистрированные модели",
+            "claim": "—",
+            "actual": "Empty-state when no models ({{else}} branch): heading 'Модели не настроены', text 'Добавьте модели вручную или используйте быстрый импорт Qwen выше', button 'Добавить первую модель'. Not in tree.go.",
+            "evidence": "src/admin/ai_admin.go:627-631",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/ai/models",
+            "block": "Быстрое подключение Qwen",
+            "claim": "поле sk-..., кнопка «Импортировать Qwen модели»",
+            "actual": "Block heading is 'Быстрое подключение моделей Qwen (Alibaba Cloud)' with a password field placeholder 'sk-...'; button label 'Импортировать Qwen модели' matches. Importantly the whole block renders ONLY when there are zero models ({{if not .Models}} seed-box) — tree.go notes neither the heading nor the conditional visibility.",
+            "evidence": "src/admin/ai_admin.go:533 ({{if not .Models}}), :537 (heading), :541 (placeholder sk-...), :542 (button)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/ai/models",
+            "block": "Форма модели",
+            "claim": "Model ID в API; Base URL API; Модель активна",
+            "actual": "Field labels are 'Идентификатор модели в API (Model ID)' and 'Базовый адрес API (Base URL)'. Provider <select> options (not listed in tree.go): 'Alibaba Cloud (Qwen)', 'OpenAI', 'Anthropic', 'Свой сервер (Custom / Self-hosted)'. Toggle label is 'Модель активна (используется агентами)'.",
+            "evidence": "src/admin/ai_admin.go:777 (Model ID label), :783 (Base URL label), :770-773 (provider options), :808 (Модель активна …)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/regulations",
+            "block": "Вкладка «НПА»",
+            "claim": "Тип (ФЗ/Постановление/Приказ/Решение)",
+            "actual": "The NPA type select label is 'Тип НПА' (not 'Тип'), and its options come from npaTypeOptions where law renders as 'Федеральный закон' (not 'ФЗ'); remaining options Постановление/Приказ/Решение match. Downgraded from high: this is a dropdown-label wording mismatch, not a broken control — the option is still identifiable as the law type.",
+            "evidence": "src/admin/regulations.go:52-57 (law→'Федеральный закон'); src/admin/regulations.go:442-445 (<label>Тип НПА</label> + {{range .NPATypes}})",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/regulations",
+            "block": "Вкладка «Льготы»",
+            "claim": "форма: …, Описание, …",
+            "actual": "The benefit-description field label is 'Описание льготы' (not 'Описание'). All other listed fields confirmed: Название*, Тип льготы, Ссылка на источник*, Ссылка на НПА, Полный текст, Статус (Действует/Устарела); button 'Создать льготу' matches. Downgraded to low: single-word refinement of a clearly-present field.",
+            "evidence": "src/admin/regulations.go:379 (<label>Описание льготы</label>), :362 (Тип льготы), :383 (Полный текст), :388-391 (Статус), :393 (Создать льготу)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/regulations",
+            "block": "Вкладка «Льготы»",
+            "claim": "Реестр льгот: Название/Тип/Статус/Источник/Удалить",
+            "actual": "Registry table headers are Название, Тип, Статус, Источник, 'Действия' — the last header is 'Действия' (the Удалить button is inside that column), not 'Удалить'.",
+            "evidence": "src/admin/regulations.go:402 (<th>Действия</th>), :411-412 (Удалить button inside)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/regulations",
+            "block": "Вкладка «НПА»",
+            "claim": "Реестр НПА: …/Удалить; форма: …, Дата вступления, …",
+            "actual": "Registry headers Название/Номер/Тип/Статус/Источник/'Действия' — last header is 'Действия' (Удалить button inside), not 'Удалить'. The NPA form date field is labeled 'Дата вступления в силу', not 'Дата вступления' as tree claims; Краткое содержание, Дата принятия, Орган-издатель, Номер НПА confirmed.",
+            "evidence": "src/admin/regulations.go:489 (<th>Действия</th>), :499-500 (Удалить inside); :473 (Дата вступления в силу)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/regulations",
+            "block": "Вкладка «Льготы» / «НПА»",
+            "claim": "—",
+            "actual": "Empty-state messages 'Льготы ещё не добавлены' and 'НПА ещё не добавлены' are not in tree.go. Also the page H1 is 'Льготы и НПА (нормативные правовые акты)' and the tab labels carry counts: 'Льготы (N)' and 'НПА (нормативные правовые акты) (N)'.",
+            "evidence": "src/admin/regulations.go:421 (Льготы ещё не добавлены), :509 (НПА ещё не добавлены), :343 (H1), :348-349 (tab labels with counts)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/proxy",
+            "block": "Добавить прокси или VPN вручную",
+            "claim": "Тип подключения …, Адрес прокси, Файл OVPN, кнопка «Добавить»",
+            "actual": "The manual form also has a REQUIRED 'Название' text field (placeholder 'Например: Webshare США') between the type select and the address field; tree.go omits this required field, so the documented form is incomplete.",
+            "evidence": "src/admin/proxy_page.go:264-266 (<label for=\"addName\">Название</label> … required)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "low",
+            "route": "/proxy",
+            "block": "Список прокси",
+            "claim": "переключатель «Автопереключение на рабочий»; статус «Активен»",
+            "actual": "'Автопереключение на рабочий' is a primary BUTTON below the proxy list (onclick autoSwitch → POST /api/proxy/auto-switch), not a toggle/switch. Per-proxy STATUS badges render as 'Работает'/'Ошибка'/'Не проверен' (proxyStatusBadge); tree.go's 'Активен' actually refers to the separate active-mark badge shown only on the active proxy. Empty-state 'Нет добавленных прокси. Добавьте первое подключение в форме выше.' is not in tree.go.",
+            "evidence": "src/admin/proxy_page.go:336-339 (button); src/admin/proxy_page.go:39-43 (proxyStatusBadge labels); src/admin/proxy_page.go:290 (empty-state); :300 (Активен active-mark)",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/proxy",
+            "block": "Список прокси",
+            "claim": "—",
+            "actual": "Each proxy item renders a type badge (proxyTypeLabel) showing 'HTTP-прокси' / 'SOCKS5-прокси' / 'Файл OVPN (VPN)' / 'API-прокси'. tree.go's 'Список прокси' block lists status/URL/Тест/Активировать/Удалить but omits this per-item connection-type badge. (Overlooked by the first auditor.)",
+            "evidence": "src/admin/proxy_page.go:315 (<span class=\"proxy-type\">%s</span>), :330 (proxyTypeLabel(p.Type)), :48-61 (proxyTypeLabel)",
+            "recommendation": "fix-tree"
+          }
+        ]
+      },
+      {
+        "interface": "MCP-сервер :8080",
+        "summary": "tree.go's mcpServer() (lines 414-439) models this interface as ONE page (/mcp) with 8 \"section\" blocks listing tool names. This is a pure JSON/MCP API (no html/template, no human-facing HTML) so there are no table headers, form fields, placeholders, empty-state messages or badges to mirror — the only user-visible elements are (a) the registered MCP tools and (b) the HTTP routes. I re-verified the full tool inventory: code registers exactly 36 distinct tool names across server.go + 7 *_tools.go files (4 server + 7 source + 4 regulation + 2 change + 8 residency + 9 agent + 1 nav + 1 sitepages), and tree.go's section Labels list exactly those 36 names — TOOL COVERAGE IS 1:1 with no missing and no stale/hallucinated tool. Only 2 HTTP routes exist on the mux (/health, /mcp); no extra routes or out-of-file tool registrations. Of the 3 claimed findings I KEPT 2 and DROPPED 1: kept the /health-not-a-Page omission and the unflagged-conditional-tools nuance; dropped the \\\"Более 35\\\" count finding as a false positive (more-than-35 is satisfied by 36 tools, and under the default config ELIGIBILITY_ENABLED=true + Generator-with-Postgres all 36 are live, so the wording is accurate by default and only looks high in a degraded config — pedantic, not a real distortion). No additional gaps were found.",
+        "coverageNote": "High coverage: all 36 registered MCP tool names appear in tree.go 1:1 (no missing, no stale). Only the /health route (not modeled as a Page) and the conditional registration of 3 agent tools are unmodeled; both are low-impact.",
+        "findings": [
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/health",
+            "block": "Pages[] of mcpServer()",
+            "claim": "tree.go names /health only inside the Interface-level HowTo string (\"POST :8080/mcp … /health открыт.\", tree.go:420); it is not a Page in Pages[], which contains only /mcp (tree.go:423).",
+            "actual": "server.go registers a real second HTTP route GET /health that emits the literal body {\"status\":\"ok\",\"service\":\"baza-skolkovo-mcp\"} — one of only two routes on the mux (the other being /mcp).",
+            "evidence": "src/mcp_server/server.go:221-224 (mux.HandleFunc(\"/health\", …)); modeled only at src/navindex/tree.go:420 (HowTo), absent from Pages[] at tree.go:421-437",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/mcp",
+            "block": "Агенты / Документы клиента (section)",
+            "claim": "tree.go lists check_eligibility (Агенты section, tree.go:433) and generate_document + list_document_templates (Документы клиента section, tree.go:432) with no note that they are conditionally registered.",
+            "actual": "check_eligibility is added only when deps.Eligibility != nil (wired only if cfg.EligibilityEnabled in main.go:2082); generate_document + list_document_templates are added only when deps.Generator != nil (newGenerator returns nil for non-Postgres stores). With those deps absent, a bot following tree.go would point at tools that are not exposed. Presentation nuance, not a wrong label.",
+            "evidence": "src/mcp_server/agent_tools.go:148 (if deps.Eligibility != nil) and agent_tools.go:166 (if deps.Generator != nil); wiring at cmd/skolkovo/main.go:2082-2085 and newGenerator nil-return at main.go:2313-2315",
+            "recommendation": "investigate"
+          }
+        ]
+      },
+      {
+        "interface": "Telegram-бот",
+        "summary": "Re-checked all 9 claimed findings against src/tgbot/{bot,handlers,keyboard,auth}.go and telegramBot() in tree.go (442-521). All 9 are genuine and confirmed at concrete file:lines; none were dropped as false positives. One reclassification: the \"8 stage descriptions\" finding is better labelled kind=missing (tree.go merely summarizes \"описание стадии (одно из 8: …)\" — it does not state a wrong value, the 8 concrete emoji sentences at handlers.go:187-194 are simply absent), with recommendation fix-tree. The strongest defect remains the pagination glyphs: both DeadlineKeyboard (keyboard.go:36,39) and DocsKeyboard (keyboard.go:73,76) render «⬅️ Назад» / «Вперёд ➡️» (U+2B05/U+27A1 + FE0F) while tree.go:483,492 claim «◀ Назад» / «Вперёд ▶» (U+25C0/U+25B6) — 4 wrong glyphs across two routes that a bot would reproduce verbatim. The remaining confirmed gaps are uncaptured fallback/error messages: the unauthenticated text fallback (handlers.go:81), the unknown-command error (handlers.go:48), the «❌ Вы не авторизованы…» states (handlers.go:163/209/267/509/543), the store-error messages (handlers.go:215/273/515), and the /ask «📚 Источники:» header + «Ответ не найден.» fallback + «❌ Ошибка: %v» (handlers.go:372/360/353). Added one missed low finding: the callback-answer toasts «Ошибка пагинации» / «Неизвестное действие» (handlers.go:425/455/501) are real user-visible popups absent from tree.go. No stale (non-existent) labels exist in tree.go beyond the wrong pagination glyphs.",
+        "coverageNote": "High coverage of happy-path screens/menus (all 8 routes, 4 main-menu buttons, StageKeyboard, status/docs emoji sets, empty-states, /help list); gaps are the wrong pagination glyphs, the 8 missing stage strings, and several uncaptured fallback/error/toast messages.",
+        "findings": [
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/deadlines",
+            "block": "Пагинация (inline-кнопки)",
+            "claim": "кнопка «◀ Назад» (U+25C0) и «Вперёд ▶» (U+25B6)",
+            "actual": "DeadlineKeyboard renders «⬅️ Назад» (U+2B05+FE0F) and «Вперёд ➡️» (U+27A1+FE0F) — different emoji glyphs; arrow trails the word on Вперёд.",
+            "evidence": "src/tgbot/keyboard.go:36, src/tgbot/keyboard.go:39",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "distorted",
+            "severity": "medium",
+            "route": "/docs",
+            "block": "Пагинация (inline-кнопки)",
+            "claim": "кнопка «◀ Назад» (U+25C0) и «Вперёд ▶» (U+25B6)",
+            "actual": "DocsKeyboard renders «⬅️ Назад» (U+2B05+FE0F) and «Вперёд ➡️» (U+27A1+FE0F) — same glyphs as DeadlineKeyboard, not the geometric triangles in tree.go.",
+            "evidence": "src/tgbot/keyboard.go:73, src/tgbot/keyboard.go:76",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "medium",
+            "route": "/start",
+            "block": "Приветственное сообщение",
+            "claim": "tree.go lists only the /start welcome, the already-authorized greeting, and auth success/error",
+            "actual": "When an unauthorized chat sends arbitrary non-email text, handleMessage replies «👋 Добро пожаловать! Введите /start для начала работы.» — a distinct onboarding fallback absent from tree.go.",
+            "evidence": "src/tgbot/handlers.go:81",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/start",
+            "block": "Главное меню (inline-кнопки)",
+            "claim": "no documented response for an unknown command",
+            "actual": "Default branch of handleCommand replies «❌ Неизвестная команда. Введите /help для справки.» — not represented in tree.go.",
+            "evidence": "src/tgbot/handlers.go:48",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/status",
+            "block": "Карточка статуса",
+            "claim": "no unauthenticated/error state listed",
+            "actual": "If the chat is not authorized, /status (and /deadlines, /docs) reply «❌ Вы не авторизованы. Введите /start и укажите ваш email.»; cmdChecklists/cmdStageInfo use «❌ Вы не авторизованы. Введите /start.». Not in tree.go.",
+            "evidence": "src/tgbot/handlers.go:163, src/tgbot/handlers.go:209, src/tgbot/handlers.go:267, src/tgbot/handlers.go:509, src/tgbot/handlers.go:543",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/deadlines",
+            "block": "Список дедлайнов",
+            "claim": "only the empty-state «✅ У вас нет ближайших дедлайнов!» is listed",
+            "actual": "On a store error: «❌ Ошибка получения дедлайнов: %v»; /docs has «❌ Ошибка получения документов: %v»; cmdChecklists has «❌ Ошибка получения чек-листов: %v». Not captured in tree.go.",
+            "evidence": "src/tgbot/handlers.go:215, src/tgbot/handlers.go:273, src/tgbot/handlers.go:515",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/status",
+            "block": "Карточка статуса",
+            "claim": "«описание стадии (одно из 8: Подача заявки … Выход)» — summarized abstractly, no concrete strings",
+            "actual": "The 8 stage descriptions are concrete emoji-prefixed sentences (e.g. «🏆 Поздравляем! Вы — резидент Сколково.», «📊 Период отчётности. Не забудьте сдать отчёты в срок.», «🚪 Процедура выхода из резидентства.»). tree.go omits the actual wording, so the bot cannot reproduce it; same strings also back cmd:stage_info.",
+            "evidence": "src/tgbot/handlers.go:187-194",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/ask",
+            "block": "Ответ консультанта",
+            "claim": "источники указаны как «ссылки на источники (документы/НПА/события)»",
+            "actual": "Sources are rendered under the literal header «📚 Источники:» with bullet lines «• <Title> (<URL>)»; a missing answer falls back to «Ответ не найден.»; on agent error «❌ Ошибка: %v». The header, the fallback and the error string are not in tree.go.",
+            "evidence": "src/tgbot/handlers.go:372, src/tgbot/handlers.go:360, src/tgbot/handlers.go:353",
+            "recommendation": "fix-tree"
+          },
+          {
+            "kind": "missing",
+            "severity": "low",
+            "route": "/deadlines",
+            "block": "Пагинация (inline-кнопки)",
+            "claim": "— (no callback-answer toast text documented)",
+            "actual": "Pagination/command callbacks surface transient toasts «Ошибка пагинации» (bad page arg) and «Неизвестное действие» (unknown cmd) via answerCallback; these user-visible popups are absent from tree.go.",
+            "evidence": "src/tgbot/handlers.go:425, src/tgbot/handlers.go:455, src/tgbot/handlers.go:501",
+            "recommendation": "investigate"
+          }
+        ]
+      }
+    ],
+    "totals": {
+      "findings": 73,
+      "high": 5
+    }
+  }
+}

@@ -132,7 +132,8 @@ func validateTenant(t *model.Tenant) error {
 	if strings.TrimSpace(t.Name) == "" {
 		return fmt.Errorf("Name: %w", ErrEmptyField)
 	}
-	if strings.TrimSpace(t.APIKey) == "" {
+	// Достаточно открытого ключа (стор выведет hash) ИЛИ уже готового хэша.
+	if strings.TrimSpace(t.APIKey) == "" && strings.TrimSpace(t.APIKeyHash) == "" {
 		return fmt.Errorf("APIKey: %w", ErrEmptyField)
 	}
 	return nil
@@ -268,6 +269,20 @@ type ClientDocumentStore interface {
 
 	// UpdateClientDocument обновляет статус или роль связи.
 	UpdateClientDocument(ctx context.Context, clientDoc *model.ClientDocument) error
+}
+
+// ---------------------------------------------------------------------------
+// SubscriptionStore — интерфейс хранилища подписок клиентов на изменения.
+// ---------------------------------------------------------------------------
+
+// SubscriptionStore управляет подписками клиентов на категории уведомлений.
+type SubscriptionStore interface {
+	// GetSubscriptions возвращает список категорий, на которые подписан клиент.
+	GetSubscriptions(ctx context.Context, clientID string) ([]string, error)
+
+	// SetSubscriptions устанавливает полный набор подписок клиента,
+	// заменяя предыдущие значения.
+	SetSubscriptions(ctx context.Context, clientID string, categories []string) error
 }
 
 // ---------------------------------------------------------------------------

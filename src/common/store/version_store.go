@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -53,6 +54,45 @@ FROM doc_versions WHERE document_id = $1 ORDER BY version_no DESC LIMIT $2`, doc
 			return nil, err
 		}
 		out = append(out, &v)
+	}
+	return out, rows.Err()
+}
+
+// DocVersionSummary — сводка по документу, у которого накоплена история версий.
+// Питает страницу автоматического ИИ-сравнения версий (/diff).
+type DocVersionSummary struct {
+	DocumentID   string
+	VersionCount int       // сколько версий сохранено
+	LatestNo     int       // номер последней версии
+	LatestAt     time.Time // когда зафиксирована последняя версия
+}
+
+// DocumentsWithVersions возвращает документы, у которых сохранено не менее
+// minVersions версий (по умолчанию 2), отсортированные по свежести последней
+// версии. Это и есть документы, для которых имеет смысл автоматическое
+// сравнение редакций.
+func (s *PostgresVersionStore) DocumentsWithVersions(ctx context.Context, minVersions int) ([]DocVersionSummary, error) {
+	if minVersions <= 0 {
+		minVersions = 2
+	}
+	rows, err := s.db.Query(ctx, `
+SELECT document_id, COUNT(*), MAX(version_no), MAX(created_at)
+FROM doc_versions
+GROUP BY document_id
+HAVING COUNT(*) >= $1
+ORDER BY MAX(created_at) DESC`, minVersions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DocVersionSummary
+	for rows.Next() {
+		var d DocVersionSummary
+		if err := rows.Scan(&d.DocumentID, &d.VersionCount, &d.LatestNo, &d.LatestAt); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
 	}
 	return out, rows.Err()
 }

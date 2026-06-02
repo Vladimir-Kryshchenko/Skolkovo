@@ -369,9 +369,9 @@ body {
 [data-tooltip]::after {
   content: attr(data-tooltip);
   position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
+  bottom: calc(100%% + 6px);
+  left: 50%%;
+  transform: translateX(-50%%);
   background: var(--text);
   color: var(--bg);
   font-size: 11px;
@@ -505,7 +505,7 @@ canvas { max-height: 280px; }
 }
 @media (max-width: 480px) {
   .header-bar { flex-direction: column; align-items: flex-start; }
-  .header-actions { width: 100%; justify-content: flex-start; }
+  .header-actions { width: 100%%; justify-content: flex-start; }
 }
 @media (min-width: 1024px) {
   .grid { grid-template-columns: repeat(3, 1fr); }

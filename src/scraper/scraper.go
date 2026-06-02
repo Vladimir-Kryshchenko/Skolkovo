@@ -157,6 +157,9 @@ func (s *Scraper) clientTimeout() time.Duration {
 	return 60 * time.Second
 }
 
+// DeriveRSS возвращает URL ленты-каталога документов для базового URL раздела.
+func DeriveRSS(baseURL string) string { return deriveRSS(baseURL) }
+
 // deriveRSS возвращает URL ленты-каталога документов для базового URL раздела.
 func deriveRSS(baseURL string) string {
 	u, err := url.Parse(baseURL)

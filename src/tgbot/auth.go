@@ -1,102 +1,103 @@
 // auth.go — авторизация: привязка Telegram chat ID к клиенту по email.
 //
-// Для MVP хранится в памяти (map[int64]string: chatID → clientID).
-// В дальнейшем можно заменить на БД (таблица telegram_bindings).
+// Привязка хранится в памяти конкретного бота (b.chatIDToClientID), а не в
+// пакетной глобальной map — это обязательно для мультибота: у каждого тенанта
+// свой экземпляр Bot со своими авторизациями, иначе чаты разных ботов
+// «перемешались» бы. Поиск клиента ограничен тенантом бота (b.tenantID).
+//
+// В дальнейшем in-memory map можно заменить на таблицу telegram_bindings.
 package tgbot
 
 import (
 	"context"
 	"fmt"
-	"log"
 	"strings"
-	"sync"
 
 	"baza-skolkovo/src/common/model"
-	"baza-skolkovo/src/common/store"
 )
 
-var (
-	// chatIDToClientID хранит привязку Telegram chat ID к clientID.
-	chatIDToClientID = make(map[int64]string)
-	authMu           sync.RWMutex
-)
+// clientByEmailFinder — опциональный быстрый поиск клиента по email в рамках тенанта.
+// *store.PostgresClientStore его реализует; иначе используется перебор ListClients.
+type clientByEmailFinder interface {
+	GetClientByEmail(ctx context.Context, tenantID, email string) (*model.Client, error)
+}
 
-// AuthorizeUser привязывает Telegram chat ID к клиенту по email.
-//
-// Алгоритм:
-//  1. Ищем клиента по email (ContactEmail) через перебор ListClients.
-//  2. Если найден — сохраняем привязку chatID → clientID.
-//  3. Возвращаем clientID или ошибку.
-//
-// Для MVP используется in-memory map. В продакшене:
-//
-//	— добавить метод GetClientByEmail в store.ClientStore;
-//	— хранить привязку в БД.
-func AuthorizeUser(clientStore store.ClientStore, chatID int64, email string) (string, error) {
+// authorizeUser привязывает Telegram chat ID к клиенту по email в рамках тенанта бота.
+// Возвращает clientID или ошибку, если клиент с таким email в тенанте не найден.
+func (b *Bot) authorizeUser(chatID int64, email string) (string, error) {
 	email = strings.TrimSpace(email)
 	if email == "" {
 		return "", fmt.Errorf("email не указан")
 	}
 
-	clientID, err := findClientIDByEmail(clientStore, email)
+	client, err := b.findClientByEmail(email)
 	if err != nil {
 		return "", fmt.Errorf("клиент с email %s не найден", email)
 	}
 
-	authMu.Lock()
-	chatIDToClientID[chatID] = clientID
-	authMu.Unlock()
+	b.authMutex.Lock()
+	b.chatIDToClientID[chatID] = client.ID
+	b.authMutex.Unlock()
 
-	log.Printf("[tgbot] авторизация: chat=%d → client=%s (email=%s)", chatID, clientID, email)
-	return clientID, nil
+	b.logf("авторизация: chat=%d → client=%s (email=%s)", chatID, client.ID, email)
+	return client.ID, nil
 }
 
-// GetClientByChatID возвращает клиента по chat ID.
-func GetClientByChatID(clientStore store.ClientStore, chatID int64) (*model.Client, error) {
-	authMu.RLock()
-	clientID, exists := chatIDToClientID[chatID]
-	authMu.RUnlock()
+// clientByChatID возвращает клиента по chat ID (должен быть авторизован).
+func (b *Bot) clientByChatID(chatID int64) (*model.Client, error) {
+	b.authMutex.RLock()
+	clientID, exists := b.chatIDToClientID[chatID]
+	b.authMutex.RUnlock()
 
 	if !exists {
 		return nil, fmt.Errorf("чат %d не авторизован — введите /start", chatID)
 	}
 
-	ctx := context.Background()
-	client, err := clientStore.GetClient(ctx, clientID)
+	client, err := b.stores.Client.GetClient(context.Background(), clientID)
 	if err != nil {
 		return nil, fmt.Errorf("клиент %s не найден: %w", clientID, err)
 	}
 	return client, nil
 }
 
-// DeauthorizeUser отвязывает Telegram chat ID от клиента.
-func DeauthorizeUser(chatID int64) {
-	authMu.Lock()
-	delete(chatIDToClientID, chatID)
-	authMu.Unlock()
-
-	log.Printf("[tgbot] деавторизация: chat=%d", chatID)
+// isAuthorized сообщает, привязан ли chat ID к клиенту.
+func (b *Bot) isAuthorized(chatID int64) bool {
+	b.authMutex.RLock()
+	_, exists := b.chatIDToClientID[chatID]
+	b.authMutex.RUnlock()
+	return exists
 }
 
-// findClientIDByEmail ищет clientID по email через ListClients.
-//
-// Для MVP перебирает всех клиентов — в продакшене заменить на
-// GetClientByEmail в ClientStore или индекс по ContactEmail.
-func findClientIDByEmail(clientStore store.ClientStore, email string) (string, error) {
+// deauthorize отвязывает Telegram chat ID от клиента.
+func (b *Bot) deauthorize(chatID int64) {
+	b.authMutex.Lock()
+	delete(b.chatIDToClientID, chatID)
+	b.authMutex.Unlock()
+	b.logf("деавторизация: chat=%d", chatID)
+}
+
+// findClientByEmail ищет клиента по email в рамках тенанта бота.
+// Использует быстрый GetClientByEmail, если хранилище его поддерживает;
+// иначе перебирает ListClients(tenantID) — список уже ограничен тенантом.
+func (b *Bot) findClientByEmail(email string) (*model.Client, error) {
 	ctx := context.Background()
 
-	// Перебираем все тенанты (пустой tenantID вернёт всех клиентов).
-	// Для MVP это допустимо — в реальной системе будет GetClientByEmail.
-	clients, err := clientStore.ListClients(ctx, "", model.ResidencyStage(""))
-	if err != nil {
-		return "", fmt.Errorf("список клиентов: %w", err)
+	if f, ok := b.stores.Client.(clientByEmailFinder); ok {
+		c, err := f.GetClientByEmail(ctx, b.tenantID, email)
+		if err != nil {
+			return nil, err
+		}
+		return c, nil
 	}
 
+	clients, err := b.stores.Client.ListClients(ctx, b.tenantID, model.ResidencyStage(""))
+	if err != nil {
+		return nil, fmt.Errorf("список клиентов: %w", err)
+	}
 	for _, c := range clients {
 		if strings.EqualFold(c.ContactEmail, email) {
-			return c.ID, nil
+			return c, nil
 		}
 	}
-
-	return "", fmt.Errorf("не найден клиент с email %s (проверено %d записей)", email, len(clients))
+	return nil, fmt.Errorf("не найден клиент с email %s (проверено %d записей)", email, len(clients))
 }

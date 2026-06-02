@@ -53,15 +53,23 @@ func (s ResidencyStage) IsTerminal() bool {
 
 // Client — клиент / заявитель.
 type Client struct {
-	ID              string         `json:"id"`
-	Name            string         `json:"name"`
-	INN             string         `json:"inn"`
-	ContactEmail    string         `json:"contact_email"`
-	ContactPhone    string         `json:"contact_phone"`
-	ResidencyStage  ResidencyStage `json:"residency_stage"`
-	TenantID        string         `json:"tenant_id"`
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	INN            string         `json:"inn"`
+	ContactEmail   string         `json:"contact_email"`
+	ContactPhone   string         `json:"contact_phone"`
+	ResidencyStage ResidencyStage `json:"residency_stage"`
+	TenantID       string         `json:"tenant_id"`
+	// APIKey — личный ключ клиента для подключения своего агента к MCP.
+	// Транзитное поле (см. Tenant.APIKey): на запись несёт открытый ключ,
+	// стор сохраняет только hash+prefix. Пусто — у клиента нет личного ключа.
+	APIKey string `json:"api_key,omitempty"`
+	// APIKeyHash — SHA-256 (hex) личного ключа; источник истины для авторизации.
+	APIKeyHash string `json:"-"`
+	// APIKeyPrefix — первые 16 символов ключа для идентификации в UI.
+	APIKeyPrefix string    `json:"api_key_prefix,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 // StageTransition — запись о переходе между стадиями.
@@ -239,12 +247,25 @@ type ClientDocument struct {
 
 // Tenant — мульти-тенант.
 type Tenant struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	APIKey    string          `json:"api_key"`
-	Settings  json.RawMessage `json:"settings,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
-	Active    bool            `json:"active"`
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// APIKey — открытый ключ. Транзитное поле: на запись несёт сгенерированный
+	// ключ (стор выводит из него hash+prefix и НЕ сохраняет открытый текст для
+	// новых строк); на чтение заполняется только для legacy-строк до ротации.
+	APIKey string `json:"api_key,omitempty"`
+	// APIKeyHash — SHA-256 (hex) ключа; источник истины для авторизации.
+	APIKeyHash string `json:"-"`
+	// APIKeyPrefix — первые 16 символов ключа для идентификации в UI (не секрет).
+	APIKeyPrefix string `json:"api_key_prefix,omitempty"`
+	// TelegramBotToken — токен Telegram-бота тенанта (@BotFather); пусто — бот не поднимается.
+	TelegramBotToken string `json:"telegram_bot_token,omitempty"`
+	// TelegramBotUsername — кэш @username бота, заполняется менеджером после запуска.
+	TelegramBotUsername string          `json:"telegram_bot_username,omitempty"`
+	Settings            json.RawMessage `json:"settings,omitempty"`
+	CreatedAt           time.Time       `json:"created_at"`
+	// KeyRotatedAt — когда последний раз ротировали MCP API-ключ (nil — ни разу).
+	KeyRotatedAt *time.Time `json:"key_rotated_at,omitempty"`
+	Active       bool       `json:"active"`
 }
 
 // ParseSettings декодирует JSON настроек тенанта в map.

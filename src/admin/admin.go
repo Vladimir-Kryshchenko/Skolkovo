@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -29,23 +30,77 @@ import (
 	"baza-skolkovo/src/common/store"
 	"baza-skolkovo/src/diff"
 	"baza-skolkovo/src/fetcher"
+	"baza-skolkovo/src/health"
+	"baza-skolkovo/src/jobsched"
+	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
+	"baza-skolkovo/src/relevance"
 	"baza-skolkovo/src/scheduler"
 	"baza-skolkovo/src/scraper"
+	"baza-skolkovo/src/sitepages"
 )
+
+// SitePageReader — что админке нужно от хранилища страниц публичного сайта.
+// List/CountFiltered/Sections/ListTags обеспечивают фильтрацию и пагинацию на
+// стороне БД, чтобы в админке были доступны ВСЕ страницы, а не первые N.
+type SitePageReader interface {
+	ListRecent(ctx context.Context, limit int) ([]*sitepages.Page, error)
+	List(ctx context.Context, f sitepages.PageFilter) ([]*sitepages.Page, error)
+	Count(ctx context.Context) (int, error)
+	CountFiltered(ctx context.Context, f sitepages.PageFilter) (int, error)
+	Sections(ctx context.Context) ([]string, error)
+	ListTags(ctx context.Context) ([]string, error)
+	LastSeenMax(ctx context.Context) (time.Time, error)
+	GetWithText(ctx context.Context, id string) (*sitepages.Page, error)
+	RelatedByTags(ctx context.Context, id string, tags []string, limit int) ([]sitepages.RelatedPage, error)
+}
+
+// SitePageRelated — семантический поиск похожих страниц (реализуется
+// *sitepages.Searcher). Опционален: без него блок «похожие по смыслу» скрыт.
+type SitePageRelated interface {
+	Related(ctx context.Context, p *sitepages.Page, limit int) ([]sitepages.Hit, error)
+}
+
+// SitePageActions — ручные операции над страницей сайта (реализуется
+// *sitepages.AdminService). Опционален: без него кнопка «Переаннотировать» и
+// форма правки аннотации в просмотрщике скрыты.
+type SitePageActions interface {
+	ReannotateOne(ctx context.Context, id string) (string, error)
+	SaveAnnotation(ctx context.Context, id string, a sitepages.Annotation) error
+}
+
+// VersionStore — что админке нужно от хранилища версий документов для
+// автоматического сравнения редакций (страница /diff). Удовлетворяется
+// *store.PostgresVersionStore; метод LatestVersions заодно делает его
+// пригодным как relevance.VersionReader для повторного ИИ-анализа.
+type VersionStore interface {
+	DocumentsWithVersions(ctx context.Context, minVersions int) ([]store.DocVersionSummary, error)
+	LatestVersions(ctx context.Context, documentID string, n int) ([]*model.DocVersion, error)
+}
 
 // Server — HTTP-админка.
 type Server struct {
 	store        store.Store
 	linkStore    store.DocumentLinkStore
 	changeStore  changes.Store
+	healthStore  health.Store
+	sitePages    SitePageReader
+	sitePageSim  SitePageRelated // семантически похожие страницы (опционально)
+	sitePageOps  SitePageActions // ручное переаннотирование/правка (опционально)
+	versionStore VersionStore    // история версий документов (для /diff); опционально
 	prefStore    store.PreferenceStore
 	npaStore     store.NPAStore
+	tenantStore  store.TenantStore // тенанты: MCP-ключи и токены Telegram-ботов (опц., Postgres)
 	rag          *rag.Service
 	schedStore   *scheduler.Store
 	reportStore  *scheduler.ReportStore
-	aiStore      *aimodels.Store // ИИ-модели и агенты (опционально, требует Postgres)
-	proxyManager *ProxyManager   // Управление прокси
+	jobStore     *jobsched.Store    // планировщик заданий: расписание, журнал, токены ИИ (опц.)
+	jobRunner    *jobsched.Runner   // движок планировщика для ручного запуска (опц.)
+	aiStore      *aimodels.Store    // ИИ-модели и агенты (опционально, требует Postgres)
+	navIndexer   *navindex.Indexer  // Переиндексация навигации по сайту (опционально)
+	proxyManager *ProxyManager      // Управление прокси
+	proxy6APIKey string             // API-ключ proxy6.net для автопоиска российских прокси
+	cookieStore  *DochubCookieStore // сессионная кука dochub для HTTP-скачивания тел файлов
 	addr         string
 	user         string
 	pass         string
@@ -57,38 +112,26 @@ type Server struct {
 	authStore    *adminAuthStore
 }
 
-// envOrDefault возвращает значение переменной окружения или значение по умолчанию.
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
-
 // New создаёт админку.
 func New(addr, user, pass, docsDir, chromePath, proxyURL, sourceURL string,
 	fetchWait time.Duration, st store.Store, ragSvc *rag.Service) *Server {
 	authStore := newAdminAuthStore()
-	// Администратор — обязателен, задаётся через ENV (ADMIN_USER/ADMIN_PASSWORD).
+	// В админ-панель входит ТОЛЬКО администратор (ADMIN_USER/ADMIN_PASSWORD).
+	// Остальные пользователи работают с базой не через эту панель, а через
+	// MCP-сервер, Telegram-бот и ИИ-агентов (чат-виджет, портал, консультант).
+	// Платформа автономна: администратор лишь следит за стабильностью.
 	if user != "" && pass != "" {
 		authStore.AddUser(user, pass, "Администратор", RoleAdmin)
 	}
-	// Доп. учётки (редактор/наблюдатель) создаются ТОЛЬКО если их пароль задан
-	// через ENV. Никаких дефолтных слабых паролей — иначе это дыра в безопасности.
-	if p := os.Getenv("ADMIN_EDITOR_PASSWORD"); p != "" {
-		authStore.AddUser(envOrDefault("ADMIN_EDITOR_USER", "editor"), p, "Редактор", RoleUser)
-	}
-	if p := os.Getenv("ADMIN_VIEWER_PASSWORD"); p != "" {
-		authStore.AddUser(envOrDefault("ADMIN_VIEWER_USER", "viewer"), p, "Наблюдатель", RoleViewer)
-	}
 
-	// Инициализируем менеджер прокси
+	// Инициализируем менеджер прокси и хранилище куки dochub.
 	proxyManager := NewProxyManager(filepath.Join(docsDir, ".admin", "proxies.json"))
+	cookieStore := NewDochubCookieStore(filepath.Join(docsDir, ".admin", "dochub_cookie.json"))
 
 	return &Server{
 		store: st, rag: ragSvc, addr: addr, user: user, pass: pass, docsDir: docsDir,
 		chromePath: chromePath, proxyURL: proxyURL, fetchWait: fetchWait, sourceURL: sourceURL,
-		authStore: authStore, proxyManager: proxyManager,
+		authStore: authStore, proxyManager: proxyManager, cookieStore: cookieStore,
 	}
 }
 
@@ -104,6 +147,41 @@ func (s *Server) WithChangeStore(cs changes.Store) *Server {
 	return s
 }
 
+// WithHealthStore устанавливает мониторинг свежести источников (для панели
+// «когда обновлялось» на странице /changes).
+func (s *Server) WithHealthStore(hs health.Store) *Server {
+	s.healthStore = hs
+	return s
+}
+
+// WithSitePageStore подключает хранилище страниц публичного сайта (для раздела
+// «Страницы сайта»: список + просмотрщик).
+func (s *Server) WithSitePageStore(r SitePageReader) *Server {
+	s.sitePages = r
+	return s
+}
+
+// WithSitePageSearcher подключает семантический поиск похожих страниц (блок
+// «похожие по смыслу» в просмотрщике страницы сайта).
+func (s *Server) WithSitePageSearcher(sim SitePageRelated) *Server {
+	s.sitePageSim = sim
+	return s
+}
+
+// WithSitePageActions подключает ручные операции над страницей: переаннотирование
+// и сохранение правок аннотации куратором (кнопка и форма в просмотрщике).
+func (s *Server) WithSitePageActions(ops SitePageActions) *Server {
+	s.sitePageOps = ops
+	return s
+}
+
+// WithVersionStore подключает хранилище версий документов — питает страницу
+// автоматического ИИ-сравнения версий (/diff) и повторный анализ «Монитором».
+func (s *Server) WithVersionStore(vs VersionStore) *Server {
+	s.versionStore = vs
+	return s
+}
+
 // WithPreferenceStore устанавливает хранилище льгот.
 func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
 	s.prefStore = ps
@@ -116,18 +194,50 @@ func (s *Server) WithNPAStore(ns store.NPAStore) *Server {
 	return s
 }
 
+// WithTenantStore подключает хранилище тенантов — раздел «Тенанты и токены»
+// (MCP API-ключи и токены Telegram-ботов). Без него пункт меню рендерится, но
+// страница сообщает, что хранилище недоступно (не-Postgres бэкенд).
+func (s *Server) WithTenantStore(ts store.TenantStore) *Server {
+	s.tenantStore = ts
+	return s
+}
+
+// WithNavIndexer устанавливает индексатор навигации по сайту (для кнопки
+// «Переиндексировать навигацию» — пересборка коллекции skolkovo_navigation).
+func (s *Server) WithNavIndexer(ix *navindex.Indexer) *Server {
+	s.navIndexer = ix
+	return s
+}
+
 // WithProxyManager устанавливает менеджер прокси.
 func (s *Server) WithProxyManager(pm *ProxyManager) *Server {
 	s.proxyManager = pm
 	return s
 }
 
+// WithProxy6APIKey устанавливает API-ключ proxy6.net для автопоиска российских прокси.
+func (s *Server) WithProxy6APIKey(key string) *Server {
+	s.proxy6APIKey = key
+	return s
+}
+
+// WithDochubCookieStore подключает хранилище сессионной куки dochub — питает
+// HTTP-скачивание тел файлов по куке (страница «Прокси» → поле куки, кнопка
+// «Скачать файлы»).
+func (s *Server) WithDochubCookieStore(cs *DochubCookieStore) *Server {
+	s.cookieStore = cs
+	return s
+}
+
 // docView — строка таблицы для шаблона.
 type docView struct {
 	model.Document
-	StatusStr string
-	FileSize  string // человекочитаемый размер файла
-	FileAge   string // время загрузки ("2 часа назад", "3 дня назад")
+	StatusStr      string
+	FileSize       string // человекочитаемый размер файла
+	FileAge        string // время загрузки ("2 часа назад", "3 дня назад")
+	SourceLinkURL  string // URL для кнопки «источник»: /api/proxy-source?id=... или SourceURL
+	SourceLinkText string // подпись ссылки: «источник» или «источник (локальный)»
+	WebURL         string // прямая http(s)-ссылка на оригинал (для «Открыть на сайте»); пусто для file://
 }
 
 // stats — сводка по реестру.
@@ -136,18 +246,30 @@ type stats struct {
 }
 
 type pageData struct {
-	Docs         []docView
-	Stats        stats
-	Query        string
-	Flash        string
-	FlashKind    string
-	FilterStatus string
-	Tab          string
-	Settings     model.SchedulerSettings
-	Reports      []model.CollectorReport
-	Validation   *model.ValidationReport
-	NextRunStr   string
-	CurrentUser  *AdminSession
+	Docs           []docView
+	Stats          stats
+	Query          string
+	Flash          string
+	FlashKind      string
+	FilterStatus      string
+	FilterCategory    string   // выбранная категория
+	FilterSubcategory string   // выбранная подкатегория
+	FilterTags        string   // выбранные теги (через запятую) — для поля ввода
+	UpdatedFrom       string   // fetched_at от (YYYY-MM-DD)
+	UpdatedTo         string   // fetched_at до
+	PublishedFrom     string   // published_at (загрузка на sk.ru) от
+	PublishedTo       string   // published_at до
+	Categories        []string // список категорий для выпадающего фильтра
+	Subcategories     []string // список подкатегорий для выпадающего фильтра
+	AllTags           []string // словарь тегов (datalist для поля ввода)
+	BaseQS            string   // прочие фильтры без status — для ссылок-вкладок статусов
+	Tab            string
+	Settings       model.SchedulerSettings
+	Reports        []model.CollectorReport
+	Validation     *model.ValidationReport
+	NextRunStr     string
+	CurrentUser    *AdminSession
+	PendingCount   int // количество документов «на проверке» для кнопки «Одобрить все»
 }
 
 // loginPageData — данные для страницы входа.
@@ -198,6 +320,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /documents/{id}/view-processed", s.requireAuth(s.handleViewProcessed))
 	mux.HandleFunc("GET /documents/{id}/download", s.requireAuth(s.handleDownload))
 	mux.HandleFunc("POST /documents/{id}/deindex", s.requireAuth(s.handleDeindex))
+	mux.HandleFunc("GET /documents/{id}/source", s.requireAuth(s.handleDocSource))
+
+	// Массовое одобрение документов
+	mux.HandleFunc("POST /api/approve-all", s.requireAuthJSON(s.handleAPIApproveAll))
 
 	// Старые API (обратная совместимость)
 	mux.HandleFunc("POST /api/scrape", s.requireAuthJSON(s.handleAPIScrape))
@@ -206,6 +332,7 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/index", s.requireAuthJSON(s.handleAPIIndex))
 	mux.HandleFunc("POST /api/sync", s.requireAuthJSON(s.handleAPISync))
 	mux.HandleFunc("POST /api/seed-local", s.requireAuthJSON(s.handleAPISeedLocal))
+	mux.HandleFunc("POST /api/navindex", s.requireAuthJSON(s.handleAPINavIndex))
 
 	// API для коллектора (полный цикл)
 	mux.HandleFunc("POST /api/collect", s.requireAuthJSON(s.handleAPICollect))
@@ -216,9 +343,10 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /api/settings", s.requireAuthJSON(s.handleAPISettingsUpdate))
 	mux.HandleFunc("GET /api/reports", s.requireAuthJSON(s.handleAPIReports))
 
-	// Diff — сравнение версий документов
+	// Diff — автоматическое сравнение версий документов силами ИИ-агента «Монитор».
 	mux.HandleFunc("GET /diff", s.requireAuth(s.handleDiffPage))
-	mux.HandleFunc("POST /diff", s.requireAuth(s.handleDiffCompare))
+	mux.HandleFunc("GET /diff/{id}/full", s.requireAuth(s.handleDiffFull))
+	mux.HandleFunc("POST /api/diff/{id}/analyze", s.requireAuthJSON(s.handleAPIReanalyze))
 	mux.HandleFunc("GET /api/diff/{id1}/{id2}", s.requireAuthJSON(s.handleAPIDiff))
 
 	// Аналитика
@@ -236,12 +364,26 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("GET /changes", s.requireAuth(s.handleChangesPage))
 	mux.HandleFunc("GET /api/changes", s.requireAuthJSON(s.handleAPIChanges))
 
+	// Страницы публичного сайта (список + просмотрщик)
+	mux.HandleFunc("GET /sitepages", s.requireAuth(s.handleSitePagesPage))
+	mux.HandleFunc("GET /sitepages/{id}", s.requireAuth(s.handleSitePageView))
+	mux.HandleFunc("POST /sitepages/{id}/reannotate", s.requireAuth(s.handleSitePageReannotate))
+	mux.HandleFunc("POST /sitepages/{id}/annotation", s.requireAuth(s.handleSitePageSaveAnnotation))
+	mux.HandleFunc("GET /api/sitepages", s.requireAuthJSON(s.handleAPISitePages))
+
 	// Льготы и НПА
 	mux.HandleFunc("GET /regulations", s.requireAuth(s.handleRegulationsPage))
 	mux.HandleFunc("POST /regulations/preferences", s.requireAuth(s.handleCreatePreference))
 	mux.HandleFunc("POST /regulations/preferences/{id}/delete", s.requireAuth(s.handleDeletePreference))
 	mux.HandleFunc("POST /regulations/npa", s.requireAuth(s.handleCreateNPA))
 	mux.HandleFunc("POST /regulations/npa/{id}/delete", s.requireAuth(s.handleDeleteNPA))
+
+	// Тенанты и токены: MCP API-ключи и токены Telegram-ботов (по тенанту).
+	mux.HandleFunc("GET /tenants", s.requireAuth(s.handleTenantsPage))
+	mux.HandleFunc("POST /tenants", s.requireAuth(s.handleTenantCreate))
+	mux.HandleFunc("POST /tenants/{id}/regenerate-key", s.requireAuth(s.handleTenantRegenerateKey))
+	mux.HandleFunc("POST /tenants/{id}/telegram-token", s.requireAuth(s.handleTenantTelegramToken))
+	mux.HandleFunc("POST /tenants/{id}/toggle-active", s.requireAuth(s.handleTenantToggleActive))
 
 	// Управление прокси
 	mux.HandleFunc("GET /api/proxy/list", s.requireAuthJSON(func(w http.ResponseWriter, r *http.Request) {
@@ -281,7 +423,12 @@ func (s *Server) ListenAndServe() error {
 		id := s.proxyManager.AutoSwitch()
 		json.NewEncoder(w).Encode(map[string]string{"active_id": id})
 	}))
+	mux.HandleFunc("POST /api/proxy/find-russian", s.requireAuthJSON(s.handleAPIFindRussianProxy))
+	mux.HandleFunc("POST /api/dochub-cookie", s.requireAuthJSON(s.handleAPISetDochubCookie))
 	mux.HandleFunc("GET /proxy", s.requireAuth(s.handleProxyPage)) // UI страница
+
+	// Диагностика — живые проверки подсистем со способами решения
+	mux.HandleFunc("GET /health", s.requireAuth(s.handleDiagnostics))
 
 	// ИИ Конфигурация — модели и агенты
 	mux.HandleFunc("GET /ai/models", s.requireAuth(s.handleAIModelsPage))
@@ -300,6 +447,15 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /ai/agents/{id}/update", s.requireAuth(s.handleAIAgentUpdate))
 	mux.HandleFunc("POST /api/ai/agents/{id}/delete", s.requireAuthJSON(s.handleAIAgentDelete))
 	mux.HandleFunc("POST /api/ai/agents/{id}/test", s.requireAuthJSON(s.handleAIAgentTest))
+
+	// Раздел «Расписание и журнал»: настройка периодичности per-source,
+	// журнал запусков и учёт токенов ИИ-агентов.
+	mux.HandleFunc("GET /jobs", s.requireAuth(s.handleJobsPage))
+	mux.HandleFunc("POST /jobs/{name}", s.requireAuth(s.handleJobUpdate))
+	mux.HandleFunc("POST /jobs/{name}/run", s.requireAuth(s.handleJobRun))
+	mux.HandleFunc("GET /jobs/runs", s.requireAuth(s.handleRunsPage))
+	mux.HandleFunc("GET /jobs/runs/{id}", s.requireAuth(s.handleRunDetail))
+	mux.HandleFunc("GET /jobs/ai-usage", s.requireAuth(s.handleAIUsagePage))
 
 	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик, ИИ)", s.addr)
 	return http.ListenAndServe(s.addr, mux)
@@ -471,16 +627,79 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	status := model.Status(r.URL.Query().Get("status"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
 
+	category := strings.TrimSpace(r.URL.Query().Get("category"))
+	subcategory := strings.TrimSpace(r.URL.Query().Get("subcategory"))
+	tagsFilter := parseTagsCSV(r.URL.Query().Get("tags"))
+	updatedFrom := r.URL.Query().Get("updated_from")
+	updatedTo := r.URL.Query().Get("updated_to")
+	publishedFrom := r.URL.Query().Get("published_from")
+	publishedTo := r.URL.Query().Get("published_to")
+
+	// parseDay разбирает YYYY-MM-DD в локальной зоне (end=true — конец дня).
+	parseDay := func(v string, end bool) time.Time {
+		if v == "" {
+			return time.Time{}
+		}
+		layout, val := "2006-01-02", v
+		if end {
+			layout, val = "2006-01-02 15:04", v+" 23:59"
+		}
+		t, err := time.ParseInLocation(layout, val, time.Local)
+		if err != nil {
+			return time.Time{}
+		}
+		return t
+	}
+	updFrom, updTo := parseDay(updatedFrom, false), parseDay(updatedTo, true)
+	pubFrom, pubTo := parseDay(publishedFrom, false), parseDay(publishedTo, true)
+
 	var docs []docView
+	categorySet := map[string]bool{}
+	subcategorySet := map[string]bool{}
+	tagSet := map[string]bool{}
 	if tab == "documents" {
-		allDocs, err := s.store.List(r.Context(), store.Filter{Status: status})
+		allDocs, err := s.store.List(r.Context(), store.Filter{})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		docs = make([]docView, 0, len(allDocs))
+		qLower := strings.ToLower(query)
 		for _, d := range allDocs {
-			if query != "" && !strings.Contains(strings.ToLower(d.Title), strings.ToLower(query)) {
+			if d.Category != "" {
+				categorySet[d.Category] = true
+			}
+			if d.Subcategory != "" {
+				subcategorySet[d.Subcategory] = true
+			}
+			for _, t := range d.Tags {
+				tagSet[t] = true
+			}
+			if status != "" && d.Status != status {
+				continue
+			}
+			if query != "" && !strings.Contains(strings.ToLower(d.Title), qLower) {
+				continue
+			}
+			if category != "" && d.Category != category {
+				continue
+			}
+			if subcategory != "" && d.Subcategory != subcategory {
+				continue
+			}
+			if !docHasAllTags(d.Tags, tagsFilter) {
+				continue
+			}
+			if !updFrom.IsZero() && d.FetchedAt.Before(updFrom) {
+				continue
+			}
+			if !updTo.IsZero() && d.FetchedAt.After(updTo) {
+				continue
+			}
+			if !pubFrom.IsZero() && (d.PublishedAt == nil || d.PublishedAt.Before(pubFrom)) {
+				continue
+			}
+			if !pubTo.IsZero() && (d.PublishedAt == nil || d.PublishedAt.After(pubTo)) {
 				continue
 			}
 			v := docView{Document: d, StatusStr: string(d.Status)}
@@ -488,7 +707,40 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 				v.FileSize = formatFileSize(d.LocalPath)
 				v.FileAge = humanTimeAgo(d.FetchedAt)
 			}
+			v.SourceLinkURL, v.SourceLinkText = makeSourceLink(d.ID, d.SourceURL, d.LocalPath)
+			if strings.HasPrefix(d.SourceURL, "http://") || strings.HasPrefix(d.SourceURL, "https://") {
+				v.WebURL = d.SourceURL
+			}
 			docs = append(docs, v)
+		}
+	}
+
+	categories := make([]string, 0, len(categorySet))
+	for c := range categorySet {
+		categories = append(categories, c)
+	}
+	sort.Strings(categories)
+	subcategories := make([]string, 0, len(subcategorySet))
+	for c := range subcategorySet {
+		subcategories = append(subcategories, c)
+	}
+	sort.Strings(subcategories)
+	allTags := make([]string, 0, len(tagSet))
+	for t := range tagSet {
+		allTags = append(allTags, t)
+	}
+	sort.Strings(allTags)
+
+	// base — прочие фильтры (без status) для ссылок-вкладок статусов.
+	base := url.Values{}
+	for k, v := range map[string]string{
+		"q": query, "category": category, "subcategory": subcategory,
+		"tags":         strings.Join(tagsFilter, ","),
+		"updated_from": updatedFrom, "updated_to": updatedTo,
+		"published_from": publishedFrom, "published_to": publishedTo,
+	} {
+		if v != "" {
+			base.Set(k, v)
 		}
 	}
 
@@ -524,24 +776,64 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{
-		Docs:         docs,
-		Stats:        st,
-		Query:        query,
-		Flash:        r.URL.Query().Get("msg"),
-		FlashKind:    orDefault(r.URL.Query().Get("kind"), "ok"),
-		FilterStatus: string(status),
-		Tab:          tab,
-		Settings:     settings,
-		Reports:      reports,
-		Validation:   valRep,
-		NextRunStr:   nextRunStr,
-		CurrentUser:  sessionFromContext(r),
+		Docs:           docs,
+		Stats:          st,
+		Query:          query,
+		Flash:          r.URL.Query().Get("msg"),
+		FlashKind:      orDefault(r.URL.Query().Get("kind"), "ok"),
+		FilterStatus:      string(status),
+		FilterCategory:    category,
+		FilterSubcategory: subcategory,
+		FilterTags:        strings.Join(tagsFilter, ", "),
+		UpdatedFrom:       updatedFrom,
+		UpdatedTo:         updatedTo,
+		PublishedFrom:     publishedFrom,
+		PublishedTo:       publishedTo,
+		Categories:        categories,
+		Subcategories:     subcategories,
+		AllTags:           allTags,
+		BaseQS:            base.Encode(),
+		Tab:            tab,
+		Settings:       settings,
+		Reports:        reports,
+		Validation:     valRep,
+		NextRunStr:     nextRunStr,
+		CurrentUser:    sessionFromContext(r),
+		PendingCount:   st.Pending,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		log.Println("[admin] шаблон:", err)
 	}
+}
+
+// parseTagsCSV разбивает "a, b, c" в нормализованный список тегов (нижний регистр).
+func parseTagsCSV(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if t := strings.ToLower(strings.TrimSpace(p)); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// docHasAllTags сообщает, содержит ли документ все указанные теги (без учёта регистра).
+func docHasAllTags(docTags, want []string) bool {
+	for _, w := range want {
+		found := false
+		for _, t := range docTags {
+			if strings.EqualFold(t, w) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // handleStats отдаёт сводку в JSON (метрики актуальности базы).
@@ -755,12 +1047,27 @@ func jsonResp(w http.ResponseWriter, ok bool, msg, errStr string) {
 
 // handleAPIScrape запускает парсинг RSS в фоне.
 func (s *Server) handleAPIScrape(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск парсинга RSS")
-	go func() {
-		// Здесь можно вызвать scraper если он доступен
-		log.Println("[admin/api] парсинг RSS запущен (заглушка — используйте CLI для полного парсинга)")
-	}()
+	if s.sourceURL == "" {
+		jsonResp(w, false, "", "SOURCE_URL не задан — парсинг невозможен")
+		return
+	}
 	jsonResp(w, true, "Парсинг RSS запущен в фоне. Обновите страницу через минуту.", "")
+	go func() {
+		ctx := context.Background()
+		sc := &scraper.Scraper{
+			RSSURL: scraper.DeriveRSS(s.sourceURL),
+			Store:  s.store,
+			Delay:  2 * time.Second,
+		}
+		sc.UseDynamicProxy(s.proxyManager.GetActiveURL)
+		rep, err := sc.Run(ctx)
+		if err != nil {
+			log.Printf("[admin/api] парсинг RSS: %v", err)
+			return
+		}
+		log.Printf("[admin/api] парсинг RSS завершён: добавлено %d, обновлено %d, ошибок %d",
+			rep.Catalogued, rep.Updated, len(rep.Errors))
+	}()
 }
 
 // handleAPICrawl запускает полный headless-обход сайта документов (категории +
@@ -839,13 +1146,96 @@ func (s *Server) upsertCatalogItems(ctx context.Context, items []fetcher.Catalog
 	return added, merged
 }
 
-// handleAPIFetch запускает скачивание файлов документов через активный прокси.
+// handleAPISetDochubCookie сохраняет сессионную куку dochub (из браузера,
+// прошедшего WAF) — с ней HTTP-скачивание тел файлов работает без браузера и
+// без прокси. Принимает поле "cookie" (form или JSON).
+func (s *Server) handleAPISetDochubCookie(w http.ResponseWriter, r *http.Request) {
+	if s.cookieStore == nil {
+		jsonResp(w, false, "", "хранилище куки не подключено")
+		return
+	}
+	cookie := strings.TrimSpace(r.FormValue("cookie"))
+	if cookie == "" {
+		// Пробуем JSON-тело.
+		var body struct {
+			Cookie string `json:"cookie"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		cookie = strings.TrimSpace(body.Cookie)
+	}
+	if cookie == "" {
+		jsonResp(w, false, "", "пустая кука")
+		return
+	}
+	if err := s.cookieStore.Set(cookie); err != nil {
+		jsonResp(w, false, "", "сохранение: "+err.Error())
+		return
+	}
+	log.Println("[admin/api] кука dochub обновлена")
+	jsonResp(w, true, "Кука dochub сохранена. Теперь «Скачать файлы» качает тела по куке (без браузера и прокси).", "")
+}
+
+// handleAPIFetch запускает скачивание тел файлов. Основной путь — по сессионной
+// куке dochub (обычный HTTP, без браузера/прокси): обходит WAF, т.к. кука выдана
+// реальному браузеру, прошедшему проверку. Если куки нет — фоллбэк на старый
+// headless+прокси путь (обычно блокируется WAF; оставлен для совместимости).
 func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск скачивания файлов")
+	cookie := ""
+	if s.cookieStore != nil {
+		cookie = s.cookieStore.Get()
+	}
 
-	// Получаем активный прокси
+	if cookie != "" {
+		log.Println("[admin/api] скачивание тел файлов по куке dochub (HTTP, без браузера)")
+		go func() {
+			ctx := context.Background()
+			f, err := fetcher.New("", "", s.fetchWait, nil) // без Chrome и без прокси — кука работает с любого IP
+			if err != nil {
+				log.Printf("[admin/api] fetch(cookie): %v", err)
+				return
+			}
+			f.Cookie = cookie
+			// Возобновляемость: пропускаем уже скачанные файлы (есть на диске).
+			f.SkipURL = func(u string) bool {
+				if d, derr := s.store.Get(ctx, scraper.DocID(u)); derr == nil && d.LocalPath != "" {
+					if _, serr := os.Stat(d.LocalPath); serr == nil {
+						return true
+					}
+				}
+				return false
+			}
+			cats := make([]fetcher.CategorySpec, 0, len(scraper.CategoryNames))
+			for slug, name := range scraper.CategoryNames {
+				cats = append(cats, fetcher.CategorySpec{Slug: slug, Name: name})
+			}
+			outDir := filepath.Join(s.docsDir, "На_проверке", "Загружено")
+			byTitle := s.cookieTitleIndex(ctx) // индекс для реконсиляции, строим один раз
+			added := 0
+			docs, errs := f.CollectViaCookie(ctx, s.sourceURL, cats, outDir, 0,
+				func(m string) { log.Printf("[admin/api] %s", m) },
+				func(cd fetcher.CookieDoc) { // регистрируем сразу, по мере скачивания
+					if s.registerOneCookieDoc(ctx, cd, byTitle) {
+						added++
+					}
+				})
+			log.Printf("[admin/api] скачивание по куке завершено: файлов %d, в реестр %d, ошибок %d (часть ошибок — «мёртвые» дубли /m/docs/, это норма)", len(docs), added, len(errs))
+			// Фиксируем результат в мониторинге свежести, чтобы провал (например,
+			// протухшая кука → 403 на всё) был виден в админке, а не только в логах.
+			var runErr error
+			if len(docs) == 0 && len(errs) > 0 {
+				runErr = fmt.Errorf("скачано 0 файлов, ошибок %d — вероятно, кука dochub протухла, обновите её: %s", len(errs), errs[0])
+			}
+			if s.healthStore != nil {
+				_ = s.healthStore.Record(ctx, "collect", len(docs), runErr)
+			}
+		}()
+		jsonResp(w, true, "Скачивание тел файлов по куке запущено в фоне (без браузера и прокси). Обновите страницу через пару минут.", "")
+		return
+	}
+
+	// Фоллбэк: headless + прокси (кука не задана). Обычно режется WAF dochub.
+	log.Println("[admin/api] скачивание файлов: кука не задана — пробую headless+прокси (часто блокируется WAF)")
 	activeProxyURL := s.proxyManager.GetActiveURL()
-
 	go func() {
 		ctx := context.Background()
 		f, err := fetcher.New(s.chromePath, activeProxyURL, s.fetchWait, s.proxyManager.GetActiveURL)
@@ -853,20 +1243,143 @@ func (s *Server) handleAPIFetch(w http.ResponseWriter, r *http.Request) {
 			log.Printf("[admin/api] fetch: %v", err)
 			return
 		}
-		// При WAF-бане автоматически переключаемся на рабочий прокси.
 		f.OnWAFBlocked = func() string {
 			s.proxyManager.AutoSwitch()
 			return s.proxyManager.GetActiveURL()
 		}
-
 		done, errs := f.EnrichMissing(ctx, s.store, s.docsDir, 0, nil)
 		log.Printf("[admin/api] скачивание завершено: скачано %d, ошибок %d", done, len(errs))
-		for _, e := range errs {
-			log.Printf("[admin/api] ошибка скачивания: %v", e)
-		}
 	}()
+	jsonResp(w, true, "Кука dochub не задана — пробую headless+прокси (обычно блокируется WAF). Надёжный способ: задайте куку на странице «Прокси».", "")
+}
 
-	jsonResp(w, true, "Скачивание файлов запущено в фоне. Используйте активный прокси.", "")
+// cookieTitleIndex один раз строит индекс «нормализованный заголовок → документ»
+// для реконсиляции скачанных файлов с записями каталога (без файла).
+func (s *Server) cookieTitleIndex(ctx context.Context) map[string]model.Document {
+	existing, _ := s.store.List(ctx, store.Filter{})
+	idx := make(map[string]model.Document, len(existing))
+	for _, d := range existing {
+		if k := cookieDocTitleKey(d.Title); k != "" {
+			idx[k] = d
+		}
+	}
+	return idx
+}
+
+// registerOneCookieDoc регистрирует ОДИН скачанный файл (инкрементально, по мере
+// скачивания — чтобы прогресс не терялся при обрыве). Реконсиляция, чтобы не
+// плодить дубли: 1) запись с этим download-URL уже есть — обновляем файл;
+// 2) есть документ с тем же заголовком без файла — прикрепляем к нему; 3) иначе
+// создаём новую запись (утратившие силу — «устарел», иначе «на_проверке»).
+// Возвращает true, если запись добавлена/обновлена.
+func (s *Server) registerOneCookieDoc(ctx context.Context, cd fetcher.CookieDoc, byTitle map[string]model.Document) bool {
+	id := scraper.DocID(cd.URL)
+	if doc, err := s.store.Get(ctx, id); err == nil {
+		doc.LocalPath, doc.FileHash, doc.Indexed = cd.LocalPath, cd.Hash, false
+		if doc.Category == "" {
+			doc.Category = cd.Category
+		}
+		if s.store.Upsert(ctx, doc) == nil {
+			s.maybeReindex(doc)
+			return true
+		}
+		return false
+	}
+	if k := cookieDocTitleKey(cd.Title); k != "" {
+		if ex, ok := byTitle[k]; ok && ex.LocalPath == "" {
+			ex.LocalPath, ex.FileHash, ex.Indexed = cd.LocalPath, cd.Hash, false
+			if ex.Category == "" {
+				ex.Category = cd.Category
+			}
+			if s.store.Upsert(ctx, ex) == nil {
+				s.maybeReindex(ex)
+				return true
+			}
+			return false
+		}
+	}
+	status := model.StatusPending
+	if cd.Category == scraper.CategoryNames["unactual_documents"] ||
+		strings.Contains(strings.ToUpper(cd.Title), "УТРАТИЛ") {
+		status = model.StatusOutdated
+	}
+	doc := model.Document{
+		ID: id, Title: cd.Title, SourceURL: cd.URL, Category: cd.Category,
+		LocalPath: cd.LocalPath, FileHash: cd.Hash,
+		Status: status, FetchedAt: time.Now(),
+	}
+	return s.store.Upsert(ctx, doc) == nil
+}
+
+// maybeReindex переиндексирует документ, если он действует и RAG подключён
+// (чтобы текст только что прикреплённого файла попал в поиск).
+func (s *Server) maybeReindex(doc model.Document) {
+	if s.rag != nil && doc.Status == model.StatusActive {
+		go s.syncIndex(doc.ID, model.StatusActive)
+	}
+}
+
+// cookieDocTitleKey — нормализованный ключ заголовка для реконсиляции дублей.
+func cookieDocTitleKey(t string) string {
+	return strings.ToLower(strings.Join(strings.Fields(t), " "))
+}
+
+// handleAPIApproveAll переводит все «на_проверке» документы в «действует»
+// и запускает их индексацию в RAG.
+func (s *Server) handleAPIApproveAll(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	docs, err := s.store.List(ctx, store.Filter{Status: model.StatusPending})
+	if err != nil {
+		jsonResp(w, false, "", "Ошибка получения документов: "+err.Error())
+		return
+	}
+	if len(docs) == 0 {
+		jsonResp(w, true, "Нет документов «на проверке».", "")
+		return
+	}
+	approved := 0
+	for _, d := range docs {
+		if err := s.store.SetStatus(ctx, d.ID, model.StatusActive); err != nil {
+			log.Printf("[admin] approve-all: SetStatus %s: %v", d.ID, err)
+			continue
+		}
+		approved++
+	}
+	// Запускаем индексацию одобренных документов в фоне.
+	if s.rag != nil {
+		go func() {
+			bgCtx := context.Background()
+			indexed := 0
+			for _, d := range docs {
+				n, err := s.rag.IndexDocument(bgCtx, d.ID)
+				if err != nil {
+					log.Printf("[admin] approve-all: indexing %s: %v", d.ID, err)
+				} else {
+					indexed += n
+				}
+			}
+			log.Printf("[admin] approve-all: одобрено %d, проиндексировано %d фрагментов", approved, indexed)
+		}()
+	}
+	jsonResp(w, true, fmt.Sprintf("Одобрено %d документов, индексация запущена в фоне.", approved), "")
+}
+
+// handleAPIFindRussianProxy ищет работающий российский прокси и добавляет его в ProxyManager.
+func (s *Server) handleAPIFindRussianProxy(w http.ResponseWriter, r *http.Request) {
+	if s.proxyManager == nil {
+		jsonResp(w, false, "", "ProxyManager не подключён")
+		return
+	}
+	finder := &fetcher.RussianProxyFinder{Proxy6APIKey: s.proxy6APIKey}
+	ctx := r.Context()
+	proxyURL, err := finder.Find(ctx)
+	if err != nil {
+		jsonResp(w, false, "", fmt.Sprintf("Не найден рабочий российский прокси: %v", err))
+		return
+	}
+	id := s.proxyManager.AddProxy("auto-ru", "http", proxyURL)
+	s.proxyManager.ActivateProxy(id)
+	jsonResp(w, true, fmt.Sprintf("Найден и активирован российский прокси (ID %s).", id), "")
 }
 
 // handleAPIIndex запускает индексацию всех «действует» документов.
@@ -899,17 +1412,71 @@ func (s *Server) handleAPIIndex(w http.ResponseWriter, r *http.Request) {
 	jsonResp(w, true, "Индексация запущена в фоне.", "")
 }
 
-// handleAPISync запускает полный цикл (заглушка — CLI делает основную работу).
+// handleAPISync запускает полный цикл: RSS-парсинг + индексация.
 func (s *Server) handleAPISync(w http.ResponseWriter, r *http.Request) {
-	log.Println("[admin/api] запуск полного синка")
+	if s.sourceURL == "" && s.rag == nil {
+		jsonResp(w, false, "", "SOURCE_URL и RAG-сервис не заданы")
+		return
+	}
+	jsonResp(w, true, "Полный синк запущен в фоне (RSS → индексация). Обновите страницу через 2-3 минуты.", "")
 	go func() {
-		log.Println("[admin/api] полный синк запущен (заглушка — используйте skolkovo sync)")
+		ctx := context.Background()
+		// Шаг 1: RSS-парсинг
+		if s.sourceURL != "" {
+			sc := &scraper.Scraper{
+				RSSURL: scraper.DeriveRSS(s.sourceURL),
+				Store:  s.store,
+				Delay:  2 * time.Second,
+			}
+			sc.UseDynamicProxy(s.proxyManager.GetActiveURL)
+			rep, err := sc.Run(ctx)
+			if err != nil {
+				log.Printf("[admin/api] sync: парсинг RSS: %v", err)
+			} else {
+				log.Printf("[admin/api] sync: парсинг завершён: добавлено %d, обновлено %d",
+					rep.Catalogued, rep.Updated)
+			}
+		}
+		// Шаг 2: Индексация всех «действует»
+		if s.rag != nil {
+			docs, err := s.store.List(ctx, store.Filter{Status: model.StatusActive})
+			if err != nil {
+				log.Printf("[admin/api] sync: список для индексации: %v", err)
+				return
+			}
+			var indexed int
+			for _, doc := range docs {
+				if _, err := s.rag.IndexDocument(ctx, doc.ID); err != nil {
+					log.Printf("[admin/api] sync: индексация %s: %v", doc.ID, err)
+					continue
+				}
+				indexed++
+			}
+			log.Printf("[admin/api] sync: проиндексировано %d документов", indexed)
+		}
 	}()
-	jsonResp(w, true, "Полный синк запущен в фоне.", "")
 }
 
 // handleAPISeedLocal регистрирует и индексирует все .md-файлы из DocsDir в RAG.
 // Идемпотентно: уже зарегистрированные файлы (по LocalPath) не дублируются.
+// handleAPINavIndex пересобирает навигационный индекс сайта (коллекция
+// skolkovo_navigation) из src/navindex — питает MCP-инструмент get_navigation.
+func (s *Server) handleAPINavIndex(w http.ResponseWriter, r *http.Request) {
+	if s.navIndexer == nil {
+		jsonResp(w, false, "", "Индексатор навигации не подключён (нужен Qdrant + TEI)")
+		return
+	}
+	jsonResp(w, true, "Переиндексация навигации запущена в фоне.", "")
+	go func() {
+		n, err := s.navIndexer.Reindex(context.Background())
+		if err != nil {
+			log.Printf("[admin/navindex] ошибка переиндексации: %v", err)
+			return
+		}
+		log.Printf("[admin/navindex] навигация переиндексирована: %d узлов", n)
+	}()
+}
+
 func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 	if s.rag == nil {
 		jsonResp(w, false, "", "RAG-сервис не подключён")
@@ -962,6 +1529,14 @@ func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
+			// Категорию навешиваем только файлам навигационной карты сайта;
+			// остальной локальный markdown оставляем без категории, чтобы его
+			// классифицировал классификатор при индексации (а не мислейблил).
+			category := ""
+			if strings.Contains(absPath, "RAG_Структура_сайта") {
+				category = "RAG Структура сайта"
+			}
+
 			now := time.Now()
 			doc := model.Document{
 				ID:        docID,
@@ -969,7 +1544,7 @@ func (s *Server) handleAPISeedLocal(w http.ResponseWriter, r *http.Request) {
 				LocalPath: absPath,
 				SourceURL: "file://" + absPath,
 				Status:    model.StatusActive,
-				Category:  "RAG Структура сайта",
+				Category:  category,
 				FetchedAt: now,
 			}
 			if uerr := s.store.Upsert(ctx, doc); uerr != nil {
@@ -1020,9 +1595,10 @@ func (s *Server) handleViewOriginal(w http.ResponseWriter, r *http.Request) {
 	if ext == ".pdf" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>PDF — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1055,7 +1631,7 @@ func (s *Server) handleViewOriginal(w http.ResponseWriter, r *http.Request) {
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1086,14 +1662,17 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
     <a href="javascript:window.close()" class="btn btn-danger" data-tooltip="Закрыть"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> Закрыть</a>
   </div>
 </div>
-<iframe src="/documents/%s/download"></iframe>
+<iframe src="/documents/%s/download?inline=1" title="Просмотр PDF"></iframe>
 <div class="meta">Файл: %s | Хеш: %s | Размер: %s</div>
 </body></html>`, doc.Title, doc.Title, doc.ID, doc.ID, doc.LocalPath, doc.FileHash, formatFileSize(doc.LocalPath))
 		return
 	}
 
-	// Остальные форматы — извлекаем текст
+	// Остальные форматы — извлекаем текст. Бинарные форматы, которые мы не умеем
+	// разбирать (старый .doc, .xls, архивы …), показывать как «кашу» из байтов нельзя —
+	// вместо этого выводим аккуратную плашку с предложением скачать файл.
 	var text string
+	binary := false
 	if extract.IsSupported(doc.LocalPath) {
 		text, err = extract.Text(doc.LocalPath)
 		if err != nil {
@@ -1106,7 +1685,11 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 			http.Error(w, "Ошибка чтения файла: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		text = string(data)
+		if looksBinary(data) {
+			binary = true
+		} else {
+			text = string(data)
+		}
 	}
 
 	// Ограничиваем вывод для производительности (первые 50000 символов)
@@ -1119,9 +1702,10 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Исходный документ — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1158,7 +1742,7 @@ iframe { width: 100%%; height: calc(100vh - 120px); border: 1px solid var(--bord
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1192,13 +1776,32 @@ body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; ba
 </div>
 `, doc.Title, doc.Title, doc.ID)
 
-	if truncated {
-		fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
+	if binary {
+		fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Файл в формате <b>%s</b> нельзя показать как текст в браузере. Нажмите «Скачать», чтобы открыть его в подходящей программе.</div>`, html.EscapeString(strings.TrimPrefix(ext, ".")))
+	} else {
+		if truncated {
+			fmt.Fprintf(w, `<div class="truncated"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg> Показаны первые %d символов из %d. <a href="/documents/%s/download">Скачайте файл</a> для просмотра целиком.</div>`, maxLen, len(text), doc.ID)
+		}
+		fmt.Fprintf(w, `<div class="content">%s</div>`, html.EscapeString(text))
 	}
-
-	fmt.Fprintf(w, `<div class="content">%s</div>`, html.EscapeString(text))
 	fmt.Fprintf(w, `<div class="meta">Файл: %s | Размер: %s | Хеш: %s</div>`, doc.LocalPath, formatFileSize(doc.LocalPath), doc.FileHash)
 	fmt.Fprint(w, `</body></html>`)
+}
+
+// looksBinary эвристически определяет, что содержимое — двоичное (не текст):
+// наличие нулевого байта в первых килобайтах — надёжный признак (так же
+// различает текст/бинарь Git). Пустой файл считаем текстом.
+func looksBinary(data []byte) bool {
+	n := len(data)
+	if n > 8192 {
+		n = 8192
+	}
+	for i := 0; i < n; i++ {
+		if data[i] == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func formatFileSize(path string) string {
@@ -1271,9 +1874,10 @@ func (s *Server) handleViewProcessed(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprintf(w, `<!DOCTYPE html>
-<html lang="ru" data-theme="dark">
+<html lang="ru">
 <head>
 <meta charset="utf-8">
+<script>(function(){var t=localStorage.getItem('theme');if(t)document.documentElement.setAttribute('data-theme',t)})();</script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Обработанный документ — %s</title>
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1306,7 +1910,7 @@ func (s *Server) handleViewProcessed(w http.ResponseWriter, r *http.Request) {
 * { box-sizing: border-box; }
 body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 24px; line-height: 1.6; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 12px; }
-.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.header h1 { font-size: 18px; margin: 0; font-weight: 600; display: flex; align-items: center; gap: 8px; min-width: 0; word-break: break-word; overflow-wrap: anywhere; }
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px; background: var(--primary); color: #fff; border: none; border-radius: var(--radius); cursor: pointer; text-decoration: none; font-size: 13px; font-weight: 500; font-family: inherit; transition: background .15s; }
 .btn:hover { background: var(--primary-hover); }
 .btn-danger { background: var(--danger); }
@@ -1344,8 +1948,8 @@ body { font-family: 'Figtree', -apple-system, BlinkMacSystemFont, sans-serif; ba
 </div>
 
 <div class="stats">
-  <div class="stat"><div class="n">%d</div><div class="l">Чанков</div></div>
-  <div class="stat"><div class="n">%d</div><div class="l">Всего символов</div></div>
+  <div class="stat" data-tooltip="Количество фрагментов (чанков), на которые разбит документ для индексации"><div class="n">%d</div><div class="l">Чанков</div></div>
+  <div class="stat" data-tooltip="Суммарная длина текста всех чанков в символах"><div class="n">%d</div><div class="l">Всего символов</div></div>
 </div>
 `, doc.Title, doc.Title, len(chunks), s.totalChars(chunks))
 
@@ -1437,9 +2041,15 @@ func (s *Server) handleDownload(w http.ResponseWriter, r *http.Request) {
 		mimeType = "text/html"
 	}
 
-	// Отдаём файл
+	// Отдаём файл. По умолчанию — как вложение (скачивание); с ?inline=1
+	// отдаём для встроенного просмотра (используется iframe-просмотрщиком),
+	// чтобы браузер рендерил PDF/текст, а не предлагал скачать.
+	disposition := "attachment"
+	if r.URL.Query().Get("inline") == "1" {
+		disposition = "inline"
+	}
 	w.Header().Set("Content-Type", mimeType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filepath.Base(doc.LocalPath)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=\"%s\"", disposition, filepath.Base(doc.LocalPath)))
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", fileSize(doc.LocalPath)))
 	http.ServeFile(w, r, doc.LocalPath)
 }
@@ -1581,37 +2191,238 @@ func (s *Server) handleAPIReports(w http.ResponseWriter, r *http.Request) {
 // Diff — сравнение версий документов
 // ===========================================================================
 
+// diffDocCard — карточка документа с историей версий: автоматически
+// сопоставленные две последние редакции + вердикт ИИ-агента «Монитор».
+type diffDocCard struct {
+	DocID        string
+	Title        string
+	Category     string
+	VersionCount int
+	NewNo        int    // номер новой (последней) версии
+	OldNo        int    // номер предыдущей версии
+	NewAt        string // дата новой версии
+	OldAt        string // дата предыдущей версии
+	Added        int    // добавлено строк (по дифф-снимкам)
+	Removed      int    // удалено строк
+	Severity     string // info|warning|critical|"" — важность по ИИ-вердикту
+	SeverityText string // человекочитаемая важность
+	Summary      string // «что изменилось по сути» (ИИ или эвристика)
+	Stages       []string
+	Analyzed     bool   // есть зафиксированный ИИ-вердикт из ленты изменений
+	AnalyzedAt   string // когда зафиксирован вердикт
+}
+
 type diffPageData struct {
-	Docs     []model.Document
-	Doc1ID   string
-	Doc2ID   string
-	DiffHTML string
-	Error    string
+	Cards       []diffDocCard
+	Error       string
+	HasAI       bool // настроен ли включённый агент «Монитор»
+	Unavailable bool // хранилище версий не подключено (не Postgres)
 }
 
-// handleDiffPage показывает форму выбора двух документов для сравнения.
+// handleDiffPage показывает автоматическую ленту сравнения версий: документы,
+// у которых накоплено ≥2 редакций, с готовым вердиктом ИИ-агента «Монитор»
+// (гибрид: показываем посчитанное в пайплайне, плюс кнопка «Переанализировать»).
 func (s *Server) handleDiffPage(w http.ResponseWriter, r *http.Request) {
-	docs, _ := s.store.List(r.Context(), store.Filter{})
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
-
-	data := diffPageData{Docs: docs}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
-		log.Println("[admin] diff шаблон:", err)
-	}
-}
-
-// handleDiffCompare обрабатывает POST-форму сравнения.
-func (s *Server) handleDiffCompare(w http.ResponseWriter, r *http.Request) {
-	id1 := r.FormValue("doc1")
-	id2 := r.FormValue("doc2")
-
-	if id1 == "" || id2 == "" {
-		http.Error(w, "Выберите два документа", http.StatusBadRequest)
+	data := diffPageData{}
+	if s.versionStore == nil {
+		data.Unavailable = true
+		s.renderDiffPage(w, data)
 		return
 	}
 
-	s.renderDiff(w, r, id1, id2)
+	summaries, err := s.versionStore.DocumentsWithVersions(r.Context(), 2)
+	if err != nil {
+		data.Error = "Не удалось получить историю версий: " + err.Error()
+		s.renderDiffPage(w, data)
+		return
+	}
+
+	// Гибрид: подмешиваем зафиксированные ИИ-вердикты из ленты изменений
+	// (их уже посчитал «Монитор» в пайплайне) — без новых вызовов LLM.
+	verdicts := s.documentVerdicts(r.Context())
+	data.HasAI = s.monitorAgentConfigured(r.Context())
+
+	for _, sm := range summaries {
+		card := diffDocCard{
+			DocID:        sm.DocumentID,
+			VersionCount: sm.VersionCount,
+			NewNo:        sm.LatestNo,
+			NewAt:        sm.LatestAt.Format("02.01.2006 15:04"),
+			Title:        sm.DocumentID,
+		}
+		if doc, err := s.store.Get(r.Context(), sm.DocumentID); err == nil && doc.Title != "" {
+			card.Title = doc.Title
+			card.Category = doc.Category
+		}
+		// Статистика правок по двум последним снимкам (дёшево, без LLM).
+		if vers, err := s.versionStore.LatestVersions(r.Context(), sm.DocumentID, 2); err == nil && len(vers) >= 2 {
+			newV, oldV := vers[0], vers[1]
+			card.OldNo = oldV.VersionNo
+			card.OldAt = oldV.CreatedAt.Format("02.01.2006 15:04")
+			d := diff.CompareDocuments(oldV.ExtractedText, newV.ExtractedText)
+			card.Added = d.Summary.TotalAdded
+			card.Removed = d.Summary.TotalRemoved
+		}
+		if v, ok := verdicts[sm.DocumentID]; ok {
+			card.Severity = string(v.Severity)
+			card.SeverityText = severityLabel(string(v.Severity))
+			card.Summary = v.AnalysisSummary
+			card.Stages = v.AffectedStages
+			card.Analyzed = true
+			if !v.DetectedAt.IsZero() {
+				card.AnalyzedAt = v.DetectedAt.Format("02.01.2006 15:04")
+			}
+		}
+		data.Cards = append(data.Cards, card)
+	}
+
+	s.renderDiffPage(w, data)
+}
+
+// documentVerdicts собирает самые свежие зафиксированные ИИ-вердикты по
+// документам из ленты изменений (entity_type=document) — по одному на документ.
+func (s *Server) documentVerdicts(ctx context.Context) map[string]changes.Event {
+	if s.changeStore == nil {
+		return map[string]changes.Event{}
+	}
+	// Быстрый путь: один точечный запрос «последний вердикт на документ».
+	if ps, ok := s.changeStore.(*changes.PostgresStore); ok {
+		if m, err := ps.LatestAnalyzedByType(ctx, changes.EntityDocument); err == nil {
+			return m
+		}
+	}
+	// Фолбэк (не-Postgres бэкенд): скан последних событий ленты.
+	evs, err := s.changeStore.Recent(ctx, changes.Filter{EntityType: changes.EntityDocument, Limit: 1000})
+	if err != nil {
+		return map[string]changes.Event{}
+	}
+	return latestVerdicts(evs)
+}
+
+// latestVerdicts из списка событий, отсортированного по убыванию времени,
+// выбирает по одному — самому свежему — событию с непустым ИИ-вердиктом на
+// документ. Вынесено отдельно для прямого юнит-тестирования без БД.
+func latestVerdicts(evs []changes.Event) map[string]changes.Event {
+	out := map[string]changes.Event{}
+	for _, ev := range evs {
+		if _, seen := out[ev.EntityID]; seen {
+			continue
+		}
+		if ev.Severity == "" {
+			continue // вердикта пока нет — ждём следующее (более старое) событие
+		}
+		out[ev.EntityID] = ev
+	}
+	return out
+}
+
+// monitorAgentConfigured сообщает, настроен ли включённый агент «Монитор»
+// (для подсказки на странице: будет ли реальный ИИ-анализ или эвристика).
+func (s *Server) monitorAgentConfigured(ctx context.Context) bool {
+	if s.aiStore == nil {
+		return false
+	}
+	agents, err := s.aiStore.ListAgents(ctx)
+	if err != nil {
+		return false
+	}
+	for _, a := range agents {
+		if a.AgentType == aimodels.AgentMonitor && a.Enabled && a.ModelID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// handleDiffFull отдаёт полный визуальный дифф двух последних версий документа
+// (самостоятельный HTML-документ — встраивается в iframe на странице сравнения).
+func (s *Server) handleDiffFull(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.versionStore == nil {
+		http.Error(w, "хранилище версий не подключено", http.StatusServiceUnavailable)
+		return
+	}
+	vers, err := s.versionStore.LatestVersions(r.Context(), id, 2)
+	if err != nil || len(vers) < 2 {
+		http.Error(w, "недостаточно версий для сравнения", http.StatusNotFound)
+		return
+	}
+	newV, oldV := vers[0], vers[1]
+	result := diff.CompareDocuments(oldV.ExtractedText, newV.ExtractedText)
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = io.WriteString(w, diff.ToHTML(result))
+}
+
+// handleAPIReanalyze заново запускает агента «Монитор» на двух последних
+// версиях документа и возвращает свежий ИИ-вердикт (важность, суть, стадии).
+// При отсутствии настроенного агента отрабатывает эвристика анализатора.
+func (s *Server) handleAPIReanalyze(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.versionStore == nil {
+		jsonResp(w, false, "", "хранилище версий не подключено")
+		return
+	}
+	doc, _ := s.store.Get(r.Context(), id)
+	ev := changes.Event{
+		EntityType: changes.EntityDocument,
+		EntityID:   id,
+		Title:      doc.Title,
+		Category:   doc.Category,
+		Kind:       changes.KindUpdated,
+	}
+
+	// aiStore передаём только если он реально подключён — иначе типизированный
+	// nil-указатель в интерфейсе ModelStore привёл бы к панике в анализаторе.
+	var modelStore relevance.ModelStore
+	if s.aiStore != nil {
+		modelStore = s.aiStore
+	}
+	analyzer := relevance.NewAnalyzer(s.versionStore, modelStore)
+	res, err := analyzer.Analyze(r.Context(), ev)
+	if err != nil {
+		jsonResp(w, false, "", "анализ не выполнен: "+err.Error())
+		return
+	}
+
+	// Сохраняем свежий вердикт в ленту изменений (best-effort): дописываем его в
+	// самое свежее событие документа, чтобы он пережил перезагрузку страницы.
+	persisted := s.persistVerdict(r.Context(), id, res)
+
+	stages := make([]string, 0, len(res.Stages))
+	for _, st := range res.Stages {
+		stages = append(stages, string(st))
+	}
+	resp := map[string]interface{}{
+		"ok":            true,
+		"severity":      string(res.Severity),
+		"severity_text": severityLabel(string(res.Severity)),
+		"summary":       res.Summary,
+		"stages":        stages,
+		"added":         res.DiffAdded,
+		"removed":       res.DiffRemoved,
+		"used_llm":      res.UsedLLM,
+		"persisted":     persisted,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// persistVerdict дописывает свежий вердикт анализатора в самое свежее событие
+// ленты по документу. Возвращает true, если вердикт сохранён. Работает только
+// с Postgres-лентой (у не-Postgres бэкендов постоянного хранилища ленты нет).
+func (s *Server) persistVerdict(ctx context.Context, docID string, res relevance.Result) bool {
+	ps, ok := s.changeStore.(*changes.PostgresStore)
+	if !ok {
+		return false
+	}
+	ev, found, err := ps.LatestByEntity(ctx, changes.EntityDocument, docID)
+	if err != nil || !found {
+		return false
+	}
+	if err := ps.Enrich(ctx, ev.ID, res.ToEnrichment()); err != nil {
+		return false
+	}
+	return true
 }
 
 // handleAPIDiff отдаёт результат сравнения в JSON.
@@ -1653,36 +2464,8 @@ func (s *Server) handleAPIDiff(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-// renderDiff загружает документы, сравнивает и показывает HTML-результат.
-func (s *Server) renderDiff(w http.ResponseWriter, r *http.Request, id1, id2 string) {
-	text1, _, err := s.extractDocText(r.Context(), id1)
-	if err != nil {
-		s.renderDiffPage(w, r, id1, id2, "", "Документ 1: "+err.Error())
-		return
-	}
-	text2, _, err := s.extractDocText(r.Context(), id2)
-	if err != nil {
-		s.renderDiffPage(w, r, id1, id2, "", "Документ 2: "+err.Error())
-		return
-	}
-
-	result := diff.CompareDocuments(text1, text2)
-	htmlContent := diff.ToHTML(result)
-	s.renderDiffPage(w, r, id1, id2, htmlContent, "")
-}
-
-// renderDiffPage рисует страницу diff с формой и результатом.
-func (s *Server) renderDiffPage(w http.ResponseWriter, r *http.Request, id1, id2, diffHTML, errMsg string) {
-	docs, _ := s.store.List(r.Context(), store.Filter{})
-	sort.Slice(docs, func(i, j int) bool { return docs[i].Title < docs[j].Title })
-
-	data := diffPageData{
-		Docs:     docs,
-		Doc1ID:   id1,
-		Doc2ID:   id2,
-		DiffHTML: diffHTML,
-		Error:    errMsg,
-	}
+// renderDiffPage рисует страницу автоматического сравнения версий.
+func (s *Server) renderDiffPage(w http.ResponseWriter, data diffPageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "diff-layout", data); err != nil {
 		log.Println("[admin] diff шаблон:", err)
@@ -1743,6 +2526,9 @@ func (s *Server) extractDocText(ctx context.Context, id string) (string, model.D
 func (s *Server) handleAnalyticsPage(w http.ResponseWriter, r *http.Request) {
 	report := s.collectAnalyticsReport(r.Context())
 	htmlContent := analytics.ToHTML(report)
+	// Страница аналитики рендерится отдельным пакетом — встраиваем общий левый сайдбар,
+	// чтобы навигация была единой со всей админкой (:8090).
+	htmlContent = strings.Replace(htmlContent, "<body>", "<body>\n"+sidebarMainHTML, 1)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	fmt.Fprint(w, htmlContent)
 }
@@ -2036,7 +2822,7 @@ func graphToJSON(g graphData) string {
 // ===========================================================================
 
 type changesPageData struct {
-	Events     []changes.Event
+	Rows       []changeRow
 	Flash      string
 	FlashKind  string
 	Query      string
@@ -2044,7 +2830,34 @@ type changesPageData struct {
 	Category   string
 	DateFrom   string
 	DateTo     string
+	Tag        string
+	AllTags    []tagCount
+	BaseQS     string // строка запроса прочих фильтров (без tag) для ссылок-чипов
+	Health     []sourceHealthRow
 	Stats      changesStats
+}
+
+// changeRow — изменение вместе с авто-тегами для отображения и фильтрации.
+type changeRow struct {
+	Event changes.Event
+	Tags  []string
+}
+
+// tagCount — тег и сколько изменений им помечено (для облака тегов).
+type tagCount struct {
+	Name  string
+	Count int
+	Enc   string // url.QueryEscape(Name) — для ссылки-чипа
+}
+
+// sourceHealthRow — строка панели «когда обновлялось» по одному источнику.
+type sourceHealthRow struct {
+	Label       string
+	State       string // ok|stale|failing|unknown
+	StateLabel  string
+	LastSuccess string
+	Items       int
+	LastError   string // текст последней ошибки (показывается для failing/stale)
 }
 
 type changesStats struct {
@@ -2063,6 +2876,7 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 	dateFrom := r.URL.Query().Get("date_from")
 	dateTo := r.URL.Query().Get("date_to")
+	tag := strings.TrimSpace(r.URL.Query().Get("tag"))
 
 	// Период по умолчанию: последние 30 дней
 	since := time.Now().AddDate(0, 0, -30)
@@ -2079,10 +2893,14 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		Limit:      500,
 	}
 
-	events, err := s.changeStore.Recent(r.Context(), filter)
-	if err != nil && s.changeStore != nil {
-		log.Printf("[admin/changes] ошибка загрузки: %v", err)
-		events = nil
+	var events []changes.Event
+	if s.changeStore != nil {
+		var err error
+		events, err = s.changeStore.Recent(r.Context(), filter)
+		if err != nil {
+			log.Printf("[admin/changes] ошибка загрузки: %v", err)
+			events = nil
+		}
 	}
 
 	// Фильтрация по поиску на стороне Go (для заголовков)
@@ -2099,9 +2917,9 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		events = filtered
 	}
 
-	// Ограничение по date_to
+	// Ограничение по date_to (в локальной зоне — DetectedAt из TIMESTAMPTZ tz-aware).
 	if dateTo != "" {
-		if t, err := time.Parse("2006-01-02 15:04", dateTo+" 23:59"); err == nil {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", dateTo+" 23:59", time.Local); err == nil {
 			filtered := make([]changes.Event, 0, len(events))
 			for _, ev := range events {
 				if !ev.DetectedAt.After(t) {
@@ -2112,11 +2930,34 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Статистика
-	var st changesStats
-	st.Total = len(events)
+	// Авто-теги из метаданных + облако тегов. Облако считаем до фильтра по тегу,
+	// чтобы чипы отражали весь период, а не уже отфильтрованную выборку.
+	rows := make([]changeRow, 0, len(events))
+	tagFreq := map[string]int{}
 	for _, ev := range events {
-		switch ev.Kind {
+		tags := deriveTags(ev)
+		rows = append(rows, changeRow{Event: ev, Tags: tags})
+		for _, t := range tags {
+			tagFreq[t]++
+		}
+	}
+
+	// Фильтр по выбранному тегу.
+	if tag != "" {
+		filtered := make([]changeRow, 0, len(rows))
+		for _, row := range rows {
+			if containsStr(row.Tags, tag) {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+
+	// Статистика по показанным изменениям.
+	var st changesStats
+	st.Total = len(rows)
+	for _, row := range rows {
+		switch row.Event.Kind {
 		case changes.KindNew:
 			st.New++
 		case changes.KindUpdated:
@@ -2129,23 +2970,245 @@ func (s *Server) handleChangesPage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Время последнего парсинга — берём из отчётов коллектора
-	if reports, err := s.reportStore.GetReports(1); err == nil && len(reports) > 0 {
-		st.LastParse = reports[0].StartedAt
+	if s.reportStore != nil {
+		if reports, err := s.reportStore.GetReports(1); err == nil && len(reports) > 0 {
+			st.LastParse = reports[0].StartedAt
+		}
+	}
+
+	allTags := topTags(tagFreq, 24)
+	for i := range allTags {
+		allTags[i].Enc = url.QueryEscape(allTags[i].Name)
+	}
+
+	// Строка запроса прочих фильтров (без tag) — чтобы чипы тегов их сохраняли.
+	base := url.Values{}
+	if query != "" {
+		base.Set("q", query)
+	}
+	if entityType != "" {
+		base.Set("entity_type", entityType)
+	}
+	if category != "" {
+		base.Set("category", category)
+	}
+	if dateFrom != "" {
+		base.Set("date_from", dateFrom)
+	}
+	if dateTo != "" {
+		base.Set("date_to", dateTo)
 	}
 
 	data := changesPageData{
-		Events:     events,
+		Rows:       rows,
 		Query:      query,
 		EntityType: entityType,
 		Category:   category,
 		DateFrom:   dateFrom,
 		DateTo:     dateTo,
+		Tag:        tag,
+		AllTags:    allTags,
+		BaseQS:     base.Encode(),
+		Health:     s.sourceHealthRows(r.Context()),
 		Stats:      st,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := tmpl.ExecuteTemplate(w, "changes-layout", data); err != nil {
 		log.Println("[admin] changes шаблон:", err)
+	}
+}
+
+// deriveTags выводит авто-теги изменения из его метаданных: тип сущности,
+// категория, вид изменения, домен источника и важность (если задана). Ручной
+// разметки не требуется — теги вычисляются на лету.
+func deriveTags(ev changes.Event) []string {
+	var tags []string
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s != "" && !containsStr(tags, s) {
+			tags = append(tags, s)
+		}
+	}
+	add(entityTypeLabel(ev.EntityType))
+	add(ev.Category)
+	add(kindLabel(string(ev.Kind)))
+	add(sourceDomain(ev.SourceURL))
+	add(severityLabel(string(ev.Severity)))
+	return tags
+}
+
+// entityTypeLabel — человекочитаемое имя типа сущности для тегов/фильтров.
+func entityTypeLabel(t string) string {
+	switch t {
+	case changes.EntityDocument:
+		return "Документ"
+	case changes.EntityNews:
+		return "Новость"
+	case changes.EntityEvent:
+		return "Мероприятие"
+	case changes.EntityContest:
+		return "Конкурс/грант"
+	case changes.EntityNPA:
+		return "НПА"
+	case changes.EntityPreference:
+		return "Льгота"
+	case changes.EntityFAQ:
+		return "FAQ"
+	case changes.EntityTelegram:
+		return "Telegram"
+	case changes.EntitySitePage:
+		return "Страница сайта"
+	default:
+		return t
+	}
+}
+
+func kindLabel(k string) string {
+	switch k {
+	case string(changes.KindNew):
+		return "Новое"
+	case string(changes.KindUpdated):
+		return "Обновлено"
+	case string(changes.KindOutdated):
+		return "Устарело"
+	case string(changes.KindRemoved):
+		return "Удалено"
+	default:
+		return ""
+	}
+}
+
+func severityLabel(s string) string {
+	switch s {
+	case "info":
+		return "Инфо"
+	case "warning":
+		return "Важное"
+	case "critical":
+		return "Критично"
+	default:
+		return ""
+	}
+}
+
+// sourceDomain возвращает домен источника без префикса www (для тега «sk.ru»).
+func sourceDomain(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.TrimPrefix(strings.ToLower(u.Host), "www.")
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// topTags возвращает не более limit самых частых тегов, отсортированных по
+// убыванию частоты, затем по алфавиту.
+func topTags(freq map[string]int, limit int) []tagCount {
+	out := make([]tagCount, 0, len(freq))
+	for name, n := range freq {
+		out = append(out, tagCount{Name: name, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// sourceHealthRows строит панель «когда обновлялось» по всем источникам.
+func (s *Server) sourceHealthRows(ctx context.Context) []sourceHealthRow {
+	if s.healthStore == nil {
+		return nil
+	}
+	sources, err := s.healthStore.List(ctx)
+	if err != nil {
+		log.Printf("[admin/changes] свежесть источников: %v", err)
+		return nil
+	}
+	now := time.Now()
+	rows := make([]sourceHealthRow, 0, len(sources))
+	for _, src := range sources {
+		state := src.State(24*time.Hour, now)
+		last := "—"
+		if src.LastSuccessAt != nil {
+			last = src.LastSuccessAt.Format("02.01.2006 15:04")
+		}
+		// Текст ошибки показываем только когда источник реально проблемный —
+		// чтобы админ видел ЧТО чинить, а не просто «ошибки».
+		lastErr := ""
+		if src.LastError != "" && (state == health.StatusFailing || state == health.StatusStale) {
+			lastErr = src.LastError
+		}
+		rows = append(rows, sourceHealthRow{
+			Label:       sourceLabel(src.Name),
+			State:       string(state),
+			StateLabel:  healthStateLabel(state),
+			LastSuccess: last,
+			Items:       src.ItemsLastRun,
+			LastError:   lastErr,
+		})
+	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Label < rows[j].Label })
+	return rows
+}
+
+// sourceLabel — человекочитаемое имя источника для панели свежести.
+func sourceLabel(name string) string {
+	switch name {
+	case "documents":
+		return "Документы"
+	case "news":
+		return "Новости"
+	case "events":
+		return "Мероприятия"
+	case "contests":
+		return "Конкурсы/гранты"
+	case "faq":
+		return "FAQ"
+	case "telegram":
+		return "Telegram"
+	case "preferences":
+		return "Льготы"
+	case "regulations":
+		return "НПА"
+	case "residents":
+		return "Резиденты"
+	case "sitepages":
+		return "Страницы сайта"
+	case "fetch":
+		return "Загрузка файлов"
+	default:
+		return name
+	}
+}
+
+func healthStateLabel(st health.Status) string {
+	switch st {
+	case health.StatusOK:
+		return "актуально"
+	case health.StatusStale:
+		return "устарело"
+	case health.StatusFailing:
+		return "ошибки"
+	default:
+		return "нет данных"
 	}
 }
 
@@ -2177,10 +3240,630 @@ func (s *Server) handleAPIChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Фильтр по авто-тегу (паритет с HTML-страницей /changes).
+	if tag := strings.TrimSpace(r.URL.Query().Get("tag")); tag != "" {
+		filtered := events[:0]
+		for _, ev := range events {
+			if containsStr(deriveTags(ev), tag) {
+				filtered = append(filtered, ev)
+			}
+		}
+		events = filtered
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"ok":     true,
 		"events": events,
 		"count":  len(events),
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Страницы публичного сайта: список + просмотрщик.
+// ---------------------------------------------------------------------------
+
+type sitePagesPageData struct {
+	Rows         []sitePageRow
+	Query        string
+	Section      string
+	Status       string
+	DateFrom     string
+	DateTo       string
+	PubFrom      string // фильтр: дата публикации на сайте «от»
+	PubTo        string // фильтр: дата публикации на сайте «до»
+	Sections     []string
+	AllTags      []string        // все теги для фильтра множественного выбора
+	SelectedTags []string        // выбранные теги
+	SelectedSet  map[string]bool // для отметки checkbox в шаблоне
+	Total        int             // число страниц по текущему фильтру
+	GrandTotal   int             // всего страниц в базе (без фильтра)
+	LastCrawl    time.Time
+	HasStore     bool
+
+	// Пагинация (фильтрация и постраничная выборка — на стороне БД).
+	Page       int        // текущая страница (1-based)
+	PerPage    int        // строк на странице
+	TotalPages int        // всего страниц при текущем фильтре
+	RangeFrom  int        // номер первой строки на странице (для «N–M из Total»)
+	RangeTo    int        // номер последней строки
+	HasPrev    bool       //
+	HasNext    bool       //
+	PrevURL    string     //
+	NextURL    string     //
+	PageLinks  []pageLink // номера страниц для навигации
+}
+
+// pageLink — ссылка на конкретную страницу в пагинаторе.
+type pageLink struct {
+	Num     int
+	URL     string
+	Current bool
+}
+
+type sitePageRow struct {
+	ID          string
+	URL         string
+	Title       string
+	Section     string
+	Status      string
+	StatusLabel string
+	Tags        []string
+	LastChanged time.Time
+	Published   string // дата публикации на сайте Сколково (ГГГГ-форматированная) или «—»
+}
+
+// relRow — ссылка на связанную страницу (по тегам или семантически).
+type relRow struct {
+	ID      string
+	URL     string
+	Title   string
+	Section string
+	Shared  int // число общих тегов (для связи по тегам)
+}
+
+type sitePageViewData struct {
+	ID              string
+	URL             string
+	Title           string
+	Section         string
+	Status          string
+	StatusLabel     string
+	Summary         string
+	Text            string
+	HasText         bool
+	FirstSeen       time.Time
+	LastSeen        time.Time
+	LastChanged     time.Time
+	Published       string // дата публикации на сайте Сколково или «—»
+	Enriched        bool
+	AISummary       string
+	Goals           string
+	Theses          []string
+	Conclusions     string
+	Tags            []string
+	RelatedByTags   []relRow
+	RelatedSemantic []relRow
+	CanEdit         bool   // доступны ли ручные действия (переаннотировать/править)
+	TagsCSV         string // теги через запятую (для формы правки)
+	ThesesText      string // тезисы по строкам (для textarea правки)
+}
+
+// fmtPublished форматирует дату публикации страницы на сайте (или «—», если её нет).
+func fmtPublished(t *time.Time) string {
+	if t == nil {
+		return "—"
+	}
+	return t.Format("02.01.2006")
+}
+
+// sitePageStatusLabel — человекочитаемый статус страницы сайта.
+func sitePageStatusLabel(st string) string {
+	switch st {
+	case sitepages.StatusActive:
+		return "доступна"
+	case sitepages.StatusGone:
+		return "недоступна (404)"
+	default:
+		return st
+	}
+}
+
+// handleSitePagesPage — список страниц публичного сайта с фильтрами
+// (поиск, раздел, статус, период по дате изменения).
+func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	section := r.URL.Query().Get("section")
+	status := r.URL.Query().Get("status")
+	dateFrom := r.URL.Query().Get("date_from")
+	dateTo := r.URL.Query().Get("date_to")
+	pubFrom := r.URL.Query().Get("pub_from")
+	pubTo := r.URL.Query().Get("pub_to")
+	selectedTags := normalizeTagParams(r.URL.Query()["tags"])
+
+	selectedSet := make(map[string]bool, len(selectedTags))
+	for _, t := range selectedTags {
+		selectedSet[t] = true
+	}
+
+	data := sitePagesPageData{
+		Query:        query,
+		Section:      section,
+		Status:       status,
+		DateFrom:     dateFrom,
+		DateTo:       dateTo,
+		PubFrom:      pubFrom,
+		PubTo:        pubTo,
+		SelectedTags: selectedTags,
+		SelectedSet:  selectedSet,
+		HasStore:     s.sitePages != nil,
+		Page:         1,
+		PerPage:      sitePagesPerPage,
+	}
+
+	if s.sitePages == nil {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := tmpl.ExecuteTemplate(w, "sitepages-layout", data); err != nil {
+			log.Println("[admin] sitepages шаблон:", err)
+		}
+		return
+	}
+
+	// Период по дате изменения.
+	var since, until time.Time
+	if dateFrom != "" {
+		if t, err := time.ParseInLocation("2006-01-02", dateFrom, time.Local); err == nil {
+			since = t
+		}
+	}
+	if dateTo != "" {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", dateTo+" 23:59", time.Local); err == nil {
+			until = t
+		}
+	}
+
+	// Период по дате публикации на сайте Сколково.
+	var pubSince, pubUntil time.Time
+	if pubFrom != "" {
+		if t, err := time.ParseInLocation("2006-01-02", pubFrom, time.Local); err == nil {
+			pubSince = t
+		}
+	}
+	if pubTo != "" {
+		if t, err := time.ParseInLocation("2006-01-02 15:04", pubTo+" 23:59", time.Local); err == nil {
+			pubUntil = t
+		}
+	}
+
+	// Номер страницы и размер.
+	perPage := sitePagesPerPage
+	if v, err := strconv.Atoi(r.URL.Query().Get("per_page")); err == nil && v >= 10 && v <= 500 {
+		perPage = v
+	}
+	page := 1
+	if v, err := strconv.Atoi(r.URL.Query().Get("page")); err == nil && v > 1 {
+		page = v
+	}
+
+	filter := sitepages.PageFilter{
+		Query:   query,
+		Section: section,
+		Status:  status,
+		Tags:    selectedTags,
+		Since:   since,
+		Until:   until,
+		PubFrom: pubSince,
+		PubTo:   pubUntil,
+	}
+
+	ctx := r.Context()
+	total, err := s.sitePages.CountFiltered(ctx, filter)
+	if err != nil {
+		log.Printf("[admin/sitepages] подсчёт: %v", err)
+	}
+	totalPages := (total + perPage - 1) / perPage
+	if totalPages < 1 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	filter.Limit = perPage
+	filter.Offset = (page - 1) * perPage
+
+	pages, err := s.sitePages.List(ctx, filter)
+	if err != nil {
+		log.Printf("[admin/sitepages] выборка: %v", err)
+	}
+	rows := make([]sitePageRow, 0, len(pages))
+	for _, p := range pages {
+		rows = append(rows, sitePageRow{
+			ID:          p.ID,
+			URL:         p.URL,
+			Title:       p.Title,
+			Section:     p.Section,
+			Status:      p.Status,
+			StatusLabel: sitePageStatusLabel(p.Status),
+			Tags:        p.Tags,
+			LastChanged: p.LastChanged,
+			Published:   fmtPublished(p.PublishedAt),
+		})
+	}
+
+	// Справочники фильтров — из БД (по всей базе, а не по текущей странице).
+	sections, err := s.sitePages.Sections(ctx)
+	if err != nil {
+		log.Printf("[admin/sitepages] разделы: %v", err)
+	}
+	allTags, err := s.sitePages.ListTags(ctx)
+	if err != nil {
+		log.Printf("[admin/sitepages] теги: %v", err)
+	}
+	sort.Strings(allTags)
+	grandTotal, _ := s.sitePages.Count(ctx)
+
+	// Время последнего обхода: мониторинг свежести точнее, иначе max(last_seen).
+	var lastCrawl time.Time
+	if s.healthStore != nil {
+		if src, err := s.healthStore.Get(ctx, "sitepages"); err == nil && src.LastSuccessAt != nil {
+			lastCrawl = *src.LastSuccessAt
+		}
+	}
+	if lastCrawl.IsZero() {
+		if t, err := s.sitePages.LastSeenMax(ctx); err == nil {
+			lastCrawl = t
+		}
+	}
+
+	data.Rows = rows
+	data.Sections = sections
+	data.AllTags = allTags
+	data.Total = total
+	data.GrandTotal = grandTotal
+	data.LastCrawl = lastCrawl
+	data.Page = page
+	data.PerPage = perPage
+	data.TotalPages = totalPages
+	if total > 0 {
+		data.RangeFrom = filter.Offset + 1
+		data.RangeTo = filter.Offset + len(rows)
+	}
+	data.HasPrev = page > 1
+	data.HasNext = page < totalPages
+	if data.HasPrev {
+		data.PrevURL = sitePagesPageURL(r.URL.Query(), page-1)
+	}
+	if data.HasNext {
+		data.NextURL = sitePagesPageURL(r.URL.Query(), page+1)
+	}
+	data.PageLinks = sitePagesPageLinks(r.URL.Query(), page, totalPages)
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "sitepages-layout", data); err != nil {
+		log.Println("[admin] sitepages шаблон:", err)
+	}
+}
+
+// sitePagesPerPage — размер страницы списка по умолчанию.
+const sitePagesPerPage = 50
+
+// sitePagesPageURL строит ссылку на страницу списка с номером n, сохраняя
+// текущие фильтры (q, section, status, tags, даты, per_page).
+func sitePagesPageURL(q url.Values, n int) string {
+	out := url.Values{}
+	for _, k := range []string{"q", "section", "status", "date_from", "date_to", "pub_from", "pub_to", "per_page"} {
+		if v := q.Get(k); v != "" {
+			out.Set(k, v)
+		}
+	}
+	for _, t := range q["tags"] {
+		if t != "" {
+			out.Add("tags", t)
+		}
+	}
+	out.Set("page", strconv.Itoa(n))
+	return "/sitepages?" + out.Encode()
+}
+
+// sitePagesPageLinks возвращает скользящее окно номеров страниц вокруг текущей
+// (не более 7), чтобы пагинатор не разрастался на больших базах.
+func sitePagesPageLinks(q url.Values, page, totalPages int) []pageLink {
+	if totalPages <= 1 {
+		return nil
+	}
+	const window = 7
+	start := page - window/2
+	if start < 1 {
+		start = 1
+	}
+	end := start + window - 1
+	if end > totalPages {
+		end = totalPages
+		if start = end - window + 1; start < 1 {
+			start = 1
+		}
+	}
+	links := make([]pageLink, 0, end-start+1)
+	for i := start; i <= end; i++ {
+		links = append(links, pageLink{Num: i, URL: sitePagesPageURL(q, i), Current: i == page})
+	}
+	return links
+}
+
+// handleSitePageView — просмотрщик одной страницы сайта: сохранённая информация
+// (заголовок, раздел, текст) + кнопка «Открыть на сайте Сколково».
+func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePages == nil {
+		http.Error(w, "хранилище страниц сайта не подключено", http.StatusServiceUnavailable)
+		return
+	}
+	p, err := s.sitePages.GetWithText(r.Context(), id)
+	if errors.Is(err, sitepages.ErrNotFound) {
+		http.Error(w, "страница не найдена", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		http.Error(w, "ошибка загрузки: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	text := p.Text
+	if strings.TrimSpace(text) == "" {
+		text = p.Summary
+	}
+	data := sitePageViewData{
+		ID:          p.ID,
+		URL:         p.URL,
+		Title:       p.Title,
+		Section:     p.Section,
+		Status:      p.Status,
+		StatusLabel: sitePageStatusLabel(p.Status),
+		Summary:     p.Summary,
+		Text:        text,
+		HasText:     strings.TrimSpace(text) != "",
+		FirstSeen:   p.FirstSeen,
+		LastSeen:    p.LastSeen,
+		LastChanged: p.LastChanged,
+		Published:   fmtPublished(p.PublishedAt),
+		Enriched:    p.Enriched(),
+		AISummary:   p.AISummary,
+		Goals:       p.Goals,
+		Theses:      p.Theses,
+		Conclusions: p.Conclusions,
+		Tags:        p.Tags,
+		CanEdit:     s.sitePageOps != nil,
+		TagsCSV:     strings.Join(p.Tags, ", "),
+		ThesesText:  strings.Join(p.Theses, "\n"),
+	}
+
+	// Связанные страницы по общим тегам (из БД).
+	if len(p.Tags) > 0 {
+		if rel, err := s.sitePages.RelatedByTags(r.Context(), p.ID, p.Tags, 6); err == nil {
+			for _, rp := range rel {
+				data.RelatedByTags = append(data.RelatedByTags, relRow{
+					ID: rp.ID, URL: rp.URL, Title: rp.Title, Section: rp.Section, Shared: rp.Shared,
+				})
+			}
+		}
+	}
+	// Семантически близкие страницы (из Qdrant, если подключён поиск).
+	if s.sitePageSim != nil {
+		if hits, err := s.sitePageSim.Related(r.Context(), p, 6); err == nil {
+			for _, h := range hits {
+				data.RelatedSemantic = append(data.RelatedSemantic, relRow{
+					ID: sitepages.IDForURL(h.URL), URL: h.URL, Title: h.Title, Section: h.Section,
+				})
+			}
+		}
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "sitepage-view-layout", data); err != nil {
+		log.Println("[admin] sitepage-view шаблон:", err)
+	}
+}
+
+// handleSitePageReannotate перезапускает ИИ-аннотирование одной страницы и
+// переиндексирует её. Доступно только при подключённых ручных операциях.
+func (s *Server) handleSitePageReannotate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePageOps == nil {
+		http.Error(w, "ручные операции над страницами не подключены", http.StatusServiceUnavailable)
+		return
+	}
+	if _, err := s.sitePageOps.ReannotateOne(r.Context(), id); err != nil {
+		http.Error(w, "ошибка аннотирования: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/sitepages/"+id, http.StatusSeeOther)
+}
+
+// handleSitePageSaveAnnotation сохраняет ручную правку аннотации куратором.
+func (s *Server) handleSitePageSaveAnnotation(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.sitePageOps == nil {
+		http.Error(w, "ручные операции над страницами не подключены", http.StatusServiceUnavailable)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "некорректная форма", http.StatusBadRequest)
+		return
+	}
+	ann := sitepages.Annotation{
+		Tags:        splitCSV(r.FormValue("tags")),
+		Summary:     strings.TrimSpace(r.FormValue("ai_summary")),
+		Goals:       strings.TrimSpace(r.FormValue("goals")),
+		Theses:      splitLines(r.FormValue("theses")),
+		Conclusions: strings.TrimSpace(r.FormValue("conclusions")),
+	}
+	if err := s.sitePageOps.SaveAnnotation(r.Context(), id, ann); err != nil {
+		http.Error(w, "ошибка сохранения: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/sitepages/"+id, http.StatusSeeOther)
+}
+
+// splitCSV разбивает строку «a, b, c» в список без пустых элементов.
+func splitCSV(raw string) []string {
+	var out []string
+	for _, p := range strings.Split(raw, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// splitLines разбивает многострочный ввод (textarea) в список непустых строк.
+func splitLines(raw string) []string {
+	var out []string
+	for _, l := range strings.Split(raw, "\n") {
+		if l = strings.TrimSpace(strings.TrimRight(l, "\r")); l != "" {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// normalizeTagParams чистит и дедуплицирует теги из query-параметров (?tags=…).
+func normalizeTagParams(raw []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range raw {
+		t = strings.ToLower(strings.TrimSpace(t))
+		if t == "" || seen[t] {
+			continue
+		}
+		seen[t] = true
+		out = append(out, t)
+	}
+	return out
+}
+
+// handleAPISitePages отдаёт страницы сайта в JSON (для интеграций).
+func (s *Server) handleAPISitePages(w http.ResponseWriter, r *http.Request) {
+	if s.sitePages == nil {
+		jsonResp(w, false, "", "Хранилище страниц сайта не подключено")
+		return
+	}
+	ctx := r.Context()
+	// limit/offset — постраничная выдача всей базы (limit<=0 — без ограничения).
+	filter := sitepages.PageFilter{
+		Query:   strings.TrimSpace(r.URL.Query().Get("q")),
+		Section: r.URL.Query().Get("section"),
+		Status:  r.URL.Query().Get("status"),
+		Tags:    normalizeTagParams(r.URL.Query()["tags"]),
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && v > 0 {
+		filter.Limit = v
+	}
+	if v, err := strconv.Atoi(r.URL.Query().Get("offset")); err == nil && v > 0 {
+		filter.Offset = v
+	}
+	pages, err := s.sitePages.List(ctx, filter)
+	if err != nil {
+		jsonResp(w, false, "", err.Error())
+		return
+	}
+	total, _ := s.sitePages.CountFiltered(ctx, filter)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"ok":     true,
+		"pages":  pages,
+		"count":  len(pages),
+		"total":  total,
+		"limit":  filter.Limit,
+		"offset": filter.Offset,
+	})
+}
+
+// makeSourceLink вычисляет URL и подпись для кнопки «источник» в списке документов.
+// Локальные file:// ссылки заменяются на внутренний admin-endpoint просмотра.
+// HTTP-ссылки проксируются через /documents/{id}/source (server-side fetch с прокси).
+func makeSourceLink(id, sourceURL, localPath string) (linkURL, linkText string) {
+	if sourceURL == "" {
+		return "", ""
+	}
+	if strings.HasPrefix(sourceURL, "file://") {
+		if localPath != "" {
+			return "/documents/" + id + "/view-original", "источник"
+		}
+		return "", ""
+	}
+	if strings.HasPrefix(sourceURL, "http://") || strings.HasPrefix(sourceURL, "https://") {
+		// Прямая ссылка на оригинал — открывается в браузере пользователя.
+		// Серверный прокси бесполезен без доступа сервера к источнику (WAF/гео) — 502.
+		return sourceURL, "открыть на сайте ↗"
+	}
+	return sourceURL, "источник"
+}
+
+// handleDocSource проксирует запрос к SourceURL документа через активный прокси сервера.
+// Это позволяет администратору открывать ссылки на dochub.sk.ru даже если его браузер
+// не имеет доступа к сайту напрямую (например, находится за пределами России).
+func (s *Server) handleDocSource(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	doc, err := s.store.Get(r.Context(), id)
+	if err != nil {
+		http.Error(w, "Документ не найден", http.StatusNotFound)
+		return
+	}
+
+	// Локальный файл — отдаём через стандартный endpoint
+	if strings.HasPrefix(doc.SourceURL, "file://") {
+		if doc.LocalPath != "" {
+			http.Redirect(w, r, "/documents/"+id+"/view-original", http.StatusFound)
+			return
+		}
+		http.Error(w, "Файл недоступен", http.StatusNotFound)
+		return
+	}
+
+	if doc.SourceURL == "" || (!strings.HasPrefix(doc.SourceURL, "http://") && !strings.HasPrefix(doc.SourceURL, "https://")) {
+		http.Error(w, "Источник недоступен", http.StatusNotFound)
+		return
+	}
+
+	// Строим HTTP-клиент с активным прокси (если настроен)
+	transport := &http.Transport{}
+	if proxyAddr := s.proxyManager.GetActiveURL(); proxyAddr != "" {
+		if proxyU, parseErr := url.Parse(proxyAddr); parseErr == nil {
+			transport.Proxy = http.ProxyURL(proxyU)
+		}
+	}
+	client := &http.Client{
+		Timeout:   30 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return fmt.Errorf("слишком много редиректов")
+			}
+			return nil
+		},
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), "GET", doc.SourceURL, nil)
+	if err != nil {
+		http.Error(w, "Ошибка запроса: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, "Ошибка получения источника: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	// Пробрасываем Content-Type и статус
+	if ct := resp.Header.Get("Content-Type"); ct != "" {
+		w.Header().Set("Content-Type", ct)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+		w.Header().Set("Content-Disposition", cd)
+	}
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }

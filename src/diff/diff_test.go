@@ -145,8 +145,15 @@ func TestToHTML_Escaping(t *testing.T) {
 	result := CompareDocuments(text1, text2)
 	html := ToHTML(result)
 
-	if strings.Contains(html, "<script>") {
-		t.Error("ToHTML should escape HTML special characters")
+	// Опасный тег из СОДЕРЖИМОГО документа не должен попасть в вывод как
+	// исполняемый — только в экранированном виде. (Сам шаблон diff легитимно
+	// содержит свой <script> для переключения темы, поэтому проверять наличие
+	// подстроки "<script>" вообще — неверно; проверяем именно инъекцию.)
+	if strings.Contains(html, "<script>alert") {
+		t.Error("ToHTML должен экранировать HTML из содержимого документа")
+	}
+	if !strings.Contains(html, "&lt;script&gt;alert") {
+		t.Error("экранированный текст документа должен присутствовать в выводе")
 	}
 }
 

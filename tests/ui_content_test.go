@@ -87,7 +87,7 @@ func TestAdminUI_RendersDocumentTable(t *testing.T) {
 	assertContains(t, body, "<tbody>", "table body")
 	assertContains(t, body, "badge badge-active", "badge CSS class")
 	assertContains(t, body, "Сохранить", "save button")
-	assertContains(t, body, "charset=utf-8", "charset meta")
+	assertContains(t, body, `charset="utf-8"`, "charset meta")
 	assertHasClass(t, body, "stats", "stats container")
 }
 

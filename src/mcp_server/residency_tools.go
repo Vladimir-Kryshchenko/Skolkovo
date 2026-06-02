@@ -135,7 +135,7 @@ func registerResidencyTools(
 			mcp.WithString("inn", mcp.Required(), mcp.Description("ИНН организации (10 или 12 цифр)")),
 			mcp.WithString("contact_email", mcp.Description("Контактный email")),
 			mcp.WithString("contact_phone", mcp.Description("Контактный телефон")),
-			mcp.WithString("tenant_id", mcp.Description("Идентификатор тенанта")),
+			mcp.WithString("tenant_id", mcp.Description("Идентификатор тенанта (необязательно; если пусто — тенант по умолчанию)")),
 		),
 		func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			return handleCreateClient(ctx, req, st)
@@ -300,13 +300,11 @@ func handleGetDeadlines(ctx context.Context, req mcp.CallToolRequest, ds store.D
 }
 
 func handleListClients(ctx context.Context, req mcp.CallToolRequest, st store.ClientStore) (*mcp.CallToolResult, error) {
+	// tenant_id опционален: пустое значение → клиенты всех тенантов
+	// (store.ListClients трактует "" как «без фильтра по тенанту»).
 	tenantID := req.GetString("tenant_id", "")
 	stageStr := req.GetString("stage", "")
 	limit := req.GetInt("limit", 50)
-
-	if tenantID == "" {
-		return mcp.NewToolResultError("параметр tenant_id обязателен для list_clients"), nil
-	}
 
 	var stage model.ResidencyStage
 	if stageStr != "" {
@@ -354,13 +352,26 @@ func handleCreateClient(ctx context.Context, req mcp.CallToolRequest, st store.C
 		return mcp.NewToolResultError("параметр inn обязателен"), nil
 	}
 
+	// tenant_id опционален: если не передан — берём (или создаём) тенант по умолчанию,
+	// иначе INSERT упрётся в NOT NULL-ограничение clients.tenant_id.
+	tenantID := req.GetString("tenant_id", "")
+	if tenantID == "" {
+		if ts, ok := st.(store.DefaultTenantEnsurer); ok {
+			tenant, terr := store.GetOrCreateDefaultTenant(ctx, ts)
+			if terr != nil {
+				return mcp.NewToolResultError("не удалось определить тенант по умолчанию: " + terr.Error()), nil
+			}
+			tenantID = tenant.ID
+		}
+	}
+
 	client := &model.Client{
 		ID:             uuid.New().String(),
 		Name:           name,
 		INN:            inn,
 		ContactEmail:   req.GetString("contact_email", ""),
 		ContactPhone:   req.GetString("contact_phone", ""),
-		TenantID:       req.GetString("tenant_id", ""),
+		TenantID:       tenantID,
 		ResidencyStage: model.StageApplication,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -422,43 +433,13 @@ func handleUpdateClientStage(ctx context.Context, req mcp.CallToolRequest, st st
 	return mcp.NewToolResultText(toJSON(updateResponse{Client: client, Transition: transition})), nil
 }
 
-// reportingDeadlineDays — срок первой квартальной отчётности после входа в стадию «отчётность».
-const reportingDeadlineDays = 90
-
-// deadlineCreator — подмножество DeadlineStore для создания дедлайна.
-type deadlineCreator interface {
-	CreateDeadline(ctx context.Context, d *model.Deadline) error
-	ListDeadlines(ctx context.Context, clientID string, daysAhead int) ([]*model.Deadline, error)
-}
-
 // autoCreateStageDeadline создаёт дедлайн квартальной отчётности при переходе
-// клиента на стадию «отчётность». No-op, если хранилище не умеет дедлайны или
-// у клиента уже есть незакрытый дедлайн отчётности.
+// клиента на стадию «отчётность». Делегирует единой логике store.EnsureReportingDeadline
+// (общей с Резидентство-Админ). No-op, если хранилище не умеет дедлайны.
 func autoCreateStageDeadline(ctx context.Context, st store.ClientStore, clientID string, to model.ResidencyStage) {
-	if to != model.StageReporting {
-		return
+	if dc, ok := st.(store.DeadlineEnsurer); ok {
+		store.EnsureReportingDeadline(ctx, dc, clientID, to)
 	}
-	dc, ok := st.(deadlineCreator)
-	if !ok {
-		return
-	}
-	// Не дублируем, если уже есть предстоящий дедлайн отчётности.
-	if existing, err := dc.ListDeadlines(ctx, clientID, 0); err == nil {
-		for _, d := range existing {
-			if d.Type == model.DeadlineReporting && d.Status != model.DeadlineCompleted {
-				return
-			}
-		}
-	}
-	_ = dc.CreateDeadline(ctx, &model.Deadline{
-		ID:        uuid.New().String(),
-		ClientID:  clientID,
-		Title:     "Квартальный отчёт резидента",
-		DueDate:   time.Now().AddDate(0, 0, reportingDeadlineDays),
-		Type:      model.DeadlineReporting,
-		Status:    model.DeadlineUpcoming,
-		CreatedAt: time.Now(),
-	})
 }
 
 func handleGetTemplates(ctx context.Context, req mcp.CallToolRequest, ts store.TemplateStore) (*mcp.CallToolResult, error) {

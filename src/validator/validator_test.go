@@ -356,11 +356,19 @@ func TestToHTML_Escaping(t *testing.T) {
 
 	html := ToHTML(report)
 
-	if strings.Contains(html, "<script>") {
-		t.Error("ToHTML should escape HTML special characters in document IDs")
+	// Опасные теги из ДАННЫХ отчёта (ID документов, рекомендации) не должны
+	// попасть в вывод как исполняемые — только в экранированном виде. Сам шаблон
+	// отчёта легитимно содержит свой <script> (переключение темы), поэтому
+	// проверять наличие подстроки "<script>" вообще — неверно; проверяем именно
+	// инъекцию (как в аналогичном тесте пакета diff).
+	if strings.Contains(html, "<script>alert") {
+		t.Error("ToHTML должен экранировать HTML из ID документов")
 	}
-	if strings.Contains(html, "<b>") {
-		t.Error("ToHTML should escape HTML special characters in recommendations")
+	if !strings.Contains(html, "&lt;script&gt;alert") {
+		t.Error("экранированный ID документа должен присутствовать в выводе")
+	}
+	if strings.Contains(html, "<b>urgent</b>") {
+		t.Error("ToHTML должен экранировать HTML в рекомендациях")
 	}
 }
 

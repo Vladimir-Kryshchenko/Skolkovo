@@ -53,6 +53,9 @@ func TestSidebarTemplatesEscapeClean(t *testing.T) {
 	// Регламенты/НПА (:8090)
 	execNoEscapeErr(t, "regulationsTmpl", func() error { return regulationsTmpl.Execute(io.Discard, nil) })
 
+	// Тенанты и токены (:8090) — встроенная копия страницы тенантов с главным сайдбаром.
+	execNoEscapeErr(t, "adminTenantsTmpl", func() error { return adminTenantsTmpl.Execute(io.Discard, nil) })
+
 	// Страница прокси собирается строкой (не html/template) — убеждаемся, что сайдбар вшит
 	// и сборка не паникует.
 	out := renderProxyPage(map[string]interface{}{"Proxies": []ProxyConfig{}, "ActiveID": ""})

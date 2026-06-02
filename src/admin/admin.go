@@ -31,6 +31,7 @@ import (
 	"baza-skolkovo/src/diff"
 	"baza-skolkovo/src/fetcher"
 	"baza-skolkovo/src/health"
+	"baza-skolkovo/src/jobsched"
 	"baza-skolkovo/src/navindex"
 	rag "baza-skolkovo/src/rag_service"
 	"baza-skolkovo/src/relevance"
@@ -89,6 +90,7 @@ type Server struct {
 	versionStore VersionStore    // история версий документов (для /diff); опционально
 	prefStore    store.PreferenceStore
 	npaStore     store.NPAStore
+	tenantStore  store.TenantStore // тенанты: MCP-ключи и токены Telegram-ботов (опц., Postgres)
 	rag          *rag.Service
 	schedStore   *scheduler.Store
 	reportStore  *scheduler.ReportStore
@@ -189,6 +191,14 @@ func (s *Server) WithPreferenceStore(ps store.PreferenceStore) *Server {
 // WithNPAStore устанавливает хранилище НПА.
 func (s *Server) WithNPAStore(ns store.NPAStore) *Server {
 	s.npaStore = ns
+	return s
+}
+
+// WithTenantStore подключает хранилище тенантов — раздел «Тенанты и токены»
+// (MCP API-ключи и токены Telegram-ботов). Без него пункт меню рендерится, но
+// страница сообщает, что хранилище недоступно (не-Postgres бэкенд).
+func (s *Server) WithTenantStore(ts store.TenantStore) *Server {
+	s.tenantStore = ts
 	return s
 }
 
@@ -364,6 +374,13 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /regulations/npa", s.requireAuth(s.handleCreateNPA))
 	mux.HandleFunc("POST /regulations/npa/{id}/delete", s.requireAuth(s.handleDeleteNPA))
 
+	// Тенанты и токены: MCP API-ключи и токены Telegram-ботов (по тенанту).
+	mux.HandleFunc("GET /tenants", s.requireAuth(s.handleTenantsPage))
+	mux.HandleFunc("POST /tenants", s.requireAuth(s.handleTenantCreate))
+	mux.HandleFunc("POST /tenants/{id}/regenerate-key", s.requireAuth(s.handleTenantRegenerateKey))
+	mux.HandleFunc("POST /tenants/{id}/telegram-token", s.requireAuth(s.handleTenantTelegramToken))
+	mux.HandleFunc("POST /tenants/{id}/toggle-active", s.requireAuth(s.handleTenantToggleActive))
+
 	// Управление прокси
 	mux.HandleFunc("GET /api/proxy/list", s.requireAuthJSON(func(w http.ResponseWriter, r *http.Request) {
 		s.proxyManager.mu.Lock()
@@ -426,6 +443,15 @@ func (s *Server) ListenAndServe() error {
 	mux.HandleFunc("POST /ai/agents/{id}/update", s.requireAuth(s.handleAIAgentUpdate))
 	mux.HandleFunc("POST /api/ai/agents/{id}/delete", s.requireAuthJSON(s.handleAIAgentDelete))
 	mux.HandleFunc("POST /api/ai/agents/{id}/test", s.requireAuthJSON(s.handleAIAgentTest))
+
+	// Раздел «Расписание и журнал»: настройка периодичности per-source,
+	// журнал запусков и учёт токенов ИИ-агентов.
+	mux.HandleFunc("GET /jobs", s.requireAuth(s.handleJobsPage))
+	mux.HandleFunc("POST /jobs/{name}", s.requireAuth(s.handleJobUpdate))
+	mux.HandleFunc("POST /jobs/{name}/run", s.requireAuth(s.handleJobRun))
+	mux.HandleFunc("GET /jobs/runs", s.requireAuth(s.handleRunsPage))
+	mux.HandleFunc("GET /jobs/runs/{id}", s.requireAuth(s.handleRunDetail))
+	mux.HandleFunc("GET /jobs/ai-usage", s.requireAuth(s.handleAIUsagePage))
 
 	log.Printf("[admin] админка слушает %s (вкладки: документы, сбор, планировщик, ИИ)", s.addr)
 	return http.ListenAndServe(s.addr, mux)

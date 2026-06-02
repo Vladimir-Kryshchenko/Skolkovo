@@ -1242,6 +1242,8 @@ func cmdAdmin(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		srv.WithPreferenceStore(pss)
 		srv.WithNPAStore(pss)
+		// Тенанты и токены (MCP-ключи + токены Telegram-ботов) — раздел /tenants.
+		srv.WithTenantStore(store.NewPostgresClientStore(ps.Pool()))
 		// Связи документов нужны странице /graph и API /api/graph
 		// (без этого граф собирался только из Supersedes и обычно был пуст).
 		srv.WithLinkStore(pss)
@@ -1397,6 +1399,8 @@ func cmdServe(cfg config.Config) error {
 		pss := store.NewPostgresSourceStore(ps.Pool())
 		adminSrv.WithPreferenceStore(pss)
 		adminSrv.WithNPAStore(pss)
+		// Тенанты и токены (MCP-ключи + токены Telegram-ботов) — раздел /tenants.
+		adminSrv.WithTenantStore(store.NewPostgresClientStore(ps.Pool()))
 		// Связи документов нужны странице /graph и API /api/graph
 		// (без этого граф собирался только из Supersedes и обычно был пуст).
 		adminSrv.WithLinkStore(pss)
@@ -2510,8 +2514,8 @@ func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
 	mgr := tgbot.NewBotManager(
 		pcs, botStores, consultant,
 		"http://"+cfg.MCPAddr+"/mcp",
-		cfg.MCPAPIKey,                    // fallback MCP-ключ (если у тенанта нет своего)
-		os.Getenv("TELEGRAM_BOT_TOKEN"),  // fallback токен бота (для Default/глобального)
+		cfg.MCPAPIKey,                   // fallback MCP-ключ (если у тенанта нет своего)
+		os.Getenv("TELEGRAM_BOT_TOKEN"), // fallback токен бота (для Default/глобального)
 	)
 	if err := mgr.Run(ctx); err != nil && err != context.Canceled {
 		log.Printf("[tgbot:manager] остановлен: %v", err)

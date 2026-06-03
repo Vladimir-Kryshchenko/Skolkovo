@@ -3,13 +3,14 @@ package tgbot
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"baza-skolkovo/src/aimodels"
-	"baza-skolkovo/src/common/model"
+	"baza-skolkovo/src/sitepages"
 )
 
 const (
@@ -228,174 +229,28 @@ func (b *Bot) allowAsk(chatID int64) bool {
 }
 
 // ---------------------------------------------------------------------------
-// /events — ближайшие мероприятия.
-// ---------------------------------------------------------------------------
-
-func (b *Bot) cmdEvents(chatID int64) {
-	if b.stores.Event == nil {
-		b.sendReply(chatID, "📅 Раздел мероприятий временно недоступен.")
-		return
-	}
-
-	now := time.Now()
-	events, err := b.stores.Event.ListEvents(context.Background(), "", model.EventActive, &now, nil)
-	if err != nil {
-		b.sendReply(chatID, "❌ Не удалось загрузить мероприятия. Попробуйте позже.")
-		b.logf("events: %v", err)
-		return
-	}
-	if len(events) == 0 {
-		b.sendReplyWithKeyboard(chatID, "📅 Ближайших мероприятий пока нет.", BackToMenuKeyboard())
-		return
-	}
-
-	b.sendCommandBanner(chatID, "events", fmt.Sprintf("📅 *Мероприятия* — %d ближайших", len(events)))
-
-	var sb strings.Builder
-	for i, e := range events {
-		if i >= listLimit {
-			break
-		}
-		sb.WriteString(fmt.Sprintf("📌 *%s*\n", e.Title))
-		sb.WriteString(fmt.Sprintf("   🗓 %s", e.EventDate.Format("02.01.2006")))
-		if e.Location != "" {
-			sb.WriteString(fmt.Sprintf(" · 📍 %s", e.Location))
-		}
-		sb.WriteString("\n")
-		if e.SourceURL != "" {
-			sb.WriteString(fmt.Sprintf("   [Подробнее](%s)\n", e.SourceURL))
-		}
-		sb.WriteString("\n")
-	}
-	if len(events) > listLimit {
-		sb.WriteString(fmt.Sprintf("…и ещё %d. Уточните интересующую тему в вопросе.", len(events)-listLimit))
-	}
-	b.sendReplyWithKeyboard(chatID, sb.String(), BackToMenuKeyboard())
-}
-
-// ---------------------------------------------------------------------------
-// /contests — открытые конкурсы и гранты.
-// ---------------------------------------------------------------------------
-
-func (b *Bot) cmdContests(chatID int64) {
-	if b.stores.Contest == nil {
-		b.sendReply(chatID, "🏆 Раздел конкурсов временно недоступен.")
-		return
-	}
-
-	contests, err := b.stores.Contest.ListContests(context.Background(), "", model.ContestActive)
-	if err != nil {
-		b.sendReply(chatID, "❌ Не удалось загрузить конкурсы. Попробуйте позже.")
-		b.logf("contests: %v", err)
-		return
-	}
-	if len(contests) == 0 {
-		b.sendReplyWithKeyboard(chatID, "🏆 Открытых конкурсов сейчас нет.", BackToMenuKeyboard())
-		return
-	}
-
-	b.sendCommandBanner(chatID, "contests", fmt.Sprintf("🏆 *Конкурсы и гранты* — %d открытых", len(contests)))
-
-	var sb strings.Builder
-	for i, c := range contests {
-		if i >= listLimit {
-			break
-		}
-		sb.WriteString(fmt.Sprintf("🏆 *%s*\n", c.Title))
-		if !c.EndDate.IsZero() {
-			sb.WriteString(fmt.Sprintf("   ⏳ приём до %s\n", c.EndDate.Format("02.01.2006")))
-		}
-		if c.Prize != "" {
-			sb.WriteString(fmt.Sprintf("   💰 %s\n", c.Prize))
-		}
-		if c.SourceURL != "" {
-			sb.WriteString(fmt.Sprintf("   [Подробнее](%s)\n", c.SourceURL))
-		}
-		sb.WriteString("\n")
-	}
-	if len(contests) > listLimit {
-		sb.WriteString(fmt.Sprintf("…и ещё %d.", len(contests)-listLimit))
-	}
-	b.sendReplyWithKeyboard(chatID, sb.String(), BackToMenuKeyboard())
-}
-
-// ---------------------------------------------------------------------------
-// /faq — частые вопросы.
-// ---------------------------------------------------------------------------
-
-func (b *Bot) cmdFAQ(chatID int64) {
-	if b.stores.FAQ == nil {
-		b.sendReply(chatID, "❓ Раздел FAQ временно недоступен.")
-		return
-	}
-
-	items, err := b.stores.FAQ.ListFAQItems(context.Background(), "")
-	if err != nil {
-		b.sendReply(chatID, "❌ Не удалось загрузить FAQ. Попробуйте позже.")
-		b.logf("faq: %v", err)
-		return
-	}
-	if len(items) == 0 {
-		b.sendReplyWithKeyboard(chatID, "❓ Список частых вопросов пока пуст.", BackToMenuKeyboard())
-		return
-	}
-
-	b.sendCommandBanner(chatID, "faq", fmt.Sprintf("❓ *Частые вопросы* — %d", len(items)))
-
-	var sb strings.Builder
-	for i, it := range items {
-		if i >= listLimit {
-			break
-		}
-		sb.WriteString(fmt.Sprintf("*%s*\n%s\n", it.Question, truncate(it.Answer, 280)))
-		if it.SourceURL != "" {
-			sb.WriteString(fmt.Sprintf("[Источник](%s)\n", it.SourceURL))
-		}
-		sb.WriteString("\n")
-	}
-	if len(items) > listLimit {
-		sb.WriteString("💡 Не нашли свой вопрос? Просто напишите его в чат.")
-	}
-	b.sendLongWithMenu(chatID, sb.String())
-}
-
-// ---------------------------------------------------------------------------
-// /news — свежие новости (семантический поиск по базе, тип news).
+// /news — свежие новости (страницы сайта раздела «новости», по дате публикации).
 // ---------------------------------------------------------------------------
 
 func (b *Bot) cmdNews(chatID int64) {
-	if b.consultant == nil {
+	if b.stores.Pages == nil {
 		b.sendReply(chatID, "📰 Раздел новостей временно недоступен.")
 		return
 	}
 
-	ctx := context.Background()
-	results, err := b.consultant.Search(ctx, "новости события Фонда Сколково", 25)
+	// Берём активные страницы, у которых раздел/URL содержит «news», свежие сверху.
+	pages, err := b.stores.Pages.List(context.Background(), sitepages.PageFilter{
+		Query:  "news",
+		Status: "active",
+		Limit:  200,
+	})
 	if err != nil {
 		b.sendReply(chatID, "❌ Не удалось загрузить новости. Попробуйте позже.")
 		b.logf("news: %v", err)
 		return
 	}
 
-	// Оставляем только новости, дедуплицируем по документу.
-	seen := map[string]bool{}
-	var news []string
-	for _, r := range results {
-		if r.EntityType != "news" || seen[r.DocumentID] {
-			continue
-		}
-		seen[r.DocumentID] = true
-		line := fmt.Sprintf("📰 *%s*", r.Title)
-		url := b.consultant.BestSourceURL(ctx, r)
-		if url != "" {
-			line += fmt.Sprintf("\n[Читать](%s)", url)
-		}
-		news = append(news, line)
-		if len(news) >= listLimit {
-			break
-		}
-	}
-
+	news := filterNewsPages(pages, listLimit)
 	if len(news) == 0 {
 		b.sendReplyWithKeyboard(chatID,
 			"📰 Свежих новостей не нашлось. Спросите о конкретной теме — я поищу по всей базе.",
@@ -404,7 +259,118 @@ func (b *Bot) cmdNews(chatID int64) {
 	}
 
 	b.sendCommandBanner(chatID, "news", "📰 *Новости Фонда «Сколково»*")
-	b.sendLongWithMenu(chatID, strings.Join(news, "\n\n"))
+	var sb strings.Builder
+	for _, p := range news {
+		sb.WriteString(fmt.Sprintf("📰 *%s*\n", pageTitle(p)))
+		if p.PublishedAt != nil {
+			sb.WriteString(fmt.Sprintf("   🗓 %s\n", p.PublishedAt.Format("02.01.2006")))
+		}
+		sb.WriteString(fmt.Sprintf("   [Читать](%s)\n\n", p.URL))
+	}
+	b.sendLongWithMenu(chatID, sb.String())
+}
+
+// ---------------------------------------------------------------------------
+// /events — материалы о мероприятиях (семантический поиск по страницам сайта).
+// ---------------------------------------------------------------------------
+
+func (b *Bot) cmdEvents(chatID int64) {
+	b.searchSection(chatID, "events", "📅 *Мероприятия Сколково*",
+		"мероприятия события форумы конференции Сколково",
+		"📅 Материалов о мероприятиях не нашлось.")
+}
+
+// ---------------------------------------------------------------------------
+// /contests — конкурсы и гранты (семантический поиск по страницам сайта).
+// ---------------------------------------------------------------------------
+
+func (b *Bot) cmdContests(chatID int64) {
+	b.searchSection(chatID, "contests", "🏆 *Конкурсы и гранты*",
+		"конкурсы гранты отбор финансирование стартапов Сколково",
+		"🏆 Материалов о конкурсах не нашлось.")
+}
+
+// ---------------------------------------------------------------------------
+// /faq — частые вопросы (семантический поиск по страницам сайта).
+// ---------------------------------------------------------------------------
+
+func (b *Bot) cmdFAQ(chatID int64) {
+	b.searchSection(chatID, "faq", "❓ *Частые вопросы*",
+		"часто задаваемые вопросы как стать резидентом требования Сколково",
+		"❓ По частым вопросам ничего не нашлось. Просто напишите свой вопрос в чат.")
+}
+
+// searchSection — общий обработчик тематических разделов: семантический поиск по
+// страницам публичного сайта (site_pages) с баннером и кнопкой «← Меню».
+func (b *Bot) searchSection(chatID int64, banner, header, query, emptyMsg string) {
+	if b.stores.PageSearch == nil {
+		b.sendReply(chatID, header+"\n\nРаздел временно недоступен.")
+		return
+	}
+
+	hits, err := b.stores.PageSearch.Search(context.Background(), query, listLimit)
+	if err != nil {
+		b.sendReply(chatID, "❌ Не удалось загрузить раздел. Попробуйте позже.")
+		b.logf("section %s: %v", banner, err)
+		return
+	}
+	if len(hits) == 0 {
+		b.sendReplyWithKeyboard(chatID, emptyMsg, BackToMenuKeyboard())
+		return
+	}
+
+	b.sendCommandBanner(chatID, banner, header)
+	var sb strings.Builder
+	for _, h := range hits {
+		title := h.Title
+		if title == "" {
+			title = h.URL
+		}
+		sb.WriteString(fmt.Sprintf("• *%s*\n", title))
+		summary := h.Summary
+		if summary != "" {
+			sb.WriteString(fmt.Sprintf("  %s\n", truncate(summary, 160)))
+		}
+		sb.WriteString(fmt.Sprintf("  [Открыть](%s)\n\n", h.URL))
+	}
+	sb.WriteString("💡 Нужны детали? Напишите вопрос — отвечу через консультанта.")
+	b.sendLongWithMenu(chatID, sb.String())
+}
+
+// filterNewsPages оставляет страницы новостных разделов и сортирует свежие сверху
+// (по дате публикации, при отсутствии — по времени последнего изменения).
+func filterNewsPages(pages []*sitepages.Page, limit int) []*sitepages.Page {
+	var news []*sitepages.Page
+	for _, p := range pages {
+		sec := strings.ToLower(p.Section)
+		url := strings.ToLower(p.URL)
+		if strings.Contains(sec, "news") || strings.Contains(url, "/news") {
+			news = append(news, p)
+		}
+	}
+	sort.Slice(news, func(i, j int) bool {
+		return newsTime(news[i]).After(newsTime(news[j]))
+	})
+	if len(news) > limit {
+		news = news[:limit]
+	}
+	return news
+}
+
+// newsTime возвращает дату для сортировки новостей: published_at либо last_changed.
+func newsTime(p *sitepages.Page) time.Time {
+	if p.PublishedAt != nil {
+		return *p.PublishedAt
+	}
+	return p.LastChanged
+}
+
+// pageTitle возвращает заголовок страницы либо URL как фолбэк.
+func pageTitle(p *sitepages.Page) string {
+	if strings.TrimSpace(p.Title) != "" {
+		return p.Title
+	}
+	return p.URL
 }
 
 // ---------------------------------------------------------------------------
@@ -442,9 +408,57 @@ func (b *Bot) cmdCompany(chatID int64, arg string) {
 	}
 
 	b.setINN(chatID, arg)
+
+	// Если подключён модуль проверки — сразу проверяем компанию по ИНН.
+	if b.eligibility != nil {
+		b.sendReply(chatID, "🔍 Проверяю компанию по ИНН…")
+		b.checkEligibility(chatID, arg)
+		return
+	}
+
 	b.sendReplyWithKeyboard(chatID,
-		fmt.Sprintf("✅ ИНН `%s` сохранён. Теперь ответы будут учитывать вашу компанию.\n\nЗадайте вопрос — например: _Подходит ли моя компания под критерии Сколково?_", arg),
+		fmt.Sprintf("✅ ИНН `%s` сохранён. Теперь ответы будут учитывать вашу компанию.\n\nЗадайте вопрос — например: _Какие документы нужны для статуса резидента?_", arg),
 		BackToMenuKeyboard())
+}
+
+// checkEligibility проверяет компанию по ИНН через модуль eligibility и выводит отчёт.
+func (b *Bot) checkEligibility(chatID int64, inn string) {
+	rep, err := b.eligibility.CheckByINN(context.Background(), inn)
+	if err != nil {
+		b.sendReplyWithKeyboard(chatID,
+			fmt.Sprintf("✅ ИНН `%s` сохранён.\n\n⚠️ Автоматическую проверку компании выполнить не удалось (%v). ИНН учтётся при ответах консультанта.", inn, err),
+			BackToMenuKeyboard())
+		return
+	}
+
+	var sb strings.Builder
+	if rep.Company != nil && rep.Company.ShortName != "" {
+		sb.WriteString(fmt.Sprintf("🏢 *%s*\n", rep.Company.ShortName))
+		if rep.Company.Status != "" {
+			sb.WriteString(fmt.Sprintf("Статус: %s\n", rep.Company.Status))
+		}
+		if rep.Company.IsMSP {
+			sb.WriteString("✅ В реестре МСП\n")
+		}
+		sb.WriteString("\n")
+	}
+
+	if rep.Eligible {
+		sb.WriteString(fmt.Sprintf("✅ *Компания подходит под критерии Сколково* (оценка %d/100)\n", rep.Score))
+	} else {
+		sb.WriteString(fmt.Sprintf("⚠️ *Есть ограничения для резидентства* (оценка %d/100)\n", rep.Score))
+	}
+	for _, is := range rep.Issues {
+		sb.WriteString(fmt.Sprintf("\n🔴 %s", is))
+	}
+	for _, w := range rep.Warnings {
+		sb.WriteString(fmt.Sprintf("\n🟡 %s", w))
+	}
+	for _, rec := range rep.Recommendations {
+		sb.WriteString(fmt.Sprintf("\n💡 %s", rec))
+	}
+	sb.WriteString("\n\n_Предварительная оценка по открытым данным. Точный статус определяет Фонд «Сколково»._")
+	b.sendLongWithMenu(chatID, sb.String())
 }
 
 // ---------------------------------------------------------------------------
@@ -463,7 +477,7 @@ func (b *Bot) cmdHelp(chatID int64) {
 		"/contests — конкурсы и гранты\n" +
 		"/news — свежие новости\n" +
 		"/faq — частые вопросы\n" +
-		"/company — указать ИНН для персонализации (необязательно)\n" +
+		"/company — проверить компанию по ИНН и учитывать её в ответах\n" +
 		"/help — эта справка\n\n" +
 		"💡 Бот отвечает по открытым материалам Сколково и не имеет доступа к личным кабинетам резидентов."
 	b.sendReplyWithKeyboard(chatID, text, MainKeyboard())

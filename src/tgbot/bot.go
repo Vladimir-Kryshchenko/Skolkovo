@@ -25,7 +25,8 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"baza-skolkovo/src/agents"
-	"baza-skolkovo/src/common/store"
+	"baza-skolkovo/src/eligibility"
+	"baza-skolkovo/src/sitepages"
 )
 
 // BotConfig — конфигурация Telegram-бота.
@@ -42,11 +43,15 @@ type BotConfig struct {
 }
 
 // Stores — набор хранилищ, необходимых информационному боту.
-// Все опциональны: если стор nil, соответствующий раздел сообщает о недоступности.
+// Разделы /news, /events, /contests, /faq наполняются из site_pages — отдельного
+// слоя страниц публичного сайта sk.ru/dochub (структурные парсеры sk.ru блокируются
+// anti-bot защитой, а краулер site_pages успешно собирает контент).
+// Все опциональны: если стор nil, раздел сообщает о недоступности.
 type Stores struct {
-	Event   store.EventStore   // мероприятия (/events)
-	Contest store.ContestStore // конкурсы и гранты (/contests)
-	FAQ     store.FAQStore     // частые вопросы (/faq)
+	// Pages — листинг страниц сайта по разделу/дате (Postgres, без эмбеддингов).
+	Pages *sitepages.PostgresStore
+	// PageSearch — семантический поиск по страницам сайта (Qdrant + TEI).
+	PageSearch *sitepages.Searcher
 }
 
 // Bot — публичный информационный Telegram-бот.
@@ -55,6 +60,8 @@ type Bot struct {
 	stores     Stores
 	config     BotConfig
 	consultant *agents.ConsultantAgent
+	// eligibility — проверка компании по ИНН (опционально, может быть nil).
+	eligibility *eligibility.Checker
 	// tenantID — тенант бота (для атрибуции расхода ИИ-токенов).
 	tenantID string
 
@@ -71,7 +78,8 @@ type Bot struct {
 }
 
 // NewBot создаёт новый экземпляр информационного бота.
-func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent) (*Bot, error) {
+// elig может быть nil — тогда /company лишь запоминает ИНН без проверки компании.
+func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent, elig *eligibility.Checker) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(config.Token)
 	if err != nil {
 		return nil, fmt.Errorf("инициализация Telegram Bot API: %w", err)
@@ -82,6 +90,7 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 		stores:      stores,
 		config:      config,
 		consultant:  consultant,
+		eligibility: elig,
 		tenantID:    config.TenantID,
 		askLastTime: make(map[int64]time.Time),
 		chatINN:     make(map[int64]string),

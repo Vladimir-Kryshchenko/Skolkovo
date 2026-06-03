@@ -5,6 +5,8 @@ bin/
 data/
 *.exe
 *.log
+*.tar.gz
+*.tar
 
 # Документация и первоисточники в образ не нужны (монтируются томами).
 Аналитика/
@@ -19,5 +21,10 @@ data/
 certs/
 secrets/
 
-# Локальные бэкапы
+# Бэкапы и временные файлы деплоя
 deploy/certs/
+backups/
+*.old-predeploy*/
+predeploy-rollback/
+tests/e2e/screenshots/
+tests/e2e/videos/

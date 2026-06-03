@@ -3,8 +3,8 @@
 -- Переживает рестарты бота; ограничена тенантом.
 CREATE TABLE IF NOT EXISTS telegram_bindings (
     chat_id    BIGINT      NOT NULL,
-    client_id  TEXT        NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-    tenant_id  TEXT        NOT NULL,
+    client_id  UUID        NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    tenant_id  UUID        NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (chat_id, tenant_id)
 );

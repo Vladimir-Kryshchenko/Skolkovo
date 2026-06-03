@@ -23,6 +23,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"baza-skolkovo/src/aimodels"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -312,6 +313,11 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			}
 			if tenantID != "" || clientID != "" {
 				setAuditIdentity(r.Context(), tenantID, clientID)
+			}
+			// Атрибутируем расход ИИ-токенов тенанту: кладём tenant_id в контекст,
+			// чтобы вызовы агентов (ask_consultant и др.) попали в ai_usage_log с ним.
+			if tenantID != "" {
+				r = r.WithContext(aimodels.WithTenantID(r.Context(), tenantID))
 			}
 		}
 		log.Printf("[mcp] %s %s %s", ip, r.Method, r.URL.Path)

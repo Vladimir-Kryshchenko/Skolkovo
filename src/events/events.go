@@ -7,7 +7,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,6 +16,7 @@ import (
 
 	"baza-skolkovo/src/changes"
 	"baza-skolkovo/src/common/feed"
+	"baza-skolkovo/src/common/httpx"
 	"baza-skolkovo/src/common/model"
 	"baza-skolkovo/src/common/store"
 	rag "baza-skolkovo/src/rag_service"
@@ -86,25 +86,11 @@ func ParseEvents(ctx context.Context, cfg EventsConfig, hc *http.Client) ([]*mod
 }
 
 // parseEventsFromRSS парсит RSS-ленту мероприятий и маппит FeedItem → Event.
+// dochub отдаёт RSS нестабильно (спорадические 502) — берём с ретраями.
 func parseEventsFromRSS(ctx context.Context, rssURL string, hc *http.Client) ([]*model.Event, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rssURL, nil)
+	data, err := httpx.GetWithRetry(ctx, hc, rssURL, userAgent, 5)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("RSS мероприятий: статус %d", resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("RSS мероприятий: %w", err)
 	}
 
 	items := feed.Parse(data)
@@ -141,22 +127,12 @@ func parseEventsFromRSS(ctx context.Context, rssURL string, hc *http.Client) ([]
 
 // parseEventsFromHTML загружает страницу мероприятий и извлекает карточки/элементы.
 func parseEventsFromHTML(ctx context.Context, sourceURL string, hc *http.Client) ([]*model.Event, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, sourceURL, nil)
+	data, err := httpx.GetWithRetry(ctx, hc, sourceURL, userAgent, 5)
 	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", userAgent)
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("HTML мероприятий: статус %d", resp.StatusCode)
+		return nil, fmt.Errorf("HTML мероприятий: %w", err)
 	}
 
-	doc, err := html.Parse(resp.Body)
+	doc, err := html.Parse(strings.NewReader(string(data)))
 	if err != nil {
 		return nil, err
 	}

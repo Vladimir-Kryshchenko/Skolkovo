@@ -111,8 +111,9 @@ services:
       # RSS мероприятий Telligent (dochub). Структурный источник вместо листинга
       # sk.ru/events (за anti-bot). Берётся с ретраями (источник отдаёт нестабильно).
       EVENTS_RSS_URL: ${EVENTS_RSS_URL:-https://dochub.sk.ru/foundation/events/rss.aspx}
-      # ИНН-проверка компании в Telegram-боте (/company): ключ DaData (бесплатный
-      # лимит на dadata.ru). Пусто — публичные ЕГРЮЛ/МСП (часто недоступны с сервера).
+      # DaData-ключ для MCP-инструмента check_eligibility (проверка ИНН агентами).
+      # Пусто — инструмент работает по публичным ЕГРЮЛ/МСП. В Telegram-боте проверки
+      # ИНН нет (бот информационный). Платная DaData для базовой работы не нужна.
       DADATA_API_KEY: ${DADATA_API_KEY:-}
       NOTIFY_WEBHOOK: ${NOTIFY_WEBHOOK:-}
       DOCS_DIR: /data/docs

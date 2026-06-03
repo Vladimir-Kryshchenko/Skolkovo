@@ -2580,16 +2580,13 @@ func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
 		log.Printf("[tgbot] site_pages недоступны: %v (разделы новостей/мероприятий будут пусты)", err)
 	}
 
-	// Проверка компании по ИНН (/company): публичные API ЕГРЮЛ/МСП или DaData.
-	eligChecker := eligibility.NewChecker(eligibility.Config{DadataAPIKey: cfg.DadataAPIKey})
-
 	// Консультант общий для всех ботов: RAG глобален, LLM-синтез из настроек.
 	consultant := agents.NewConsultantAgent(newRAG(cfg, st, nil), "http://"+cfg.MCPAddr, cfg.MCPAPIKey)
 	consultant = consultant.WithLLM(aimodels.NewStore(ps.Pool())).
 		WithSourceLinks(os.Getenv("DOC_PUBLIC_BASE_URL"))
 
 	mgr := tgbot.NewBotManager(
-		pcs, botStores, consultant, eligChecker,
+		pcs, botStores, consultant,
 		"http://"+cfg.MCPAddr+"/mcp",
 		cfg.MCPAPIKey,                   // fallback MCP-ключ (если у тенанта нет своего)
 		os.Getenv("TELEGRAM_BOT_TOKEN"), // fallback токен бота (для Default/глобального)

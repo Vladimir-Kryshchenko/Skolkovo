@@ -20,7 +20,6 @@ import (
 
 	"baza-skolkovo/src/agents"
 	"baza-skolkovo/src/common/store"
-	"baza-skolkovo/src/eligibility"
 )
 
 // defaultPollInterval — как часто менеджер сверяет тенантов с запущенными ботами.
@@ -50,7 +49,6 @@ type BotManager struct {
 	tenants       store.TenantStore
 	stores        Stores
 	consultant    *agents.ConsultantAgent
-	eligibility   *eligibility.Checker // проверка ИНН (опционально, nil допустим)
 	mcpURL        string
 	fallbackKey   string // глобальный MCP API-ключ (если у тенанта нет своего)
 	fallbackToken string // глобальный TELEGRAM_BOT_TOKEN (fallback для Default)
@@ -60,14 +58,13 @@ type BotManager struct {
 	running map[string]*botHandle // key → бот
 }
 
-// NewBotManager создаёт менеджер ботов. elig может быть nil.
+// NewBotManager создаёт менеджер ботов.
 func NewBotManager(tenants store.TenantStore, stores Stores, consultant *agents.ConsultantAgent,
-	elig *eligibility.Checker, mcpURL, fallbackKey, fallbackToken string) *BotManager {
+	mcpURL, fallbackKey, fallbackToken string) *BotManager {
 	return &BotManager{
 		tenants:       tenants,
 		stores:        stores,
 		consultant:    consultant,
-		eligibility:   elig,
 		mcpURL:        mcpURL,
 		fallbackKey:   fallbackKey,
 		fallbackToken: fallbackToken,
@@ -187,7 +184,7 @@ func (m *BotManager) startLocked(ctx context.Context, spec botSpec) {
 		MCPAPIKey: spec.mcpKey,
 	}
 
-	bot, err := NewBot(cfg, m.stores, m.consultant, m.eligibility)
+	bot, err := NewBot(cfg, m.stores, m.consultant)
 	if err != nil {
 		log.Printf("[tgbot:manager] ошибка создания бота key=%s: %v", spec.key, err)
 		return // не добавляем в running → повтор на следующем reconcile

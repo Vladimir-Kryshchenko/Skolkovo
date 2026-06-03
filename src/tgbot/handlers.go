@@ -46,8 +46,6 @@ func (b *Bot) handleCommand(update tgbotapi.Update) {
 		b.cmdNews(chatID)
 	case "faq":
 		b.cmdFAQ(chatID)
-	case "company":
-		b.cmdCompany(chatID, msg.CommandArguments())
 	case "help":
 		b.cmdHelp(chatID)
 	default:
@@ -175,18 +173,12 @@ func (b *Bot) cmdAsk(chatID int64, question string) {
 
 	b.sendReply(chatID, "🔍 Ищу ответ в базе знаний Сколково…")
 
-	// ИНН (если задан) добавляем как контекст для персонализации.
-	q := question
-	if inn := b.getINN(chatID); inn != "" {
-		q = fmt.Sprintf("%s\n\n(Контекст: компания пользователя, ИНН %s)", question, inn)
-	}
-
 	ctx := context.Background()
 	if b.tenantID != "" {
 		ctx = aimodels.WithTenantID(ctx, b.tenantID)
 	}
 
-	resp, err := b.consultant.Ask(ctx, q, "")
+	resp, err := b.consultant.Ask(ctx, question, "")
 	if err != nil {
 		b.sendReply(chatID, fmt.Sprintf("❌ Не удалось получить ответ: %v", err))
 		return
@@ -398,94 +390,6 @@ func pageTitle(p *sitepages.Page) string {
 }
 
 // ---------------------------------------------------------------------------
-// /company — опциональная привязка ИНН для персонализации.
-// ---------------------------------------------------------------------------
-
-func (b *Bot) cmdCompany(chatID int64, arg string) {
-	arg = strings.TrimSpace(arg)
-	if arg == "" {
-		current := b.getINN(chatID)
-		if current != "" {
-			b.sendReplyWithKeyboard(chatID,
-				fmt.Sprintf("🏢 Сейчас указан ИНН: `%s`\n\nЧтобы изменить — отправьте `/company НОВЫЙ_ИНН`, чтобы убрать — `/company -`.", current),
-				BackToMenuKeyboard())
-			return
-		}
-		b.sendReplyWithKeyboard(chatID,
-			"🏢 *Указать компанию (необязательно)*\n\n"+
-				"Если укажете ИНН своей компании, я буду учитывать его при ответах.\n"+
-				"Это *не* вход в личный кабинет — только контекст для консультанта.\n\n"+
-				"Отправьте: `/company 7710000000`",
-			BackToMenuKeyboard())
-		return
-	}
-
-	if arg == "-" {
-		b.clearINN(chatID)
-		b.sendReply(chatID, "✅ ИНН удалён.")
-		return
-	}
-
-	if !innRe.MatchString(arg) {
-		b.sendReply(chatID, "❌ Это не похоже на ИНН. Нужно 10 цифр (организация) или 12 (ИП).")
-		return
-	}
-
-	b.setINN(chatID, arg)
-
-	// Если подключён модуль проверки — сразу проверяем компанию по ИНН.
-	if b.eligibility != nil {
-		b.sendReply(chatID, "🔍 Проверяю компанию по ИНН…")
-		b.checkEligibility(chatID, arg)
-		return
-	}
-
-	b.sendReplyWithKeyboard(chatID,
-		fmt.Sprintf("✅ ИНН `%s` сохранён. Теперь ответы будут учитывать вашу компанию.\n\nЗадайте вопрос — например: _Какие документы нужны для статуса резидента?_", arg),
-		BackToMenuKeyboard())
-}
-
-// checkEligibility проверяет компанию по ИНН через модуль eligibility и выводит отчёт.
-func (b *Bot) checkEligibility(chatID int64, inn string) {
-	rep, err := b.eligibility.CheckByINN(context.Background(), inn)
-	if err != nil {
-		b.sendReplyWithKeyboard(chatID,
-			fmt.Sprintf("✅ ИНН `%s` сохранён.\n\n⚠️ Автоматическую проверку компании выполнить не удалось (%v). ИНН учтётся при ответах консультанта.", inn, err),
-			BackToMenuKeyboard())
-		return
-	}
-
-	var sb strings.Builder
-	if rep.Company != nil && rep.Company.ShortName != "" {
-		sb.WriteString(fmt.Sprintf("🏢 *%s*\n", rep.Company.ShortName))
-		if rep.Company.Status != "" {
-			sb.WriteString(fmt.Sprintf("Статус: %s\n", rep.Company.Status))
-		}
-		if rep.Company.IsMSP {
-			sb.WriteString("✅ В реестре МСП\n")
-		}
-		sb.WriteString("\n")
-	}
-
-	if rep.Eligible {
-		sb.WriteString(fmt.Sprintf("✅ *Компания подходит под критерии Сколково* (оценка %d/100)\n", rep.Score))
-	} else {
-		sb.WriteString(fmt.Sprintf("⚠️ *Есть ограничения для резидентства* (оценка %d/100)\n", rep.Score))
-	}
-	for _, is := range rep.Issues {
-		sb.WriteString(fmt.Sprintf("\n🔴 %s", is))
-	}
-	for _, w := range rep.Warnings {
-		sb.WriteString(fmt.Sprintf("\n🟡 %s", w))
-	}
-	for _, rec := range rep.Recommendations {
-		sb.WriteString(fmt.Sprintf("\n💡 %s", rec))
-	}
-	sb.WriteString("\n\n_Предварительная оценка по открытым данным. Точный статус определяет Фонд «Сколково»._")
-	b.sendLongWithMenu(chatID, sb.String())
-}
-
-// ---------------------------------------------------------------------------
 // /help — справка.
 // ---------------------------------------------------------------------------
 
@@ -501,7 +405,6 @@ func (b *Bot) cmdHelp(chatID int64) {
 		"/contests — конкурсы и гранты\n" +
 		"/news — свежие новости\n" +
 		"/faq — частые вопросы\n" +
-		"/company — проверить компанию по ИНН и учитывать её в ответах\n" +
 		"/help — эта справка\n\n" +
 		"💡 Бот отвечает по открытым материалам Сколково и не имеет доступа к личным кабинетам резидентов."
 	b.sendReplyWithKeyboard(chatID, text, MainKeyboard())

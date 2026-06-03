@@ -25,7 +25,6 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"baza-skolkovo/src/agents"
-	"baza-skolkovo/src/eligibility"
 	"baza-skolkovo/src/sitepages"
 )
 
@@ -60,8 +59,6 @@ type Bot struct {
 	stores     Stores
 	config     BotConfig
 	consultant *agents.ConsultantAgent
-	// eligibility — проверка компании по ИНН (опционально, может быть nil).
-	eligibility *eligibility.Checker
 	// tenantID — тенант бота (для атрибуции расхода ИИ-токенов).
 	tenantID string
 
@@ -69,17 +66,10 @@ type Bot struct {
 	askMu sync.Mutex
 	// askLastTime хранит время последнего вопроса по chat ID (анти-флуд).
 	askLastTime map[int64]time.Time
-
-	// innMu защищает chatINN.
-	innMu sync.RWMutex
-	// chatINN — опциональная привязка ИНН компании к чату (в памяти, для контекста
-	// вопросов консультанту). Не даёт доступа к личным данным резидента.
-	chatINN map[int64]string
 }
 
 // NewBot создаёт новый экземпляр информационного бота.
-// elig может быть nil — тогда /company лишь запоминает ИНН без проверки компании.
-func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent, elig *eligibility.Checker) (*Bot, error) {
+func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(config.Token)
 	if err != nil {
 		return nil, fmt.Errorf("инициализация Telegram Bot API: %w", err)
@@ -90,10 +80,8 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent,
 		stores:      stores,
 		config:      config,
 		consultant:  consultant,
-		eligibility: elig,
 		tenantID:    config.TenantID,
 		askLastTime: make(map[int64]time.Time),
-		chatINN:     make(map[int64]string),
 	}
 
 	b.registerCommands()
@@ -112,7 +100,6 @@ func (b *Bot) registerCommands() {
 		{Command: "contests", Description: "🏆 Конкурсы и гранты"},
 		{Command: "news", Description: "📰 Свежие новости Фонда"},
 		{Command: "faq", Description: "❓ Частые вопросы"},
-		{Command: "company", Description: "🏢 Указать ИНН для персонализации"},
 		{Command: "help", Description: "ℹ️ Справка по командам"},
 	}
 	cfg := tgbotapi.NewSetMyCommands(commands...)

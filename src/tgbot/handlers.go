@@ -349,6 +349,7 @@ var newsTitleBlacklist = map[string]bool{
 // страницы с пустым/служебным заголовком — оставляет только статьи (news / <slug>).
 func filterNewsPages(pages []*sitepages.Page, limit int) []*sitepages.Page {
 	var news []*sitepages.Page
+	seenTitle := map[string]bool{}
 	for _, p := range pages {
 		sec := strings.ToLower(p.Section)
 		url := strings.ToLower(p.URL)
@@ -364,6 +365,11 @@ func filterNewsPages(pages []*sitepages.Page, limit int) []*sitepages.Page {
 		if newsTitleBlacklist[title] || strings.HasPrefix(title, "информация по тегу") {
 			continue
 		}
+		// Дедуп по заголовку (одна статья встречается под разными URL).
+		if seenTitle[title] {
+			continue
+		}
+		seenTitle[title] = true
 		news = append(news, p)
 	}
 	sort.Slice(news, func(i, j int) bool {

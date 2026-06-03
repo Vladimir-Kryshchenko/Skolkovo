@@ -75,6 +75,7 @@ import (
 	"baza-skolkovo/src/residents"
 	"baza-skolkovo/src/scraper"
 	"baza-skolkovo/src/sitepages"
+	"baza-skolkovo/src/skru"
 	"baza-skolkovo/src/telegram"
 	"baza-skolkovo/src/tgbot"
 )
@@ -2570,14 +2571,17 @@ func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
 	}
 	pcs := store.NewPostgresClientStore(ps.Pool())
 
-	// Публичный информационный бот наполняет разделы из site_pages (структурные
-	// парсеры sk.ru блокируются anti-bot, а краулер site_pages контент собирает).
-	botStores := tgbot.Stores{}
+	// Публичный информационный бот: актуальные новости/мероприятия/конкурсы тянутся
+	// напрямую с sk.ru (Next.js API, свежий контент с датами), FAQ — семантикой по
+	// site_pages (структурные парсеры sk.ru за anti-bot, dochub — только архив).
+	botStores := tgbot.Stores{
+		SkRu: skru.NewClient(15 * time.Minute),
+	}
 	if pageStore, err := sitepages.NewPostgresStore(ctx, ps.Pool()); err == nil {
 		botStores.Pages = pageStore
 		botStores.PageSearch = sitepages.NewSearcher(newSitePagesQdrant(cfg), embed.NewTEIClient(cfg.TEIURL))
 	} else {
-		log.Printf("[tgbot] site_pages недоступны: %v (разделы новостей/мероприятий будут пусты)", err)
+		log.Printf("[tgbot] site_pages недоступны: %v (раздел FAQ будет пуст)", err)
 	}
 
 	// Консультант общий для всех ботов: RAG глобален, LLM-синтез из настроек.

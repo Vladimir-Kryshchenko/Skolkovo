@@ -26,6 +26,7 @@ import (
 
 	"baza-skolkovo/src/agents"
 	"baza-skolkovo/src/sitepages"
+	"baza-skolkovo/src/skru"
 )
 
 // BotConfig — конфигурация Telegram-бота.
@@ -51,6 +52,8 @@ type Stores struct {
 	Pages *sitepages.PostgresStore
 	// PageSearch — семантический поиск по страницам сайта (Qdrant + TEI).
 	PageSearch *sitepages.Searcher
+	// SkRu — клиент актуальных публикаций sk.ru (новости/мероприятия/конкурсы).
+	SkRu *skru.Client
 }
 
 // Bot — публичный информационный Telegram-бот.

@@ -571,11 +571,16 @@ type tenantsPageData struct {
 	FlashKind string
 	// RevealKey — полный API-ключ для одноразового показа (после создания/ротации).
 	RevealKey string
-	// Billing — расход токенов и стоимость по тенанту (tenant_id → stats), 30 дней.
-	// Пусто, если jobsched недоступен или данных нет.
+	// Billing — расход токенов и стоимость по тенанту (tenant_id → stats).
 	Billing map[string]TenantBilling
-	// GlobalBilling — суммарный расход по всем тенантам за 30 дней.
+	// GlobalBilling — суммарный расход по всем тенантам за выбранный период.
 	GlobalBilling TenantBilling
+	// SinceDays — выбранный период биллинга (7/30/90).
+	SinceDays int
+	// Счётчики для статус-бара.
+	TotalCount   int
+	ActiveCount  int
+	WithBotCount int
 }
 
 func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) {
@@ -1054,6 +1059,25 @@ func (s *ResidencyServer) handleAPIClientStageTransition(w http.ResponseWriter, 
 // Template helper functions
 // ---------------------------------------------------------------------------
 
+// fmtNum форматирует целое число с разделителями тысяч (1 234 567).
+func fmtNum(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	start := len(s) % 3
+	if start == 0 {
+		start = 3
+	}
+	b.WriteString(s[:start])
+	for i := start; i < len(s); i += 3 {
+		b.WriteByte(' ') // неразрывный пробел
+		b.WriteString(s[i : i+3])
+	}
+	return b.String()
+}
+
 var residencyFuncs = template.FuncMap{
 	"FormatStage":     formatStage,
 	"StepsCount":      stepsCount,
@@ -1064,6 +1088,9 @@ var residencyFuncs = template.FuncMap{
 	"ContestStatusBg": contestStatusBg,
 	"DaysSince":       daysSince,
 	"DaysUntil":       daysUntil,
+	"lower":           strings.ToLower,
+	"sub":             func(a, b int) int { return a - b },
+	"fmtNum":          fmtNum,
 }
 
 func formatStage(s model.ResidencyStage) string {

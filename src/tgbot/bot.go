@@ -88,17 +88,19 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 	return b, nil
 }
 
-// registerCommands регистрирует список команд в Telegram (отображается в меню бота).
+// registerCommands регистрирует список команд в Telegram (отображается в меню «/»).
+// Emoji в Description показываются прямо в списке команд — это максимум возможного
+// в Bot API (изображения на кнопки команд платформа не поддерживает).
 func (b *Bot) registerCommands() {
 	commands := []tgbotapi.BotCommand{
-		{Command: "start", Description: "Начать работу и авторизоваться"},
-		{Command: "status", Description: "Текущая стадия резидентства"},
-		{Command: "deadlines", Description: "Ближайшие дедлайны (90 дней)"},
-		{Command: "docs", Description: "Мои документы"},
-		{Command: "checklists", Description: "Чек-листы текущей процедуры"},
-		{Command: "ask", Description: "Вопрос ИИ-консультанту"},
-		{Command: "logout", Description: "Выйти из аккаунта"},
-		{Command: "help", Description: "Справка по командам"},
+		{Command: "start", Description: "🚀 Начать работу и авторизоваться"},
+		{Command: "status", Description: "📊 Текущая стадия резидентства"},
+		{Command: "deadlines", Description: "⏰ Ближайшие дедлайны (90 дней)"},
+		{Command: "docs", Description: "📄 Мои документы"},
+		{Command: "checklists", Description: "📋 Чек-листы текущей процедуры"},
+		{Command: "ask", Description: "🤖 Вопрос ИИ-консультанту"},
+		{Command: "logout", Description: "🚪 Выйти из аккаунта"},
+		{Command: "help", Description: "ℹ️ Справка по командам"},
 	}
 	cfg := tgbotapi.NewSetMyCommands(commands...)
 	if _, err := b.api.Request(cfg); err != nil {

@@ -138,20 +138,21 @@ func (b *Bot) handleCallback(update tgbotapi.Update) {
 
 func (b *Bot) cmdStart(chatID int64) {
 	if b.isAuthorized(chatID) {
-		b.sendReplyWithMenuKeyboard(chatID,
-			"👋 Здравствуйте! Вы уже авторизованы.\n\n"+
-				"Используйте кнопки меню или выберите раздел ниже:")
+		b.sendCommandBanner(chatID, "start",
+			"👋 *Добро пожаловать!* Вы уже авторизованы.")
+		b.sendReplyWithMenuKeyboard(chatID, "Используйте кнопки меню или выберите раздел ниже:")
 		b.sendReplyWithKeyboard(chatID, "Быстрые действия:", MainKeyboard())
 		return
 	}
 
+	b.sendCommandBanner(chatID, "start",
+		"🚀 *Система резидентства Сколково*\n\nВведите email для авторизации")
 	b.sendReply(chatID,
-		"👋 *Добро пожаловать в систему резидентства Сколково!*\n\n"+
-			"Этот бот поможет вам:\n"+
+		"Этот бот поможет вам:\n"+
 			"• Отслеживать статус и стадию резидентства\n"+
 			"• Контролировать дедлайны и чек-листы\n"+
 			"• Получать ответы на вопросы по документам Сколково\n\n"+
-			"Для начала работы введите email, указанный при регистрации:\n"+
+			"Введите email, указанный при регистрации:\n"+
 			"`ivan@company.com`",
 	)
 }
@@ -189,6 +190,8 @@ func (b *Bot) cmdStatus(chatID int64) {
 	}
 
 	stageName := stageDescription(client.ResidencyStage)
+	caption := fmt.Sprintf("📊 *%s* — стадия: _%s_", client.Name, client.ResidencyStage)
+	b.sendCommandBanner(chatID, "status", caption)
 
 	text := fmt.Sprintf(
 		"📊 *Статус резидента*\n\n"+
@@ -243,6 +246,11 @@ func (b *Bot) cmdDeadlines(chatID int64, page int) {
 	if len(deadlines) == 0 {
 		b.sendReply(chatID, "✅ У вас нет ближайших дедлайнов!")
 		return
+	}
+
+	if page == 0 {
+		b.sendCommandBanner(chatID, "deadlines",
+			fmt.Sprintf("⏰ *Дедлайны* — %d задач на ближайшие 90 дней", len(deadlines)))
 	}
 
 	totalPages := (len(deadlines)-1)/deadlinesPerPage + 1
@@ -301,6 +309,11 @@ func (b *Bot) cmdDocs(chatID int64, page int) {
 	if len(documents) == 0 {
 		b.sendReply(chatID, "📄 У вас пока нет привязанных документов.")
 		return
+	}
+
+	if page == 0 {
+		b.sendCommandBanner(chatID, "docs",
+			fmt.Sprintf("📄 *Документы* — %d файлов в вашем деле", len(documents)))
 	}
 
 	totalPages := (len(documents)-1)/docsPerPage + 1
@@ -380,6 +393,7 @@ func (b *Bot) cmdAsk(chatID int64, question string) {
 		clientID = client.ID
 	}
 
+	b.sendCommandBanner(chatID, "ask", "🤖 *ИИ-консультант Сколково*")
 	b.sendReply(chatID, "🔍 Ищу ответ на ваш вопрос...")
 
 	if b.consultant == nil {
@@ -443,6 +457,7 @@ func (b *Bot) cmdAsk(chatID int64, question string) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) cmdHelp(chatID int64) {
+	b.sendCommandBanner(chatID, "help", "ℹ️ *Справка — База Сколково*")
 	text := "📖 *Справка*\n\n" +
 		"*Команды:*\n" +
 		"/start — начать работу и авторизоваться\n" +
@@ -572,6 +587,9 @@ func (b *Bot) cmdChecklists(chatID int64) {
 		b.sendReply(chatID, "📋 У вас пока нет чек-листов.")
 		return
 	}
+
+	b.sendCommandBanner(chatID, "checklists",
+		fmt.Sprintf("📋 *Чек-листы* — %d процедуры", len(checklists)))
 
 	var sb strings.Builder
 	sb.WriteString("📋 *Мои чек-листы*\n\n")

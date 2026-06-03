@@ -53,6 +53,10 @@ type Page struct {
 	Conclusions string     `json:"conclusions,omitempty"` // выводы (ИИ)
 	EnrichedAt  *time.Time `json:"enriched_at,omitempty"` // когда аннотировано (nil — ещё нет)
 	EnrichHash  string     `json:"-"`                     // content_hash на момент аннотирования
+	// EnrichError — текст последней ошибки разметки (пусто — успех/не пробовали).
+	EnrichError string `json:"enrich_error,omitempty"`
+	// EnrichAttempts — число неуспешных попыток разметки подряд.
+	EnrichAttempts int `json:"enrich_attempts,omitempty"`
 }
 
 // Enriched сообщает, аннотирована ли страница ИИ для текущего контента.

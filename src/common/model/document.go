@@ -16,14 +16,14 @@ const (
 
 // Document — запись реестра документов (см. Документы_Сколково/Метаданные/реестр_документов.schema.json).
 type Document struct {
-	ID           string     `json:"id"`
-	Title        string     `json:"title"`
-	SourceURL    string     `json:"source_url"`
-	LocalPath    string     `json:"local_path,omitempty"`
-	PublishedAt  *time.Time `json:"published_at,omitempty"`
-	FetchedAt    time.Time  `json:"fetched_at"`
-	Status       Status     `json:"status"`
-	Category     string     `json:"category,omitempty"`
+	ID          string     `json:"id"`
+	Title       string     `json:"title"`
+	SourceURL   string     `json:"source_url"`
+	LocalPath   string     `json:"local_path,omitempty"`
+	PublishedAt *time.Time `json:"published_at,omitempty"`
+	FetchedAt   time.Time  `json:"fetched_at"`
+	Status      Status     `json:"status"`
+	Category    string     `json:"category,omitempty"`
 	// Subcategory — уточняющая подкатегория (ИИ-разметка), опционально.
 	Subcategory string `json:"subcategory,omitempty"`
 	// Tags — авто-теги документа (ИИ), нормализованы против словаря document_tags.
@@ -31,13 +31,17 @@ type Document struct {
 	// EnrichedAt — когда документ последний раз размечен ИИ (nil — ещё не размечен).
 	EnrichedAt *time.Time `json:"enriched_at,omitempty"`
 	// EnrichHash — file_hash на момент ИИ-разметки; переразмечаем при изменении файла.
-	EnrichHash   string `json:"enrich_hash,omitempty"`
-	VersionLabel string `json:"version_label,omitempty"`
-	ValidFrom    *time.Time `json:"valid_from,omitempty"`
-	ValidTo      *time.Time `json:"valid_to,omitempty"`
-	Supersedes   string     `json:"supersedes,omitempty"`
-	FileHash     string     `json:"file_hash"`
-	Indexed      bool       `json:"indexed"`
+	EnrichHash string `json:"enrich_hash,omitempty"`
+	// EnrichError — текст последней ошибки ИИ-разметки (пусто — успех/не пробовали).
+	EnrichError string `json:"enrich_error,omitempty"`
+	// EnrichAttempts — число неуспешных попыток разметки подряд.
+	EnrichAttempts int        `json:"enrich_attempts,omitempty"`
+	VersionLabel   string     `json:"version_label,omitempty"`
+	ValidFrom      *time.Time `json:"valid_from,omitempty"`
+	ValidTo        *time.Time `json:"valid_to,omitempty"`
+	Supersedes     string     `json:"supersedes,omitempty"`
+	FileHash       string     `json:"file_hash"`
+	Indexed        bool       `json:"indexed"`
 }
 
 // IsRetrievable сообщает, должен ли документ участвовать в поиске RAG.

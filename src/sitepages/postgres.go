@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,8 @@ func NewPostgresStore(ctx context.Context, pool *pgxpool.Pool) (*PostgresStore, 
 
 const selectCols = `SELECT id, url, title, summary, section, content_hash, status,
        first_seen, last_seen, last_changed, published_at,
-       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory
+       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory,
+       enrich_error, enrich_attempts
 FROM site_pages`
 
 // Get возвращает страницу по ID или ErrNotFound.
@@ -131,12 +133,14 @@ UPDATE site_pages
 func (s *PostgresStore) GetWithText(ctx context.Context, id string) (*Page, error) {
 	row := s.pool.QueryRow(ctx, `SELECT id, url, title, summary, section, content_hash, status,
        first_seen, last_seen, last_changed, published_at, text,
-       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory
+       tags, ai_summary, goals, theses, conclusions, enriched_at, category, subcategory,
+       enrich_error, enrich_attempts
 FROM site_pages WHERE id = $1`, id)
 	var p Page
 	err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
 		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt, &p.Text,
-		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory)
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory,
+		&p.EnrichError, &p.EnrichAttempts)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -192,16 +196,17 @@ func (s *PostgresStore) Count(ctx context.Context) (int, error) {
 // PageFilter — параметры выборки страниц списка. Фильтрация и пагинация идут на
 // стороне БД, поэтому в админке доступны ВСЕ страницы, а не первые N.
 type PageFilter struct {
-	Query   string    // подстрока в title/url/section/summary (ILIKE)
-	Section string    // точный раздел
-	Status  string    // active | gone (пусто — любой)
-	Tags    []string  // страница должна содержать ВСЕ теги (оператор @>)
-	Since   time.Time // last_changed >= Since
-	Until   time.Time // last_changed <= Until
-	PubFrom time.Time // published_at >= PubFrom (дата публикации на сайте)
-	PubTo   time.Time // published_at <= PubTo
-	Limit   int       // размер страницы (<=0 — без лимита)
-	Offset  int       // сдвиг для пагинации
+	Query      string    // подстрока в title/url/section/summary (ILIKE)
+	Section    string    // точный раздел
+	Status     string    // active | gone (пусто — любой)
+	Tags       []string  // страница должна содержать ВСЕ теги (оператор @>)
+	Since      time.Time // last_changed >= Since
+	Until      time.Time // last_changed <= Until
+	PubFrom    time.Time // published_at >= PubFrom (дата публикации на сайте)
+	PubTo      time.Time // published_at <= PubTo
+	OnlyErrors bool      // только страницы с ошибкой ИИ-разметки (enrich_error <> '')
+	Limit      int       // размер страницы (<=0 — без лимита)
+	Offset     int       // сдвиг для пагинации
 }
 
 // buildSitePageWhere собирает условие WHERE и аргументы по фильтру (без лимита).
@@ -241,6 +246,9 @@ func buildSitePageWhere(f PageFilter) (string, []any) {
 	if !f.PubTo.IsZero() {
 		args = append(args, f.PubTo)
 		conds = append(conds, fmt.Sprintf("published_at <= $%d", len(args)))
+	}
+	if f.OnlyErrors {
+		conds = append(conds, "enrich_error <> ''")
 	}
 	if len(conds) == 0 {
 		return "", nil
@@ -394,9 +402,29 @@ UPDATE site_pages
    SET tags=$2, ai_summary=$3, goals=$4, theses=$5, conclusions=$6,
        published_at=COALESCE(published_at, $8),
        enriched_at=now(), enrich_hash=$7,
-       category=$9, subcategory=$10
+       category=$9, subcategory=$10,
+       enrich_error='', enrich_attempts=0
  WHERE id=$1`,
 		id, tags, a.Summary, a.Goals, theses, a.Conclusions, contentHash, published, a.Category, a.Subcategory)
+	return err
+}
+
+// maxEnrichAttempts — после скольких неуспешных попыток подряд страница
+// исключается из авто-очереди разметки (чтобы не зацикливаться на неразмечаемых,
+// например отклонённых контент-модерацией провайдера). Видны в админке для разбора.
+const maxEnrichAttempts = 3
+
+// RecordEnrichFailure фиксирует неуспешную попытку разметки: сохраняет текст
+// ошибки, увеличивает счётчик попыток и время попытки. По достижении
+// maxEnrichAttempts страница выпадает из ListNeedingEnrichment.
+func (s *PostgresStore) RecordEnrichFailure(ctx context.Context, id, errText string) error {
+	if len(errText) > 1000 {
+		errText = errText[:1000]
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE site_pages
+   SET enrich_error=$2, enrich_attempts=enrich_attempts+1, enrich_attempted_at=now()
+ WHERE id=$1`, id, errText)
 	return err
 }
 
@@ -410,6 +438,7 @@ FROM site_pages`
 func (s *PostgresStore) ListNeedingEnrichment(ctx context.Context, limit int) ([]*Page, error) {
 	q := enrichSelect + `
 WHERE status = 'active' AND (enriched_at IS NULL OR enrich_hash <> content_hash)
+  AND enrich_attempts < ` + strconv.Itoa(maxEnrichAttempts) + `
 ORDER BY last_changed DESC`
 	return s.queryEnrich(ctx, q, limit)
 }
@@ -531,7 +560,8 @@ func scanPage(row scannable) (*Page, error) {
 	var p Page
 	if err := row.Scan(&p.ID, &p.URL, &p.Title, &p.Summary, &p.Section,
 		&p.ContentHash, &p.Status, &p.FirstSeen, &p.LastSeen, &p.LastChanged, &p.PublishedAt,
-		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory); err != nil {
+		&p.Tags, &p.AISummary, &p.Goals, &p.Theses, &p.Conclusions, &p.EnrichedAt, &p.Category, &p.Subcategory,
+		&p.EnrichError, &p.EnrichAttempts); err != nil {
 		return nil, err
 	}
 	return &p, nil

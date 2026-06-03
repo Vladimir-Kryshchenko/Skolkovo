@@ -3278,6 +3278,8 @@ type sitePagesPageData struct {
 	SelectedSet  map[string]bool // для отметки checkbox в шаблоне
 	Total        int             // число страниц по текущему фильтру
 	GrandTotal   int             // всего страниц в базе (без фильтра)
+	ErrorCount   int             // всего страниц с ошибкой ИИ-разметки (для бейджа)
+	OnlyErrors   bool            // активен ли фильтр «только с ошибками разметки»
 	LastCrawl    time.Time
 	HasStore     bool
 
@@ -3311,6 +3313,7 @@ type sitePageRow struct {
 	Category    string
 	Subcategory string
 	Tags        []string
+	EnrichError string // текст ошибки ИИ-разметки (пусто — нет ошибки)
 	LastChanged time.Time
 	Published   string // дата публикации на сайте Сколково (ГГГГ-форматированная) или «—»
 }
@@ -3339,6 +3342,8 @@ type sitePageViewData struct {
 	LastChanged     time.Time
 	Published       string // дата публикации на сайте Сколково или «—»
 	Enriched        bool
+	EnrichError     string // текст ошибки ИИ-разметки (пусто — нет)
+	EnrichAttempts  int    // число неуспешных попыток разметки
 	Category        string
 	Subcategory     string
 	AISummary       string
@@ -3449,18 +3454,21 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 		page = v
 	}
 
+	onlyErrors := r.URL.Query().Get("enrich") == "errors"
 	filter := sitepages.PageFilter{
-		Query:   query,
-		Section: section,
-		Status:  status,
-		Tags:    selectedTags,
-		Since:   since,
-		Until:   until,
-		PubFrom: pubSince,
-		PubTo:   pubUntil,
+		Query:      query,
+		Section:    section,
+		Status:     status,
+		Tags:       selectedTags,
+		Since:      since,
+		Until:      until,
+		PubFrom:    pubSince,
+		PubTo:      pubUntil,
+		OnlyErrors: onlyErrors,
 	}
 
 	ctx := r.Context()
+	errorCount, _ := s.sitePages.CountFiltered(ctx, sitepages.PageFilter{OnlyErrors: true})
 	total, err := s.sitePages.CountFiltered(ctx, filter)
 	if err != nil {
 		log.Printf("[admin/sitepages] подсчёт: %v", err)
@@ -3491,6 +3499,7 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 			Category:    p.Category,
 			Subcategory: p.Subcategory,
 			Tags:        p.Tags,
+			EnrichError: p.EnrichError,
 			LastChanged: p.LastChanged,
 			Published:   fmtPublished(p.PublishedAt),
 		})
@@ -3526,6 +3535,8 @@ func (s *Server) handleSitePagesPage(w http.ResponseWriter, r *http.Request) {
 	data.AllTags = allTags
 	data.Total = total
 	data.GrandTotal = grandTotal
+	data.ErrorCount = errorCount
+	data.OnlyErrors = onlyErrors
 	data.LastCrawl = lastCrawl
 	data.Page = page
 	data.PerPage = perPage
@@ -3619,30 +3630,32 @@ func (s *Server) handleSitePageView(w http.ResponseWriter, r *http.Request) {
 		text = p.Summary
 	}
 	data := sitePageViewData{
-		ID:          p.ID,
-		URL:         p.URL,
-		Title:       p.Title,
-		Section:     p.Section,
-		Status:      p.Status,
-		StatusLabel: sitePageStatusLabel(p.Status),
-		Summary:     p.Summary,
-		Text:        text,
-		HasText:     strings.TrimSpace(text) != "",
-		FirstSeen:   p.FirstSeen,
-		LastSeen:    p.LastSeen,
-		LastChanged: p.LastChanged,
-		Published:   fmtPublished(p.PublishedAt),
-		Enriched:    p.Enriched(),
-		Category:    p.Category,
-		Subcategory: p.Subcategory,
-		AISummary:   p.AISummary,
-		Goals:       p.Goals,
-		Theses:      p.Theses,
-		Conclusions: p.Conclusions,
-		Tags:        p.Tags,
-		CanEdit:     s.sitePageOps != nil,
-		TagsCSV:     strings.Join(p.Tags, ", "),
-		ThesesText:  strings.Join(p.Theses, "\n"),
+		ID:             p.ID,
+		URL:            p.URL,
+		Title:          p.Title,
+		Section:        p.Section,
+		Status:         p.Status,
+		StatusLabel:    sitePageStatusLabel(p.Status),
+		Summary:        p.Summary,
+		Text:           text,
+		HasText:        strings.TrimSpace(text) != "",
+		FirstSeen:      p.FirstSeen,
+		LastSeen:       p.LastSeen,
+		LastChanged:    p.LastChanged,
+		Published:      fmtPublished(p.PublishedAt),
+		Enriched:       p.Enriched(),
+		EnrichError:    p.EnrichError,
+		EnrichAttempts: p.EnrichAttempts,
+		Category:       p.Category,
+		Subcategory:    p.Subcategory,
+		AISummary:      p.AISummary,
+		Goals:          p.Goals,
+		Theses:         p.Theses,
+		Conclusions:    p.Conclusions,
+		Tags:           p.Tags,
+		CanEdit:        s.sitePageOps != nil,
+		TagsCSV:        strings.Join(p.Tags, ", "),
+		ThesesText:     strings.Join(p.Theses, "\n"),
 	}
 
 	// Связанные страницы по общим тегам (из БД).

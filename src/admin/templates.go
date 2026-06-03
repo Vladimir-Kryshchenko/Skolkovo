@@ -1731,6 +1731,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
   <div style="font-size:12px;color:var(--text-secondary)">
     {{if .Total}}Страницы <strong>{{.RangeFrom}}–{{.RangeTo}}</strong> из <strong>{{.Total}}</strong>{{else}}Найдено: <strong>0</strong>{{end}}
     {{if and .GrandTotal (ne .Total .GrandTotal)}}<span title="Всего страниц в базе">(всего в базе: {{.GrandTotal}})</span>{{end}}
+    {{if .ErrorCount}} · {{if .OnlyErrors}}<a href="/sitepages" title="Сбросить фильтр">✕ показать все</a> · <span style="color:var(--red,#b3261e)">фильтр: ошибки разметки</span>{{else}}<a href="/sitepages?enrich=errors" style="color:var(--red,#b3261e)" title="Показать только страницы с ошибкой ИИ-разметки">⚠ с ошибками разметки: {{.ErrorCount}}</a>{{end}}{{end}}
   </div>
 </div>
 
@@ -1823,6 +1824,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
       <div style="font-size:11px;color:var(--text-secondary);font-family:monospace;word-break:break-all">{{.URL}}</div>
       {{if .Category}}<div style="font-size:11px;margin-top:3px" title="Категория / подкатегория (ИИ)">🗂 {{.Category}}{{if .Subcategory}} ⤷ {{.Subcategory}}{{end}}</div>{{end}}
       {{if .Tags}}<div class="sp-tags">{{range .Tags}}<span class="sp-tag muted">{{.}}</span>{{end}}</div>{{end}}
+      {{if .EnrichError}}<div style="font-size:11px;margin-top:3px;color:var(--red,#b3261e)" title="{{.EnrichError}}">⚠ ошибка разметки</div>{{end}}
     </td>
     <td><span class="badge {{if eq .Status "active"}}badge-active{{else}}badge-gone{{end}}">{{.StatusLabel}}</span></td>
     <td style="font-size:12px;white-space:nowrap" title="Дата публикации на сайте Сколково">{{.Published}}</td>
@@ -1888,6 +1890,7 @@ document.addEventListener('click',function(e){var ms=document.getElementById('ms
   <span>URL: <a href="{{.URL}}" target="_blank" rel="noopener" style="font-family:monospace;word-break:break-all">{{.URL}}</a></span>
 </div>
 
+{{if .EnrichError}}<div style="margin-bottom:12px;padding:10px 12px;border-radius:6px;background:var(--red-bg,#fdecea);color:var(--red,#b3261e);border:1px solid var(--red,#b3261e)">⚠ <b>Ошибка ИИ-разметки</b>{{if .EnrichAttempts}} (попыток: {{.EnrichAttempts}}){{end}}: {{.EnrichError}}<div style="font-size:12px;margin-top:4px;opacity:.85">Исправьте причину (например, контент-модерация провайдера) и нажмите «Переаннотировать», либо отредактируйте аннотацию вручную ниже.</div></div>{{end}}
 {{if .Category}}<div style="margin-bottom:10px" title="Категория / подкатегория (ИИ)">🗂 <b>{{.Category}}</b>{{if .Subcategory}} ⤷ {{.Subcategory}}{{end}}</div>{{end}}
 {{if .Tags}}<div class="sp-tags" style="margin-bottom:16px">{{range .Tags}}<span class="sp-tag">{{.}}</span>{{end}}</div>{{end}}
 

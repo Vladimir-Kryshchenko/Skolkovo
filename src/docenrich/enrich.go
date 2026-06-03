@@ -125,6 +125,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 			cls, err := e.annotate(ctx, chat, agent, models, d, known)
 			if err != nil {
 				atomic.AddInt64(&failedN, 1)
+				_ = e.Store.RecordEnrichFailure(ctx, d.ID, err.Error())
 				log.Printf("[docenrich] %s (%s): %v", d.ID, d.Title, err)
 				return
 			}
@@ -135,6 +136,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, docs []model.Document) (done
 			}
 			if err := e.Store.UpdateClassification(ctx, d.ID, category, cls.Subcategory, cls.Tags, d.FileHash); err != nil {
 				atomic.AddInt64(&failedN, 1)
+				_ = e.Store.RecordEnrichFailure(ctx, d.ID, err.Error())
 				log.Printf("[docenrich] сохранение %s: %v", d.ID, err)
 				return
 			}

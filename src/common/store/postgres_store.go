@@ -141,16 +141,37 @@ UPDATE documents
        subcategory = $3,
        tags        = $4,
        enriched_at = now(),
-       enrich_hash = $5
+       enrich_hash = $5,
+       enrich_error = '', enrich_attempts = 0
  WHERE id = $1`, id, category, subcategory, tags, enrichHash)
 }
 
+// maxEnrichAttempts — после скольких неуспешных попыток подряд документ
+// исключается из авто-очереди разметки (чтобы не зацикливаться на неразмечаемых).
+const maxEnrichAttempts = 3
+
+// RecordEnrichFailure фиксирует неуспешную попытку ИИ-разметки документа: текст
+// ошибки, счётчик попыток и время. По достижении maxEnrichAttempts документ
+// выпадает из ListNeedingEnrichment (виден в админке для разбора).
+func (s *PostgresStore) RecordEnrichFailure(ctx context.Context, id, errText string) error {
+	if len(errText) > 1000 {
+		errText = errText[:1000]
+	}
+	_, err := s.pool.Exec(ctx, `
+UPDATE documents
+   SET enrich_error=$2, enrich_attempts=enrich_attempts+1, enrich_attempted_at=now()
+ WHERE id=$1`, id, errText)
+	return err
+}
+
 // ListNeedingEnrichment возвращает действующие документы, которым нужна ИИ-разметка:
-// ещё не размечены или файл изменился (enrich_hash <> file_hash). limit<=0 — все.
+// ещё не размечены или файл изменился (enrich_hash <> file_hash), и не превысившие
+// лимит неуспешных попыток. limit<=0 — все.
 func (s *PostgresStore) ListNeedingEnrichment(ctx context.Context, limit int) ([]model.Document, error) {
 	q := selectCols + `
 WHERE status = 'действует'
   AND (enriched_at IS NULL OR enrich_hash <> file_hash)
+  AND enrich_attempts < ` + fmt.Sprintf("%d", maxEnrichAttempts) + `
 ORDER BY fetched_at DESC`
 	if limit > 0 {
 		q += fmt.Sprintf(" LIMIT %d", limit)
@@ -236,7 +257,7 @@ func (s *PostgresStore) exec1(ctx context.Context, sql, id string, arg any) erro
 
 const selectCols = `SELECT id, title, source_url, local_path, published_at, fetched_at,
        status, category, version_label, valid_from, valid_to, supersedes, file_hash, indexed,
-       subcategory, tags, enriched_at, enrich_hash
+       subcategory, tags, enriched_at, enrich_hash, enrich_error, enrich_attempts
 FROM documents`
 
 // row — общий интерфейс для pgx.Row и pgx.Rows.
@@ -250,7 +271,7 @@ func scanDoc(r row) (model.Document, error) {
 	var localPath, category, versionLabel, supersedes *string
 	err := r.Scan(&d.ID, &d.Title, &d.SourceURL, &localPath, &d.PublishedAt, &d.FetchedAt,
 		&status, &category, &versionLabel, &d.ValidFrom, &d.ValidTo, &supersedes, &d.FileHash, &d.Indexed,
-		&d.Subcategory, &d.Tags, &d.EnrichedAt, &d.EnrichHash)
+		&d.Subcategory, &d.Tags, &d.EnrichedAt, &d.EnrichHash, &d.EnrichError, &d.EnrichAttempts)
 	if err != nil {
 		return d, err
 	}

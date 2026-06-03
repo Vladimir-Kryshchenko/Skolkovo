@@ -109,6 +109,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 			ann, err := e.annotate(ctx, chat, agent, models, p, known)
 			if err != nil {
 				atomic.AddInt64(&failedN, 1)
+				_ = e.Pages.RecordEnrichFailure(ctx, p.ID, err.Error())
 				log.Printf("[sitepages/enrich] %s: %v", p.URL, err)
 				return
 			}
@@ -123,6 +124,7 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 			}
 			if err := e.Pages.UpdateEnrichment(ctx, p.ID, ann, p.ContentHash, published); err != nil {
 				atomic.AddInt64(&failedN, 1)
+				_ = e.Pages.RecordEnrichFailure(ctx, p.ID, err.Error())
 				log.Printf("[sitepages/enrich] сохранение %s: %v", p.URL, err)
 				return
 			}

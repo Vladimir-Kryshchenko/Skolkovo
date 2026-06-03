@@ -26,40 +26,35 @@ var commandThemes = map[string]bannerTheme{
 		BottomRight: color.RGBA{10, 60, 160, 255},
 		Accent:      color.RGBA{100, 181, 246, 255},
 	},
-	"status": {
-		TopLeft:     color.RGBA{34, 139, 87, 255},
-		BottomRight: color.RGBA{15, 90, 55, 255},
-		Accent:      color.RGBA{105, 220, 158, 255},
-	},
-	"deadlines": {
-		TopLeft:     color.RGBA{205, 57, 44, 255},
-		BottomRight: color.RGBA{140, 25, 15, 255},
-		Accent:      color.RGBA{255, 140, 130, 255},
-	},
-	"docs": {
-		TopLeft:     color.RGBA{51, 103, 214, 255},
-		BottomRight: color.RGBA{25, 60, 160, 255},
-		Accent:      color.RGBA{144, 202, 249, 255},
-	},
-	"checklists": {
-		TopLeft:     color.RGBA{230, 162, 5, 255},
-		BottomRight: color.RGBA{160, 105, 0, 255},
-		Accent:      color.RGBA{255, 230, 100, 255},
-	},
 	"ask": {
 		TopLeft:     color.RGBA{103, 58, 183, 255},
 		BottomRight: color.RGBA{60, 20, 140, 255},
 		Accent:      color.RGBA{210, 160, 255, 255},
 	},
+	"events": {
+		TopLeft:     color.RGBA{34, 139, 87, 255},
+		BottomRight: color.RGBA{15, 90, 55, 255},
+		Accent:      color.RGBA{105, 220, 158, 255},
+	},
+	"contests": {
+		TopLeft:     color.RGBA{230, 162, 5, 255},
+		BottomRight: color.RGBA{160, 105, 0, 255},
+		Accent:      color.RGBA{255, 230, 100, 255},
+	},
+	"news": {
+		TopLeft:     color.RGBA{205, 57, 44, 255},
+		BottomRight: color.RGBA{140, 25, 15, 255},
+		Accent:      color.RGBA{255, 140, 130, 255},
+	},
+	"faq": {
+		TopLeft:     color.RGBA{51, 103, 214, 255},
+		BottomRight: color.RGBA{25, 60, 160, 255},
+		Accent:      color.RGBA{144, 202, 249, 255},
+	},
 	"help": {
 		TopLeft:     color.RGBA{0, 137, 123, 255},
 		BottomRight: color.RGBA{0, 80, 70, 255},
 		Accent:      color.RGBA{100, 230, 212, 255},
-	},
-	"logout": {
-		TopLeft:     color.RGBA{95, 99, 104, 255},
-		BottomRight: color.RGBA{50, 52, 58, 255},
-		Accent:      color.RGBA{180, 185, 190, 255},
 	},
 }
 

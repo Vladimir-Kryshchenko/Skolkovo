@@ -2569,13 +2569,13 @@ func runTelegramBots(ctx context.Context, cfg config.Config, st store.Store) {
 		return
 	}
 	pcs := store.NewPostgresClientStore(ps.Pool())
+	pss := store.NewPostgresSourceStore(ps.Pool())
 
+	// Публичный информационный бот: разделы мероприятий, конкурсов и FAQ.
 	botStores := tgbot.Stores{
-		Client:    pcs,
-		Deadline:  pcs,
-		DocLink:   pcs,
-		Template:  pcs,
-		Checklist: pcs,
+		Event:   pss,
+		Contest: pss,
+		FAQ:     pss,
 	}
 
 	// Консультант общий для всех ботов: RAG глобален, LLM-синтез из настроек.

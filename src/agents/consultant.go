@@ -71,8 +71,8 @@ type ConsultantAgent struct {
 	mcpURL     string
 	mcpAPIKey  string
 	logger     QueryLogger
-	ai         LLMProvider  // опционально: LLM-синтез ответа
-	nav        NavSearcher  // опционально: навигация по сайту (get_navigation)
+	ai         LLMProvider // опционально: LLM-синтез ответа
+	nav        NavSearcher // опционально: навигация по сайту (get_navigation)
 	chat       chatFunc
 	// fileBaseURL — публичный базовый URL для ссылок на скачанные копии документов
 	// (<base>/files/{id}). Пусто — копии не отдаём, только фолбэк на категорию.
@@ -117,6 +117,27 @@ func (a *ConsultantAgent) WithSourceLinks(publicFileBaseURL string) *ConsultantA
 // SetLogger устанавливает логгер для запросов консультанта.
 func (a *ConsultantAgent) SetLogger(logger QueryLogger) {
 	a.logger = logger
+}
+
+// Search выполняет семантический поиск по действующей базе знаний и возвращает
+// «сырые» результаты (документы, мероприятия, конкурсы, FAQ, новости — всё в одной
+// коллекции, различаются по EntityType). Без LLM-синтеза — для разделов-листингов
+// информационного бота, где нужны ссылки на источники, а не связный ответ.
+func (a *ConsultantAgent) Search(ctx context.Context, query string, limit int) ([]rag.Result, error) {
+	if strings.TrimSpace(query) == "" {
+		return nil, fmt.Errorf("запрос не может быть пустым")
+	}
+	if limit <= 0 {
+		limit = 5
+	}
+	return a.ragService.Search(ctx, query, limit)
+}
+
+// BestSourceURL возвращает «умную» ссылку на источник результата (копия файла,
+// либо страница-листинг категории вместо заблокированной WAF ссылки). Экспортирует
+// внутреннюю логику bestSourceURL для использования ботом при выводе результатов.
+func (a *ConsultantAgent) BestSourceURL(ctx context.Context, r rag.Result) string {
+	return a.bestSourceURL(ctx, r)
 }
 
 // Ask отвечает на вопрос, используя RAG-поиск по нормативным документам.

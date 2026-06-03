@@ -199,7 +199,6 @@ func (m *BotManager) startLocked(ctx context.Context, spec botSpec) {
 
 	go func() {
 		defer close(h.done)
-		go bot.RunNotifier(botCtx)
 		if err := bot.Run(botCtx); err != nil && err != context.Canceled {
 			log.Printf("[tgbot:manager] бот key=%s остановлен: %v", spec.key, err)
 		}

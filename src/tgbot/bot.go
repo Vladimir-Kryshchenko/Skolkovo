@@ -1,13 +1,18 @@
-// Package tgbot — Telegram-бот для клиентов системы резидентства.
+// Package tgbot — публичный информационный Telegram-бот «База Сколково».
+//
+// Бот анонимный: не требует входа в аккаунт и email. Он даёт доступ к публичной
+// базе знаний Фонда «Сколково» через ИИ-консультанта и тематические разделы.
 //
 // Команды:
 //
-//	/start     — приветствие и привязка к клиенту по email
-//	/status    — текущая стадия резидентства
-//	/deadlines — ближайшие дедлайны
-//	/docs      — мои документы
-//	/ask       — вопрос через MCP ask_consultant
-//	/help      — справка по командам
+//	/start    — приветствие и меню
+//	/ask      — вопрос ИИ-консультанту (или просто напишите вопрос текстом)
+//	/events   — ближайшие мероприятия
+//	/contests — открытые конкурсы и гранты
+//	/news     — свежие новости Фонда
+//	/faq      — частые вопросы
+//	/company  — опционально указать ИНН для персонализации ответов
+//	/help     — справка
 package tgbot
 
 import (
@@ -27,45 +32,45 @@ import (
 type BotConfig struct {
 	// Token — токен Telegram-бота (получается у @BotFather).
 	Token string
-	// TenantID — тенант, которому принадлежит бот; авторизация клиентов
-	// ограничивается этим тенантом. Пусто — глобальный бот (поиск по всем клиентам).
+	// TenantID — тенант, которому принадлежит бот (для учёта расхода ИИ-токенов).
+	// Пусто — глобальный бот.
 	TenantID string
-	// MCPURL — URL MCP-сервера для вызова инструментов (опционально, для MVP не требуется).
+	// MCPURL — URL MCP-сервера (зарезервировано для будущих интеграций).
 	MCPURL string
 	// MCPAPIKey — API-ключ для MCP-сервера.
 	MCPAPIKey string
 }
 
-// Stores — набор хранилищ, необходимых боту.
+// Stores — набор хранилищ, необходимых информационному боту.
+// Все опциональны: если стор nil, соответствующий раздел сообщает о недоступности.
 type Stores struct {
-	Client    store.ClientStore
-	Deadline  store.DeadlineStore
-	DocLink   store.ClientDocumentStore
-	Template  store.TemplateStore
-	Checklist store.ChecklistStore
+	Event   store.EventStore   // мероприятия (/events)
+	Contest store.ContestStore // конкурсы и гранты (/contests)
+	FAQ     store.FAQStore     // частые вопросы (/faq)
 }
 
-// Bot — Telegram-бот для системы резидентства.
+// Bot — публичный информационный Telegram-бот.
 type Bot struct {
 	api        *tgbotapi.BotAPI
 	stores     Stores
 	config     BotConfig
 	consultant *agents.ConsultantAgent
-	// tenantID — тенант бота; ограничивает поиск клиентов при авторизации.
+	// tenantID — тенант бота (для атрибуции расхода ИИ-токенов).
 	tenantID string
-
-	// authMutex защищает map авторизаций.
-	authMutex sync.RWMutex
-	// chatIDToClientID map: Telegram chat ID → clientID авторизованного клиента.
-	chatIDToClientID map[int64]string
 
 	// askMu защищает askLastTime.
 	askMu sync.Mutex
-	// askLastTime хранит время последнего вызова /ask по chat ID (rate limiting).
+	// askLastTime хранит время последнего вопроса по chat ID (анти-флуд).
 	askLastTime map[int64]time.Time
+
+	// innMu защищает chatINN.
+	innMu sync.RWMutex
+	// chatINN — опциональная привязка ИНН компании к чату (в памяти, для контекста
+	// вопросов консультанту). Не даёт доступа к личным данным резидента.
+	chatINN map[int64]string
 }
 
-// NewBot создаёт новый экземпляр бота.
+// NewBot создаёт новый экземпляр информационного бота.
 func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent) (*Bot, error) {
 	api, err := tgbotapi.NewBotAPI(config.Token)
 	if err != nil {
@@ -73,16 +78,15 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 	}
 
 	b := &Bot{
-		api:              api,
-		stores:           stores,
-		config:           config,
-		consultant:       consultant,
-		tenantID:         config.TenantID,
-		chatIDToClientID: make(map[int64]string),
-		askLastTime:      make(map[int64]time.Time),
+		api:         api,
+		stores:      stores,
+		config:      config,
+		consultant:  consultant,
+		tenantID:    config.TenantID,
+		askLastTime: make(map[int64]time.Time),
+		chatINN:     make(map[int64]string),
 	}
 
-	b.loadBindings()
 	b.registerCommands()
 	log.Printf("[tgbot] авторизован бот: %s (ID: %d, tenant=%s)", api.Self.UserName, api.Self.ID, orNone(config.TenantID))
 	return b, nil
@@ -93,13 +97,13 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 // в Bot API (изображения на кнопки команд платформа не поддерживает).
 func (b *Bot) registerCommands() {
 	commands := []tgbotapi.BotCommand{
-		{Command: "start", Description: "🚀 Начать работу и авторизоваться"},
-		{Command: "status", Description: "📊 Текущая стадия резидентства"},
-		{Command: "deadlines", Description: "⏰ Ближайшие дедлайны (90 дней)"},
-		{Command: "docs", Description: "📄 Мои документы"},
-		{Command: "checklists", Description: "📋 Чек-листы текущей процедуры"},
-		{Command: "ask", Description: "🤖 Вопрос ИИ-консультанту"},
-		{Command: "logout", Description: "🚪 Выйти из аккаунта"},
+		{Command: "start", Description: "🚀 Начать работу и открыть меню"},
+		{Command: "ask", Description: "🤖 Спросить ИИ-консультанта"},
+		{Command: "events", Description: "📅 Ближайшие мероприятия"},
+		{Command: "contests", Description: "🏆 Конкурсы и гранты"},
+		{Command: "news", Description: "📰 Свежие новости Фонда"},
+		{Command: "faq", Description: "❓ Частые вопросы"},
+		{Command: "company", Description: "🏢 Указать ИНН для персонализации"},
 		{Command: "help", Description: "ℹ️ Справка по командам"},
 	}
 	cfg := tgbotapi.NewSetMyCommands(commands...)
@@ -186,6 +190,7 @@ func (b *Bot) handleUpdate(update tgbotapi.Update) {
 func (b *Bot) sendReply(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
+	msg.DisableWebPagePreview = true
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[tgbot] ошибка отправки сообщения chat=%d: %v", chatID, err)
 	}
@@ -195,6 +200,7 @@ func (b *Bot) sendReply(chatID int64, text string) {
 func (b *Bot) sendReplyWithMenuKeyboard(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
+	msg.DisableWebPagePreview = true
 	kb := ReplyMenuKeyboard()
 	kb.ResizeKeyboard = true
 	msg.ReplyMarkup = kb
@@ -207,6 +213,7 @@ func (b *Bot) sendReplyWithMenuKeyboard(chatID int64, text string) {
 func (b *Bot) sendReplyWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
+	msg.DisableWebPagePreview = true
 	msg.ReplyMarkup = keyboard
 	if _, err := b.api.Send(msg); err != nil {
 		log.Printf("[tgbot] ошибка отправки сообщения с клавиатурой chat=%d: %v", chatID, err)

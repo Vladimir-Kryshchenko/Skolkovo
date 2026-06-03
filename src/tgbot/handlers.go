@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -45,6 +46,8 @@ func (b *Bot) handleCommand(update tgbotapi.Update) {
 		b.cmdChecklists(chatID)
 	case "ask":
 		b.cmdAsk(chatID, msg.CommandArguments())
+	case "logout":
+		b.cmdLogout(chatID)
 	case "help":
 		b.cmdHelp(chatID)
 	default:
@@ -344,6 +347,8 @@ func (b *Bot) cmdDocs(chatID int64, page int) {
 // /ask — вопрос через ConsultantAgent.
 // ---------------------------------------------------------------------------
 
+const askCooldown = 60 // секунд между запросами к ИИ
+
 func (b *Bot) cmdAsk(chatID int64, question string) {
 	question = strings.TrimSpace(question)
 	if question == "" {
@@ -355,6 +360,19 @@ func (b *Bot) cmdAsk(chatID int64, question string) {
 			BackToMenuKeyboard())
 		return
 	}
+
+	// Rate limiting: не чаще одного запроса в askCooldown секунд.
+	b.askMu.Lock()
+	last, exists := b.askLastTime[chatID]
+	now := time.Now()
+	if exists && now.Sub(last).Seconds() < askCooldown {
+		remaining := askCooldown - int(now.Sub(last).Seconds())
+		b.askMu.Unlock()
+		b.sendReply(chatID, fmt.Sprintf("⏳ Подождите %d сек. перед следующим вопросом.", remaining))
+		return
+	}
+	b.askLastTime[chatID] = now
+	b.askMu.Unlock()
 
 	// Получаем clientID по chatID
 	clientID := ""
@@ -592,6 +610,18 @@ func (b *Bot) cmdStageInfo(chatID int64) {
 // getClientByChatID получает клиента по chat ID через авторизацию.
 func (b *Bot) getClientByChatID(chatID int64) (*model.Client, error) {
 	return b.clientByChatID(chatID)
+}
+
+// cmdLogout — сброс авторизации текущего чата.
+func (b *Bot) cmdLogout(chatID int64) {
+	if !b.isAuthorized(chatID) {
+		b.sendReply(chatID, "ℹ️ Вы не авторизованы. Введите /start чтобы войти.")
+		return
+	}
+	b.deauthorize(chatID)
+	b.sendReply(chatID,
+		"👋 *Вы вышли из аккаунта.*\n\n"+
+			"Для повторного входа введите /start и укажите ваш email.")
 }
 
 // emailRe — упрощённая проверка email.

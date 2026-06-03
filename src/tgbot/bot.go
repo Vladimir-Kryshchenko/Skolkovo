@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -57,6 +58,11 @@ type Bot struct {
 	authMutex sync.RWMutex
 	// chatIDToClientID map: Telegram chat ID → clientID авторизованного клиента.
 	chatIDToClientID map[int64]string
+
+	// askMu защищает askLastTime.
+	askMu sync.Mutex
+	// askLastTime хранит время последнего вызова /ask по chat ID (rate limiting).
+	askLastTime map[int64]time.Time
 }
 
 // NewBot создаёт новый экземпляр бота.
@@ -73,10 +79,31 @@ func NewBot(config BotConfig, stores Stores, consultant *agents.ConsultantAgent)
 		consultant:       consultant,
 		tenantID:         config.TenantID,
 		chatIDToClientID: make(map[int64]string),
+		askLastTime:      make(map[int64]time.Time),
 	}
 
+	b.loadBindings()
+	b.registerCommands()
 	log.Printf("[tgbot] авторизован бот: %s (ID: %d, tenant=%s)", api.Self.UserName, api.Self.ID, orNone(config.TenantID))
 	return b, nil
+}
+
+// registerCommands регистрирует список команд в Telegram (отображается в меню бота).
+func (b *Bot) registerCommands() {
+	commands := []tgbotapi.BotCommand{
+		{Command: "start", Description: "Начать работу и авторизоваться"},
+		{Command: "status", Description: "Текущая стадия резидентства"},
+		{Command: "deadlines", Description: "Ближайшие дедлайны (90 дней)"},
+		{Command: "docs", Description: "Мои документы"},
+		{Command: "checklists", Description: "Чек-листы текущей процедуры"},
+		{Command: "ask", Description: "Вопрос ИИ-консультанту"},
+		{Command: "logout", Description: "Выйти из аккаунта"},
+		{Command: "help", Description: "Справка по командам"},
+	}
+	cfg := tgbotapi.NewSetMyCommands(commands...)
+	if _, err := b.api.Request(cfg); err != nil {
+		log.Printf("[tgbot] не удалось зарегистрировать команды: %v", err)
+	}
 }
 
 // logf пишет в лог с префиксом тенанта бота.

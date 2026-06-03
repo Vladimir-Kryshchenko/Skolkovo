@@ -935,3 +935,46 @@ func (s *PostgresClientStore) SetSubscriptions(ctx context.Context, clientID str
 	}
 	return tx.Commit(ctx)
 }
+
+// ============================================================================
+// BindingStore — персистентные привязки Telegram chat ID → client
+// ============================================================================
+
+// SaveBinding сохраняет (или обновляет) привязку chat ID → clientID для тенанта.
+func (s *PostgresClientStore) SaveBinding(ctx context.Context, chatID int64, clientID, tenantID string) error {
+	_, err := s.db.Exec(ctx,
+		`INSERT INTO telegram_bindings (chat_id, client_id, tenant_id)
+		 VALUES ($1, $2, $3)
+		 ON CONFLICT (chat_id, tenant_id) DO UPDATE SET client_id = EXCLUDED.client_id`,
+		chatID, clientID, tenantID)
+	return err
+}
+
+// DeleteBinding удаляет привязку chat ID для тенанта.
+func (s *PostgresClientStore) DeleteBinding(ctx context.Context, chatID int64, tenantID string) error {
+	_, err := s.db.Exec(ctx,
+		`DELETE FROM telegram_bindings WHERE chat_id = $1 AND tenant_id = $2`,
+		chatID, tenantID)
+	return err
+}
+
+// LoadBindings возвращает все привязки тенанта (chatID → clientID).
+func (s *PostgresClientStore) LoadBindings(ctx context.Context, tenantID string) (map[int64]string, error) {
+	rows, err := s.db.Query(ctx,
+		`SELECT chat_id, client_id FROM telegram_bindings WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[int64]string)
+	for rows.Next() {
+		var chatID int64
+		var clientID string
+		if err := rows.Scan(&chatID, &clientID); err != nil {
+			return nil, err
+		}
+		result[chatID] = clientID
+	}
+	return result, rows.Err()
+}

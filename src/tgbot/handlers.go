@@ -8,6 +8,7 @@ import (
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
+	"baza-skolkovo/src/aimodels"
 	"baza-skolkovo/src/common/model"
 )
 
@@ -40,12 +41,14 @@ func (b *Bot) handleCommand(update tgbotapi.Update) {
 		b.cmdDeadlines(chatID, 0)
 	case "docs":
 		b.cmdDocs(chatID, 0)
+	case "checklists":
+		b.cmdChecklists(chatID)
 	case "ask":
-		b.cmdAsk(chatID, msg.Text)
+		b.cmdAsk(chatID, msg.CommandArguments())
 	case "help":
 		b.cmdHelp(chatID)
 	default:
-		b.sendReply(chatID, "❌ Неизвестная команда. Введите /help для справки.")
+		b.sendReply(chatID, "❌ Неизвестная команда. Нажмите *ℹ️ Помощь* или введите /help.")
 	}
 }
 
@@ -70,13 +73,35 @@ func (b *Bot) handleMessage(update tgbotapi.Update) {
 		return
 	}
 
-	// Если пользователь уже авторизован и прислал текст — это вопрос.
-	if exists {
-		b.cmdAsk(chatID, text)
+	if !exists {
+		b.sendReply(chatID, "👋 Добро пожаловать!\n\nДля начала работы введите ваш email, указанный при регистрации в Сколково.\nПример: `ivan@company.com`")
 		return
 	}
 
-	b.sendReply(chatID, "👋 Добро пожаловать! Введите /start для начала работы.")
+	// Обработка нажатий reply-кнопок постоянного меню.
+	switch text {
+	case "📊 Статус":
+		b.cmdStatus(chatID)
+		return
+	case "⏰ Дедлайны":
+		b.cmdDeadlines(chatID, 0)
+		return
+	case "📋 Чек-листы":
+		b.cmdChecklists(chatID)
+		return
+	case "📄 Документы":
+		b.cmdDocs(chatID, 0)
+		return
+	case "❓ Задать вопрос":
+		b.sendReply(chatID, "❓ Введите ваш вопрос — я перешлю его консультанту по резидентству Сколково.\n\nПример: *Какие отчёты нужно сдавать?*")
+		return
+	case "ℹ️ Помощь":
+		b.cmdHelp(chatID)
+		return
+	}
+
+	// Авторизован и прислал произвольный текст — направляем консультанту.
+	b.cmdAsk(chatID, text)
 }
 
 // ---------------------------------------------------------------------------
@@ -110,18 +135,21 @@ func (b *Bot) handleCallback(update tgbotapi.Update) {
 
 func (b *Bot) cmdStart(chatID int64) {
 	if b.isAuthorized(chatID) {
-		b.sendReply(chatID,
+		b.sendReplyWithMenuKeyboard(chatID,
 			"👋 Здравствуйте! Вы уже авторизованы.\n\n"+
-				"Выберите действие:",
-		)
-		b.sendReplyWithKeyboard(chatID, "Главное меню:", MainKeyboard())
+				"Используйте кнопки меню или выберите раздел ниже:")
+		b.sendReplyWithKeyboard(chatID, "Быстрые действия:", MainKeyboard())
 		return
 	}
 
 	b.sendReply(chatID,
-		"👋 Добро пожаловать в бота системы резидентства Сколково!\n\n"+
-			"Для начала работы введите ваш email, указанный при регистрации.\n"+
-			"Пример: `ivan@example.com`",
+		"👋 *Добро пожаловать в систему резидентства Сколково!*\n\n"+
+			"Этот бот поможет вам:\n"+
+			"• Отслеживать статус и стадию резидентства\n"+
+			"• Контролировать дедлайны и чек-листы\n"+
+			"• Получать ответы на вопросы по документам Сколково\n\n"+
+			"Для начала работы введите email, указанный при регистрации:\n"+
+			"`ivan@company.com`",
 	)
 }
 
@@ -130,17 +158,20 @@ func (b *Bot) handleEmailAuth(chatID int64, email string) {
 	clientID, err := b.authorizeUser(chatID, email)
 	if err != nil {
 		b.sendReply(chatID, fmt.Sprintf(
-			"❌ Не удалось авторизоваться: %v\n\n"+
-				"Проверьте email или обратитесь в поддержку.", err,
+			"❌ *Не удалось авторизоваться*\n\n"+
+				"Причина: %v\n\n"+
+				"Проверьте правильность email. Если проблема сохраняется — обратитесь к своему куратору в Сколково.", err,
 		))
 		return
 	}
 
-	b.sendReply(chatID,
-		fmt.Sprintf("✅ Вы успешно авторизованы!\n\n"+
-			"Email: `%s`\nClient ID: `%s`", email, clientID),
-	)
-	b.sendReplyWithKeyboard(chatID, "Главное меню:", MainKeyboard())
+	b.sendReplyWithMenuKeyboard(chatID,
+		fmt.Sprintf("✅ *Авторизация успешна!*\n\n"+
+			"Email: `%s`\n"+
+			"ID: `%s`\n\n"+
+			"Теперь вы можете использовать все функции бота. "+
+			"Используйте кнопки меню или просто напишите вопрос — отвечу через консультанта.", email, clientID))
+	b.sendReplyWithKeyboard(chatID, "Что хотите сделать?", MainKeyboard())
 }
 
 // ---------------------------------------------------------------------------
@@ -313,14 +344,15 @@ func (b *Bot) cmdDocs(chatID int64, page int) {
 // /ask — вопрос через ConsultantAgent.
 // ---------------------------------------------------------------------------
 
-func (b *Bot) cmdAsk(chatID int64, fullText string) {
-	// Извлекаем вопрос после команды /ask
-	question := strings.TrimSpace(strings.TrimPrefix(fullText, "/ask"))
+func (b *Bot) cmdAsk(chatID int64, question string) {
+	question = strings.TrimSpace(question)
 	if question == "" {
-		b.sendReply(chatID,
-			"❓ Задайте вопрос после команды `/ask`.\n\n"+
-				"Пример: `/ask Какие документы нужны для подачи заявки?`",
-		)
+		b.sendReplyWithKeyboard(chatID,
+			"❓ *Задайте вопрос консультанту*\n\n"+
+				"Просто напишите вопрос в чат, и я отвечу на него.\n\n"+
+				"Или используйте команду:\n"+
+				"`/ask Какие документы нужны для вступления?`",
+			BackToMenuKeyboard())
 		return
 	}
 
@@ -338,7 +370,13 @@ func (b *Bot) cmdAsk(chatID int64, fullText string) {
 		return
 	}
 
-	resp, err := b.consultant.Ask(context.Background(), question, clientID)
+	// Проставляем tenant_id в контекст для учёта расхода токенов.
+	ctx := context.Background()
+	if b.tenantID != "" {
+		ctx = aimodels.WithTenantID(ctx, b.tenantID)
+	}
+
+	resp, err := b.consultant.Ask(ctx, question, clientID)
 	if err != nil {
 		b.sendReply(chatID, fmt.Sprintf("❌ Ошибка: %v", err))
 		return
@@ -387,16 +425,20 @@ func (b *Bot) cmdAsk(chatID int64, fullText string) {
 // ---------------------------------------------------------------------------
 
 func (b *Bot) cmdHelp(chatID int64) {
-	text := "📖 *Справка по командам*\n\n" +
-		"/start — начать работу и привязать аккаунт\n" +
-		"/status — узнать текущую стадию резидентства\n" +
-		"/deadlines — посмотреть ближайшие дедлайны\n" +
-		"/docs — список ваших документов\n" +
-		"/ask <вопрос> — задать вопрос консультанту\n" +
+	text := "📖 *Справка*\n\n" +
+		"*Команды:*\n" +
+		"/start — начать работу и авторизоваться\n" +
+		"/status — текущая стадия резидентства\n" +
+		"/deadlines — ближайшие дедлайны (90 дней)\n" +
+		"/docs — мои документы\n" +
+		"/checklists — чек-листы текущей процедуры\n" +
+		"/ask <вопрос> — вопрос ИИ-консультанту\n" +
 		"/help — эта справка\n\n" +
-		"💡 Вы также можете использовать кнопки под сообщениями для навигации."
+		"*Быстрый доступ:* используйте кнопки меню внизу экрана.\n\n" +
+		"*Свободный чат:* просто напишите вопрос — он автоматически уйдёт консультанту.\n\n" +
+		"💡 По вопросам с ботом обратитесь к своему куратору в Сколково."
 
-	b.sendReply(chatID, text)
+	b.sendReplyWithKeyboard(chatID, text, MainKeyboard())
 }
 
 // ---------------------------------------------------------------------------
@@ -482,11 +524,13 @@ func (b *Bot) handleCommandCallback(chatID int64, callbackID, data string) {
 	case "docs":
 		b.cmdDocs(chatID, 0)
 	case "ask":
-		b.cmdAsk(chatID, "")
+		b.sendReply(chatID, "❓ Введите ваш вопрос — я перешлю его консультанту по резидентству Сколково.")
 	case "checklists":
 		b.cmdChecklists(chatID)
 	case "stage_info":
 		b.cmdStageInfo(chatID)
+	case "menu":
+		b.sendReplyWithKeyboard(chatID, "Главное меню:", MainKeyboard())
 	default:
 		b.answerCallback(callbackID, "Неизвестное действие")
 	}

@@ -162,6 +162,18 @@ func (b *Bot) sendReply(chatID int64, text string) {
 	}
 }
 
+// sendReplyWithMenuKeyboard отправляет сообщение с постоянной reply-клавиатурой (нижнее меню).
+func (b *Bot) sendReplyWithMenuKeyboard(chatID int64, text string) {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ParseMode = "Markdown"
+	kb := ReplyMenuKeyboard()
+	kb.ResizeKeyboard = true
+	msg.ReplyMarkup = kb
+	if _, err := b.api.Send(msg); err != nil {
+		log.Printf("[tgbot] ошибка отправки с menu-клавиатурой chat=%d: %v", chatID, err)
+	}
+}
+
 // sendReplyWithKeyboard отправляет сообщение с inline-клавиатурой.
 func (b *Bot) sendReplyWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
 	msg := tgbotapi.NewMessage(chatID, text)

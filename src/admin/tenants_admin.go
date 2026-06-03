@@ -52,6 +52,25 @@ func (s *Server) handleTenantsPage(w http.ResponseWriter, r *http.Request) {
 		data.RevealKey = key
 	}
 
+	// Загружаем статистику расходов по тенантам за последние 30 дней.
+	if s.jobStore != nil {
+		stats, err := s.jobStore.UsageByTenant(ctx, 30)
+		if err == nil && len(stats) > 0 {
+			data.Billing = make(map[string]TenantBilling, len(stats))
+			for _, st := range stats {
+				b := TenantBilling{
+					Calls:            st.Calls,
+					TotalTokens:      st.TotalTokens,
+					EstimatedCostUSD: st.EstimatedCostUSD,
+				}
+				data.Billing[st.TenantID] = b
+				data.GlobalBilling.Calls += b.Calls
+				data.GlobalBilling.TotalTokens += b.TotalTokens
+				data.GlobalBilling.EstimatedCostUSD += b.EstimatedCostUSD
+			}
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := adminTenantsTmpl.Execute(w, data); err != nil {
 		log.Println("[admin] шаблон tenants:", err)
@@ -249,6 +268,18 @@ function submitToken(form,hasToken){var v=form.telegram_token.value.trim();if(v=
   </form>
 </div>
 
+{{if .GlobalBilling.Calls}}
+<div class="card" style="margin-bottom:16px">
+  <h4 style="margin:0 0 10px">📊 Суммарный расход ИИ за 30 дней</h4>
+  <div style="display:flex;gap:24px;flex-wrap:wrap">
+    <div><span class="meta">Запросов</span><br><strong>{{.GlobalBilling.Calls}}</strong></div>
+    <div><span class="meta">Токенов</span><br><strong>{{.GlobalBilling.TotalTokens}}</strong></div>
+    <div><span class="meta">~Стоимость</span><br><strong style="color:var(--green)">${{printf "%.4f" .GlobalBilling.EstimatedCostUSD}}</strong></div>
+  </div>
+  <p class="meta" style="margin:8px 0 0">Расчёт по стоимости моделей в <a href="/ai/models">ИИ-модели</a>. Вызовы без tenant_id (системные) учтены суммарно.</p>
+</div>
+{{end}}
+
 {{if .Tenants}}
 <div class="table-wrap">
 <table>
@@ -257,6 +288,7 @@ function submitToken(form,hasToken){var v=form.telegram_token.value.trim();if(v=
       <th>Название</th>
       <th>MCP API-ключ</th>
       <th>Telegram-бот</th>
+      <th data-tooltip="Запросов / токенов / ~стоимость за 30 дней (по tenant_id в ai_usage_log)">Расход ИИ (30 дн.)</th>
       <th>Активен</th>
       <th>Создан</th>
       <th>Действия</th>
@@ -273,6 +305,14 @@ function submitToken(form,hasToken){var v=form.telegram_token.value.trim();if(v=
       {{if .TelegramBotUsername}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Бот запущен">@{{.TelegramBotUsername}}</span>
       {{else if .TelegramBotToken}}<span class="badge" style="background:var(--yellow-bg);color:var(--yellow)" data-tooltip="Токен задан, бот запускается">токен задан</span>
       {{else}}<span class="meta">не задан</span>{{end}}
+    </td>
+    <td style="font-size:12px">
+      {{$b := index $.Billing .ID}}
+      {{if $b.Calls}}
+        <span data-tooltip="запросов">🔢 {{$b.Calls}}</span> ·
+        <span data-tooltip="токенов">🪙 {{$b.TotalTokens}}</span> ·
+        <strong style="color:var(--green)" data-tooltip="~стоимость USD">${{printf "%.4f" $b.EstimatedCostUSD}}</strong>
+      {{else}}<span class="meta" data-tooltip="Нет данных: тенант не использовался или tenant_id не проставлялся">—</span>{{end}}
     </td>
     <td>{{if .Active}}<span class="badge" style="background:var(--green-bg);color:var(--green)" data-tooltip="Тенант активен">Да</span>{{else}}<span class="badge" style="background:var(--gray-bg);color:var(--gray)" data-tooltip="Тенант отключён">Нет</span>{{end}}</td>
     <td class="meta">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>

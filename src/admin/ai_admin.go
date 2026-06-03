@@ -567,6 +567,7 @@ tr.disabled-row td{opacity:.55}
       <th data-tooltip="Идентификатор, передаваемый в поле model запроса">Идентификатор модели (Model ID)</th>
       <th data-tooltip="Ключ авторизации (показан замаскированным)">API-ключ</th>
       <th data-tooltip="Температура и максимум токенов">Параметры</th>
+      <th data-tooltip="Стоимость USD/1М токенов: вход / выход">Цена (USD/1М)</th>
       <th>Статус</th>
       <th>Действия</th>
     </tr></thead>
@@ -586,6 +587,11 @@ tr.disabled-row td{opacity:.55}
       <td><code style="font-size:12px;background:var(--surface-alt);padding:2px 6px;border-radius:4px">{{.ModelID}}</code></td>
       <td><span class="key-mono">{{maskKey .APIKey}}</span></td>
       <td style="font-size:12px">T={{.Temperature}} · {{.MaxTokens}}ток.</td>
+      <td style="font-size:12px">
+        {{if or .CostPerMillionInput .CostPerMillionOutput}}
+          <span data-tooltip="USD за 1М токенов: вход / выход">${{printf "%.2f" .CostPerMillionInput}} / ${{printf "%.2f" .CostPerMillionOutput}}</span>
+        {{else}}<span style="color:var(--text-secondary)">—</span>{{end}}
+      </td>
       <td>
         {{if .Enabled}}<span class="badge badge-green">Активна</span>{{else}}<span class="badge badge-gray">Отключена</span>{{end}}
       </td>
@@ -797,6 +803,18 @@ main{max-width:800px;margin:32px auto;padding:0 28px}
         <div class="form-group">
           <label>Температура (Temperature)</label>
           <input type="number" name="temperature" value="{{if .Model.Temperature}}{{.Model.Temperature}}{{else}}0.7{{end}}" min="0" max="2" step="0.1">
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Стоимость входных токенов (USD / 1М)</label>
+          <input type="number" name="cost_per_million_input" value="{{printf "%.4f" .Model.CostPerMillionInput}}" min="0" step="0.0001" placeholder="0.0000">
+          <div class="hint">Цена prompt-токенов из документации провайдера</div>
+        </div>
+        <div class="form-group">
+          <label>Стоимость выходных токенов (USD / 1М)</label>
+          <input type="number" name="cost_per_million_output" value="{{printf "%.4f" .Model.CostPerMillionOutput}}" min="0" step="0.0001" placeholder="0.0000">
+          <div class="hint">Цена completion-токенов из документации провайдера</div>
         </div>
       </div>
       <div class="form-group">
@@ -1728,16 +1746,25 @@ func parseModelForm(r *http.Request) (aimodels.Model, string) {
 	if temp <= 0 {
 		temp = 0.7
 	}
+	costInput, _ := strconv.ParseFloat(r.FormValue("cost_per_million_input"), 64)
+	costOutput, _ := strconv.ParseFloat(r.FormValue("cost_per_million_output"), 64)
+	provider := aimodels.Provider(r.FormValue("provider"))
+	// Если цены не заданы вручную — подставляем известные из справочника.
+	if costInput == 0 && costOutput == 0 {
+		costInput, costOutput = aimodels.KnownModelPricing(provider, modelID)
+	}
 	return aimodels.Model{
-		Name:        name,
-		Provider:    aimodels.Provider(r.FormValue("provider")),
-		ModelID:     modelID,
-		BaseURL:     baseURL,
-		APIKey:      apiKey,
-		MaxTokens:   maxTokens,
-		Temperature: temp,
-		Enabled:     r.FormValue("enabled") == "true",
-		Description: strings.TrimSpace(r.FormValue("description")),
+		Name:                 name,
+		Provider:             provider,
+		ModelID:              modelID,
+		BaseURL:              baseURL,
+		APIKey:               apiKey,
+		MaxTokens:            maxTokens,
+		Temperature:          temp,
+		Enabled:              r.FormValue("enabled") == "true",
+		Description:          strings.TrimSpace(r.FormValue("description")),
+		CostPerMillionInput:  costInput,
+		CostPerMillionOutput: costOutput,
 	}, ""
 }
 

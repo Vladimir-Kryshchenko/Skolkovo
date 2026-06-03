@@ -43,18 +43,96 @@ func (p Provider) DefaultBaseURL() string {
 
 // Model — конфигурация LLM-модели.
 type Model struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Provider    Provider  `json:"provider"`
-	ModelID     string    `json:"model_id"` // идентификатор модели в API (e.g. "qwen-max")
-	BaseURL     string    `json:"base_url"` // базовый URL API-эндпоинта
-	APIKey      string    `json:"api_key"`  // ключ авторизации
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
-	Enabled     bool      `json:"enabled"`
-	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	ID                   string    `json:"id"`
+	Name                 string    `json:"name"`
+	Provider             Provider  `json:"provider"`
+	ModelID              string    `json:"model_id"`              // идентификатор модели в API (e.g. "qwen-max")
+	BaseURL              string    `json:"base_url"`              // базовый URL API-эндпоинта
+	APIKey               string    `json:"api_key"`               // ключ авторизации
+	MaxTokens            int       `json:"max_tokens"`
+	Temperature          float64   `json:"temperature"`
+	Enabled              bool      `json:"enabled"`
+	Description          string    `json:"description"`
+	CostPerMillionInput  float64   `json:"cost_per_million_input"`  // USD/1M входных токенов
+	CostPerMillionOutput float64   `json:"cost_per_million_output"` // USD/1M выходных токенов
+	CreatedAt            time.Time `json:"created_at"`
+	UpdatedAt            time.Time `json:"updated_at"`
+}
+
+// KnownModelPricing возвращает официальную стоимость модели (USD/1M токенов)
+// по model_id и провайдеру. Используется при заполнении базы данных.
+// Источник: официальная документация провайдеров (июнь 2025).
+func KnownModelPricing(provider Provider, modelID string) (input, output float64) {
+	switch provider {
+	case ProviderAlibabaCloud:
+		switch {
+		case hasPrefix(modelID, "qwen-max"):
+			return 1.60, 6.40
+		case hasPrefix(modelID, "qwen-plus"):
+			return 0.40, 1.20
+		case hasPrefix(modelID, "qwen-turbo"):
+			return 0.15, 0.60
+		case modelID == "qwen-long":
+			return 0.05, 0.20
+		case hasPrefix(modelID, "qwen2.5-72b"):
+			return 0.40, 1.20
+		case hasPrefix(modelID, "qwen2.5-32b"):
+			return 0.20, 0.60
+		case hasPrefix(modelID, "qwen2.5-14b"):
+			return 0.10, 0.30
+		case hasPrefix(modelID, "qwen2.5-7b"):
+			return 0.04, 0.12
+		case hasPrefix(modelID, "qwen-vl"):
+			return 1.50, 4.50
+		case hasPrefix(modelID, "qwen3"):
+			return 0.50, 2.00
+		}
+	case ProviderOpenAI:
+		switch {
+		case hasPrefix(modelID, "gpt-4o-mini"):
+			return 0.15, 0.60
+		case hasPrefix(modelID, "gpt-4o"):
+			return 2.50, 10.00
+		case hasPrefix(modelID, "gpt-4-turbo"):
+			return 10.00, 30.00
+		case modelID == "gpt-4":
+			return 30.00, 60.00
+		case hasPrefix(modelID, "gpt-3.5-turbo"):
+			return 0.50, 1.50
+		case hasPrefix(modelID, "o1-mini"):
+			return 3.00, 12.00
+		case hasPrefix(modelID, "o1"):
+			return 15.00, 60.00
+		case hasPrefix(modelID, "o3-mini"):
+			return 1.10, 4.40
+		case hasPrefix(modelID, "o3"):
+			return 10.00, 40.00
+		}
+	case ProviderAnthropic:
+		switch {
+		case hasPrefix(modelID, "claude-3-5-sonnet"):
+			return 3.00, 15.00
+		case hasPrefix(modelID, "claude-3-5-haiku"):
+			return 0.80, 4.00
+		case hasPrefix(modelID, "claude-3-opus"):
+			return 15.00, 75.00
+		case hasPrefix(modelID, "claude-3-sonnet"):
+			return 3.00, 15.00
+		case hasPrefix(modelID, "claude-3-haiku"):
+			return 0.25, 1.25
+		case hasPrefix(modelID, "claude-sonnet-4"):
+			return 3.00, 15.00
+		case hasPrefix(modelID, "claude-opus-4"):
+			return 15.00, 75.00
+		case hasPrefix(modelID, "claude-haiku-4"):
+			return 0.80, 4.00
+		}
+	}
+	return 0, 0
+}
+
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
 // AgentType — тип агента.

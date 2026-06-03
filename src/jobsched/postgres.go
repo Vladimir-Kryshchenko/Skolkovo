@@ -46,6 +46,7 @@ CREATE INDEX IF NOT EXISTS idx_scheduler_runs_started ON scheduler_runs (started
 CREATE TABLE IF NOT EXISTS ai_usage_log (
     id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
     run_id            UUID,
+    tenant_id         UUID,
     agent_type        TEXT        NOT NULL DEFAULT '',
     model_id          TEXT        NOT NULL DEFAULT '',
     provider          TEXT        NOT NULL DEFAULT '',
@@ -61,6 +62,7 @@ CREATE TABLE IF NOT EXISTS ai_usage_log (
 CREATE INDEX IF NOT EXISTS idx_ai_usage_created ON ai_usage_log (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_usage_run     ON ai_usage_log (run_id) WHERE run_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ai_usage_agent   ON ai_usage_log (agent_type, model_id);
+CREATE INDEX IF NOT EXISTS idx_ai_usage_tenant  ON ai_usage_log (tenant_id, created_at DESC) WHERE tenant_id IS NOT NULL;
 `
 
 // Store — хранилище планировщика поверх PostgreSQL.
@@ -250,22 +252,25 @@ func scanRun(r scanner) (Run, error) {
 // ai_usage_log
 // ---------------------------------------------------------------------------
 
-// RecordUsage сохраняет запись учёта расхода токенов. runID пустой → NULL.
+// RecordUsage сохраняет запись учёта расхода токенов. runID/tenantID пустые → NULL.
 func (s *Store) RecordUsage(ctx context.Context, u AIUsage) error {
-	var runID any
+	var runID, tenantID any
 	if u.RunID != "" {
 		runID = u.RunID
 	}
+	if u.TenantID != "" {
+		tenantID = u.TenantID
+	}
 	_, err := s.pool.Exec(ctx, `
-INSERT INTO ai_usage_log (run_id, agent_type, model_id, provider, model_label,
+INSERT INTO ai_usage_log (run_id, tenant_id, agent_type, model_id, provider, model_label,
        prompt_tokens, completion_tokens, total_tokens, duration_ms, success, error)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
-		runID, u.AgentType, u.ModelID, u.Provider, u.ModelLabel,
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+		runID, tenantID, u.AgentType, u.ModelID, u.Provider, u.ModelLabel,
 		u.PromptTokens, u.CompletionTokens, u.TotalTokens, u.DurationMs, u.Success, u.Error)
 	return err
 }
 
-const usageCols = `SELECT id, run_id, agent_type, model_id, provider, model_label,
+const usageCols = `SELECT id, run_id, tenant_id, agent_type, model_id, provider, model_label,
        prompt_tokens, completion_tokens, total_tokens, duration_ms, success, error, created_at
 FROM ai_usage_log`
 
@@ -281,11 +286,12 @@ func (s *Store) ListUsage(ctx context.Context, f AIUsageFilter) ([]AIUsage, erro
 	}
 	rows, err := s.pool.Query(ctx, usageCols+`
  WHERE ($1 = '' OR run_id = $1::uuid)
-   AND ($2 = '' OR agent_type = $2)
-   AND ($3 = '' OR model_id = $3)
-   AND created_at >= now() - make_interval(days => $4)
+   AND ($2 = '' OR tenant_id = $2::uuid)
+   AND ($3 = '' OR agent_type = $3)
+   AND ($4 = '' OR model_id = $4)
+   AND created_at >= now() - make_interval(days => $5)
  ORDER BY created_at DESC
- LIMIT $5`, f.RunID, f.AgentType, f.ModelID, since, limit)
+ LIMIT $6`, f.RunID, f.TenantID, f.AgentType, f.ModelID, since, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -303,14 +309,57 @@ func (s *Store) ListUsage(ctx context.Context, f AIUsageFilter) ([]AIUsage, erro
 
 func scanUsage(r scanner) (AIUsage, error) {
 	var u AIUsage
-	var runID *string
-	err := r.Scan(&u.ID, &runID, &u.AgentType, &u.ModelID, &u.Provider, &u.ModelLabel,
+	var runID, tenantID *string
+	err := r.Scan(&u.ID, &runID, &tenantID, &u.AgentType, &u.ModelID, &u.Provider, &u.ModelLabel,
 		&u.PromptTokens, &u.CompletionTokens, &u.TotalTokens, &u.DurationMs, &u.Success,
 		&u.Error, &u.CreatedAt)
 	if runID != nil {
 		u.RunID = *runID
 	}
+	if tenantID != nil {
+		u.TenantID = *tenantID
+	}
 	return u, err
+}
+
+// UsageByTenant возвращает агрегат расхода токенов по тенантам за период.
+// Стоимость рассчитывается на основе cost_per_million_input/output из ai_models
+// (LEFT JOIN — если модель не найдена или цена не задана, cost = 0).
+func (s *Store) UsageByTenant(ctx context.Context, sinceDays int) ([]TenantUsageStat, error) {
+	if sinceDays <= 0 {
+		sinceDays = 36500
+	}
+	rows, err := s.pool.Query(ctx, `
+SELECT
+    COALESCE(u.tenant_id::text, '')          AS tenant_id,
+    count(*)                                 AS calls,
+    coalesce(sum(u.prompt_tokens), 0)        AS pt,
+    coalesce(sum(u.completion_tokens), 0)    AS ct,
+    coalesce(sum(u.total_tokens), 0)         AS tt,
+    coalesce(sum(
+        u.prompt_tokens::numeric     * COALESCE(m.cost_per_million_input,  0) / 1000000 +
+        u.completion_tokens::numeric * COALESCE(m.cost_per_million_output, 0) / 1000000
+    ), 0)                                    AS cost_usd
+FROM ai_usage_log u
+LEFT JOIN ai_models m ON m.model_id = u.model_id
+WHERE u.created_at >= now() - make_interval(days => $1)
+GROUP BY u.tenant_id
+ORDER BY tt DESC`, sinceDays)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []TenantUsageStat
+	for rows.Next() {
+		var st TenantUsageStat
+		if err := rows.Scan(&st.TenantID, &st.Calls,
+			&st.PromptTokens, &st.CompletionTokens, &st.TotalTokens,
+			&st.EstimatedCostUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, st)
+	}
+	return out, rows.Err()
 }
 
 // usageAgg группирует расход токенов по произвольной колонке (model_id|agent_type).

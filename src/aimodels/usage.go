@@ -10,6 +10,7 @@ import (
 // Передаётся в зарегистрированный usageRecorder из ChatWithAgent.
 type UsageEvent struct {
 	RunID      string    // прогон планировщика (пусто — вызов вне расписания)
+	TenantID   string    // тенант, инициировавший вызов (пусто — системный/глобальный)
 	AgentType  AgentType // тип агента
 	ModelID    string    // идентификатор модели в API (e.g. qwen-max)
 	ModelLabel string    // человекочитаемое имя модели из конфигурации
@@ -23,6 +24,9 @@ type UsageEvent struct {
 // runIDKey — ключ контекста для связывания вызова LLM с прогоном планировщика.
 type runIDKey struct{}
 
+// tenantIDKey — ключ контекста для привязки вызова к тенанту (MCP, бот, виджет).
+type tenantIDKey struct{}
+
 // WithRunID кладёт идентификатор прогона планировщика в контекст. Раннер jobsched
 // оборачивает им ctx задания, и все ИИ-вызовы внутри привязываются к этому прогону.
 func WithRunID(ctx context.Context, runID string) context.Context {
@@ -32,9 +36,26 @@ func WithRunID(ctx context.Context, runID string) context.Context {
 	return context.WithValue(ctx, runIDKey{}, runID)
 }
 
+// WithTenantID кладёт идентификатор тенанта в контекст. MCP-сервер устанавливает
+// его после разрешения API-ключа; Telegram-бот — из BotConfig.TenantID.
+func WithTenantID(ctx context.Context, tenantID string) context.Context {
+	if tenantID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, tenantIDKey{}, tenantID)
+}
+
 // runIDFromContext извлекает идентификатор прогона из контекста (пусто, если нет).
 func runIDFromContext(ctx context.Context) string {
 	if v, ok := ctx.Value(runIDKey{}).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// tenantIDFromContext извлекает идентификатор тенанта из контекста (пусто, если нет).
+func tenantIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(tenantIDKey{}).(string); ok {
 		return v
 	}
 	return ""
@@ -65,6 +86,7 @@ func recordUsage(ctx context.Context, m Model, a Agent, usage Usage, dur time.Du
 	}
 	ev := UsageEvent{
 		RunID:      runIDFromContext(ctx),
+		TenantID:   tenantIDFromContext(ctx),
 		AgentType:  a.AgentType,
 		ModelID:    m.ModelID,
 		ModelLabel: m.Name,

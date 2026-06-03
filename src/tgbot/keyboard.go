@@ -7,7 +7,28 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// MainKeyboard — главное меню бота.
+// ReplyMenuKeyboard — постоянная reply-клавиатура (нижняя панель Telegram).
+// Показывается всегда после авторизации; каждая кнопка отправляет команду.
+// ---------------------------------------------------------------------------
+
+// ReplyMenuKeyboard возвращает постоянную reply-клавиатуру главного меню.
+func ReplyMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("📊 Статус"),
+			tgbotapi.NewKeyboardButton("⏰ Дедлайны"),
+			tgbotapi.NewKeyboardButton("📋 Чек-листы"),
+		),
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("📄 Документы"),
+			tgbotapi.NewKeyboardButton("❓ Задать вопрос"),
+			tgbotapi.NewKeyboardButton("ℹ️ Помощь"),
+		),
+	)
+}
+
+// ---------------------------------------------------------------------------
+// MainKeyboard — inline-меню (показывается как дополнение к reply-клавиатуре).
 // ---------------------------------------------------------------------------
 
 // MainKeyboard возвращает inline-клавиатуру с основными командами.
@@ -19,7 +40,16 @@ func MainKeyboard() tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📄 Документы", "cmd:docs"),
-			tgbotapi.NewInlineKeyboardButtonData("❓ Задать вопрос", "cmd:ask"),
+			tgbotapi.NewInlineKeyboardButtonData("📋 Чек-листы", "cmd:checklists"),
+		),
+	)
+}
+
+// BackToMenuKeyboard возвращает inline-кнопку «← Главное меню».
+func BackToMenuKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("← Главное меню", "cmd:menu"),
 		),
 	)
 }
@@ -39,10 +69,13 @@ func DeadlineKeyboard(page, totalPages int) tgbotapi.InlineKeyboardMarkup {
 		row = append(row, tgbotapi.NewInlineKeyboardButtonData("Вперёд ➡️", fmt.Sprintf("dl:next:%d", page)))
 	}
 
+	navRow := tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("← Меню", "cmd:menu"),
+	)
 	if len(row) == 0 {
-		return tgbotapi.NewInlineKeyboardMarkup()
+		return tgbotapi.NewInlineKeyboardMarkup(navRow)
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(row)
+	return tgbotapi.NewInlineKeyboardMarkup(row, navRow)
 }
 
 // ---------------------------------------------------------------------------
@@ -54,9 +87,10 @@ func StageKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📋 Чек-листы", "cmd:checklists"),
+			tgbotapi.NewInlineKeyboardButtonData("📖 О стадии", "cmd:stage_info"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("📖 Справка о стадии", "cmd:stage_info"),
+			tgbotapi.NewInlineKeyboardButtonData("← Меню", "cmd:menu"),
 		),
 	)
 }
@@ -76,8 +110,11 @@ func DocsKeyboard(page, totalPages int) tgbotapi.InlineKeyboardMarkup {
 		row = append(row, tgbotapi.NewInlineKeyboardButtonData("Вперёд ➡️", fmt.Sprintf("docs:next:%d", page)))
 	}
 
+	navRow := tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("← Меню", "cmd:menu"),
+	)
 	if len(row) == 0 {
-		return tgbotapi.NewInlineKeyboardMarkup()
+		return tgbotapi.NewInlineKeyboardMarkup(navRow)
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(row)
+	return tgbotapi.NewInlineKeyboardMarkup(row, navRow)
 }

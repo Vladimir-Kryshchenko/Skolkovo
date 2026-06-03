@@ -23,13 +23,16 @@ func NewStore(pool *pgxpool.Pool) *Store {
 // ─── Models ───────────────────────────────────────────────────────────────────
 
 const modelColumns = `id, name, provider, model_id, base_url, api_key,
-    max_tokens, temperature, enabled, description, created_at, updated_at`
+    max_tokens, temperature, enabled, description,
+    cost_per_million_input, cost_per_million_output,
+    created_at, updated_at`
 
 func scanModel(row pgx.Row) (Model, error) {
 	var m Model
 	err := row.Scan(
 		&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.BaseURL, &m.APIKey,
 		&m.MaxTokens, &m.Temperature, &m.Enabled, &m.Description,
+		&m.CostPerMillionInput, &m.CostPerMillionOutput,
 		&m.CreatedAt, &m.UpdatedAt,
 	)
 	return m, err
@@ -67,16 +70,22 @@ func (s *Store) GetModel(ctx context.Context, id string) (Model, error) {
 
 // CreateModel создаёт модель и возвращает её с заполненным ID.
 func (s *Store) CreateModel(ctx context.Context, m Model) (Model, error) {
+	if m.CostPerMillionInput == 0 && m.CostPerMillionOutput == 0 {
+		m.CostPerMillionInput, m.CostPerMillionOutput = KnownModelPricing(m.Provider, m.ModelID)
+	}
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO ai_models
-		  (name, provider, model_id, base_url, api_key, max_tokens, temperature, enabled, description)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+		  (name, provider, model_id, base_url, api_key, max_tokens, temperature, enabled, description,
+		   cost_per_million_input, cost_per_million_output)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
 		RETURNING `+modelColumns,
 		m.Name, m.Provider, m.ModelID, m.BaseURL, m.APIKey,
 		m.MaxTokens, m.Temperature, m.Enabled, m.Description,
+		m.CostPerMillionInput, m.CostPerMillionOutput,
 	).Scan(
 		&m.ID, &m.Name, &m.Provider, &m.ModelID, &m.BaseURL, &m.APIKey,
 		&m.MaxTokens, &m.Temperature, &m.Enabled, &m.Description,
+		&m.CostPerMillionInput, &m.CostPerMillionOutput,
 		&m.CreatedAt, &m.UpdatedAt,
 	)
 	return m, err
@@ -88,10 +97,12 @@ func (s *Store) UpdateModel(ctx context.Context, m Model) error {
 		UPDATE ai_models SET
 			name=$1, provider=$2, model_id=$3, base_url=$4, api_key=$5,
 			max_tokens=$6, temperature=$7, enabled=$8, description=$9,
+			cost_per_million_input=$10, cost_per_million_output=$11,
 			updated_at=NOW()
-		WHERE id=$10`,
+		WHERE id=$12`,
 		m.Name, m.Provider, m.ModelID, m.BaseURL, m.APIKey,
-		m.MaxTokens, m.Temperature, m.Enabled, m.Description, m.ID)
+		m.MaxTokens, m.Temperature, m.Enabled, m.Description,
+		m.CostPerMillionInput, m.CostPerMillionOutput, m.ID)
 	return err
 }
 

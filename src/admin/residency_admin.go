@@ -558,12 +558,24 @@ func (s *ResidencyServer) handleTemplates(w http.ResponseWriter, r *http.Request
 // /tenants — управление тенантами
 // ---------------------------------------------------------------------------
 
+// TenantBilling — сводка расхода токенов и стоимость по одному тенанту (30 дней).
+type TenantBilling struct {
+	Calls            int
+	TotalTokens      int
+	EstimatedCostUSD float64
+}
+
 type tenantsPageData struct {
 	Tenants   []*model.Tenant
 	Flash     string
 	FlashKind string
 	// RevealKey — полный API-ключ для одноразового показа (после создания/ротации).
 	RevealKey string
+	// Billing — расход токенов и стоимость по тенанту (tenant_id → stats), 30 дней.
+	// Пусто, если jobsched недоступен или данных нет.
+	Billing map[string]TenantBilling
+	// GlobalBilling — суммарный расход по всем тенантам за 30 дней.
+	GlobalBilling TenantBilling
 }
 
 func (s *ResidencyServer) handleTenants(w http.ResponseWriter, r *http.Request) {

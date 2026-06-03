@@ -76,6 +76,7 @@ type Run struct {
 type AIUsage struct {
 	ID               string    `json:"id"`
 	RunID            string    `json:"run_id,omitempty"`
+	TenantID         string    `json:"tenant_id,omitempty"`
 	AgentType        string    `json:"agent_type"`
 	ModelID          string    `json:"model_id"`
 	Provider         string    `json:"provider"`
@@ -100,10 +101,22 @@ type RunFilter struct {
 // AIUsageFilter — фильтр выборки учёта токенов.
 type AIUsageFilter struct {
 	RunID     string
+	TenantID  string
 	AgentType string
 	ModelID   string
 	SinceDays int
 	Limit     int
+}
+
+// TenantUsageStat — сводка расхода токенов и стоимость по одному тенанту.
+type TenantUsageStat struct {
+	TenantID         string  `json:"tenant_id"`
+	TenantName       string  `json:"tenant_name"`
+	Calls            int     `json:"calls"`
+	PromptTokens     int     `json:"prompt_tokens"`
+	CompletionTokens int     `json:"completion_tokens"`
+	TotalTokens      int     `json:"total_tokens"`
+	EstimatedCostUSD float64 `json:"estimated_cost_usd"`
 }
 
 // UsageAgg — агрегат расхода токенов (по модели или по агенту).

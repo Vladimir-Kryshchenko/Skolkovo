@@ -4,14 +4,13 @@ package events
 
 import (
 	"context"
-	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/net/html"
 
 	"baza-skolkovo/src/changes"
@@ -658,9 +657,12 @@ func indexEventToRAG(ctx context.Context, ev *model.Event, ragSvc *rag.Service) 
 // Вспомогательные функции
 // ---------------------------------------------------------------------------
 
+// eventNamespace — пространство имён для детерминированных UUID мероприятий.
+var eventNamespace = uuid.NewSHA1(uuid.Nil, []byte("baza-skolkovo/events"))
+
+// eventID возвращает детерминированный UUIDv5 по URL мероприятия (колонка id — UUID).
 func eventID(eventURL string) string {
-	sum := sha1.Sum([]byte(eventURL))
-	return "event-" + hex.EncodeToString(sum[:])[:16]
+	return uuid.NewSHA1(eventNamespace, []byte(eventURL)).String()
 }
 
 func attrVal(n *html.Node, key string) string {

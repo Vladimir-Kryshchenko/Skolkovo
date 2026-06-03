@@ -242,7 +242,7 @@ func (b *Bot) cmdNews(chatID int64) {
 	pages, err := b.stores.Pages.List(context.Background(), sitepages.PageFilter{
 		Query:  "news",
 		Status: "active",
-		Limit:  200,
+		Limit:  500,
 	})
 	if err != nil {
 		b.sendReply(chatID, "❌ Не удалось загрузить новости. Попробуйте позже.")
@@ -337,16 +337,34 @@ func (b *Bot) searchSection(chatID int64, banner, header, query, emptyMsg string
 	b.sendLongWithMenu(chatID, sb.String())
 }
 
-// filterNewsPages оставляет страницы новостных разделов и сортирует свежие сверху
-// (по дате публикации, при отсутствии — по времени последнего изменения).
+// newsTitleBlacklist — служебные заголовки страниц-листингов, не являющихся статьями.
+var newsTitleBlacklist = map[string]bool{
+	"фонд сколково":             true,
+	"news - skolkovo community": true,
+	"":                          true,
+}
+
+// filterNewsPages оставляет настоящие новостные статьи и сортирует свежие сверху.
+// Отсеивает служебные страницы: листинги по тегам (section …/tag(s)/…), архивы и
+// страницы с пустым/служебным заголовком — оставляет только статьи (news / <slug>).
 func filterNewsPages(pages []*sitepages.Page, limit int) []*sitepages.Page {
 	var news []*sitepages.Page
 	for _, p := range pages {
 		sec := strings.ToLower(p.Section)
 		url := strings.ToLower(p.URL)
-		if strings.Contains(sec, "news") || strings.Contains(url, "/news") {
-			news = append(news, p)
+		isNews := strings.Contains(sec, "news") || strings.Contains(url, "/news")
+		if !isNews {
+			continue
 		}
+		// Отсекаем страницы тегов и служебные заголовки.
+		if strings.Contains(sec, "tag") {
+			continue
+		}
+		title := strings.ToLower(strings.TrimSpace(p.Title))
+		if newsTitleBlacklist[title] || strings.HasPrefix(title, "информация по тегу") {
+			continue
+		}
+		news = append(news, p)
 	}
 	sort.Slice(news, func(i, j int) bool {
 		return newsTime(news[i]).After(newsTime(news[j]))

@@ -191,6 +191,43 @@ func (s *PostgresStore) Count(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// PageRef — лёгкая ссылка на страницу (id + url) без тяжёлого тела. Для массовых
+// операций над всей базой (прунинг), где грузить текст всех страниц нельзя по памяти.
+type PageRef struct {
+	ID  string
+	URL string
+}
+
+// ListRefs возвращает id+url всех страниц — дёшево по памяти (без текста).
+func (s *PostgresStore) ListRefs(ctx context.Context) ([]PageRef, error) {
+	rows, err := s.pool.Query(ctx, `SELECT id, url FROM site_pages`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []PageRef
+	for rows.Next() {
+		var r PageRef
+		if err := rows.Scan(&r.ID, &r.URL); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// DeleteByIDs удаляет страницы по списку id. Возвращает число удалённых строк.
+func (s *PostgresStore) DeleteByIDs(ctx context.Context, ids []string) (int64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	tag, err := s.pool.Exec(ctx, `DELETE FROM site_pages WHERE id = ANY($1)`, ids)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // ─── Фильтрация и пагинация (для списка в админке) ───────────────────────────
 
 // PageFilter — параметры выборки страниц списка. Фильтрация и пагинация идут на

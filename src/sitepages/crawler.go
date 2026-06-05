@@ -189,6 +189,9 @@ func (c *Crawler) Run(ctx context.Context) (*Report, error) {
 		if fileExts[strings.ToLower(path.Ext(u.Path))] {
 			return
 		}
+		if isExcludedURL(u) {
+			return // навигационная «ловушка»/служебная страница — не обходим
+		}
 		norm := normalizeURL(raw)
 		if visited[norm] || enqueued[norm] {
 			return
@@ -599,6 +602,50 @@ func normalizeURL(rawURL string) string {
 		u.RawQuery = q.Encode() // Encode сортирует ключи — канонический порядок
 	}
 	return u.String()
+}
+
+// excludedPathSegments — сегменты пути, которые краулер НЕ обходит: фасетные
+// тег-фильтры и пользовательские/служебные разделы Telligent (dochub.sk.ru).
+// Именно они порождают комбинаторный взрыв страниц (паучья ловушка): архив
+// новостей предлагает «показать с ещё одним тегом», и пути вида
+// …/tags/{t1}/{t1+t2}/{t1+t2+t3}/… множатся практически бесконечно. Кодированные
+// кириллические теги делают каждую комбинацию уникальным URL. Совпадение по
+// ЛЮБОМУ сегменту пути исключает страницу из обхода.
+var excludedPathSegments = map[string]bool{
+	"tags": true, "tag": true, // тег-фильтры — главный источник взрыва
+	"user": true, "users": true, // профили/служебные страницы пользователей
+	"members": true, "membership": true,
+	"search":   true, // страницы поиска
+	"login":    true, "logout": true, // авторизация
+	"signin":   true, "signout": true,
+	"register": true, "signup": true,
+}
+
+// maxPathSegments — предохранитель от неизвестных «ловушек»: пути глубже этого
+// почти всегда фасетная навигация, а не контент. Реальные статьи архива
+// укладываются в ~8 сегментов (например /news/b/news/archive/ГГГГ/ММ/ДД/слаг.aspx).
+const maxPathSegments = 12
+
+// isExcludedURL сообщает, что URL — навигационная «ловушка» или служебная
+// страница и обходить её не нужно (см. excludedPathSegments). Без этого фильтра
+// краулер уходит в комбинаторный взрыв тег-фильтров dochub.sk.ru.
+func isExcludedURL(u *url.URL) bool {
+	n := 0
+	for _, seg := range strings.Split(u.Path, "/") {
+		if seg == "" {
+			continue
+		}
+		n++
+		seg = strings.ToLower(seg)
+		if excludedPathSegments[seg] {
+			return true
+		}
+		// Сегмент-файл (login.aspx, register.aspx) — сравниваем имя без расширения.
+		if ext := path.Ext(seg); ext != "" && excludedPathSegments[strings.TrimSuffix(seg, ext)] {
+			return true
+		}
+	}
+	return n > maxPathSegments
 }
 
 // pathKey — host+path без query (для лимита query-вариантов одного пути).

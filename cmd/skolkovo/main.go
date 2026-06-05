@@ -205,6 +205,8 @@ func sitePagesSeeds(cfg config.Config) []string {
 //	sitepages enrich --all — переаннотировать все действующие страницы заново;
 //	sitepages index        — переиндексировать все страницы в Qdrant;
 //	sitepages dates        — дозаполнить дату публикации для страниц без неё (повторная загрузка);
+//	sitepages prune        — отчёт о «ловушечных»/служебных страницах под удаление (сухой прогон);
+//	sitepages prune --apply— удалить их из site_pages и Qdrant (см. денилист isExcludedURL);
 //	sitepages search <q>   — смоук-проверка поиска (search_site_pages);
 //	sitepages              — всё сразу (crawl + enrich + index).
 func cmdSitePages(cfg config.Config, args []string) error {
@@ -266,6 +268,27 @@ func cmdSitePages(cfg config.Config, args []string) error {
 		bf := sitepages.NewDateBackfiller(cr, pageStore, cfg.SitePagesConcurrency)
 		filled, notFound, failed := bf.Run(ctx, missing)
 		log.Printf("[sitepages] бэкфилл дат завершён: проставлено %d, без даты %d, ошибок %d", filled, notFound, failed)
+		return nil
+	}
+
+	// sitepages prune — удалить накопленные «ловушечные»/служебные страницы
+	// (тег-фильтры Telligent и т.п.), которые теперь отсекает денилист обхода.
+	// По умолчанию СУХОЙ ПРОГОН (только отчёт); --apply реально удаляет.
+	if action == "prune" {
+		apply := len(args) > 1 && (args[1] == "--apply" || args[1] == "apply")
+		res, err := sitepages.Prune(ctx, pageStore, newSitePagesIndexer(cfg), !apply)
+		if err != nil {
+			return fmt.Errorf("прунинг страниц: %w", err)
+		}
+		mode := "СУХОЙ ПРОГОН (ничего не удалено; добавьте --apply)"
+		if apply {
+			mode = "ПРИМЕНЕНО"
+		}
+		log.Printf("[sitepages] прунинг [%s]: просмотрено %d, под удаление %d, удалено строк %d, точек Qdrant %d",
+			mode, res.Scanned, res.Matched, res.DeletedRows, res.DeletedPoints)
+		for _, s := range res.Samples {
+			log.Printf("[sitepages]   пример под удаление: %s", s)
+		}
 		return nil
 	}
 

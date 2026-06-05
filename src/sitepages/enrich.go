@@ -221,17 +221,54 @@ func buildAnnotatePrompt(p *Page, known []string) string {
 // parseAnnotation извлекает JSON-объект из ответа модели (терпимо к markdown-
 // ограждениям и поясняющему тексту вокруг) и разбирает его в Annotation.
 func parseAnnotation(raw string) (Annotation, error) {
-	s := strings.TrimSpace(raw)
-	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start < 0 || end < 0 || end < start {
+	s := extractFirstJSONObject(raw)
+	if s == "" {
 		return Annotation{}, fmt.Errorf("в ответе модели не найден JSON-объект")
 	}
 	var a Annotation
-	if err := json.Unmarshal([]byte(s[start:end+1]), &a); err != nil {
+	if err := json.Unmarshal([]byte(s), &a); err != nil {
 		return Annotation{}, fmt.Errorf("разбор JSON аннотации: %w", err)
 	}
 	return a, nil
+}
+
+// extractFirstJSONObject возвращает первый СБАЛАНСИРОВАННЫЙ JSON-объект строки —
+// от первого '{' до парного '}', пропуская скобки внутри строк и экранированные
+// кавычки. Надёжнее наивного «от первого { до последнего }»: модель иногда
+// добавляет после JSON пояснение или второй объект, и наивный срез захватывает
+// лишнее ('.'/' ' после массива → ошибка разбора, лишний токен-ретрай). Структурные
+// символы ('{','}','"','\\') — ASCII, поэтому побайтовый проход безопасен для UTF-8.
+func extractFirstJSONObject(s string) string {
+	start := strings.IndexByte(s, '{')
+	if start < 0 {
+		return ""
+	}
+	depth, inStr, esc := 0, false, false
+	for i := start; i < len(s); i++ {
+		c := s[i]
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				return s[start : i+1]
+			}
+		}
+	}
+	return "" // объект не закрылся — вызывающий вернёт ошибку «не найден JSON»
 }
 
 // normalizeTags приводит теги к нижнему регистру, сжимает пробелы, дедуплицирует,

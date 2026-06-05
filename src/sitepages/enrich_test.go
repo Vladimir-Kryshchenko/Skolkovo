@@ -34,6 +34,20 @@ func TestParseAnnotation(t *testing.T) {
 			},
 		},
 		{
+			name: "текст и второй объект после JSON (наивный срез ломался)",
+			raw:  `{"tags":["a"],"summary":"s"}. Дополнительно: {"note":"игнор"}`,
+			check: func(a Annotation) bool {
+				return a.Summary == "s" && len(a.Tags) == 1 && a.Tags[0] == "a"
+			},
+		},
+		{
+			name: "вложенный объект и скобки внутри строки",
+			raw:  "```json\n{\"summary\":\"текст со { скобкой }\",\"theses\":[\"t\"]}\n```\nготово.",
+			check: func(a Annotation) bool {
+				return a.Summary == "текст со { скобкой }" && len(a.Theses) == 1
+			},
+		},
+		{
 			name:    "нет JSON",
 			raw:     "К сожалению, не могу аннотировать.",
 			wantErr: true,

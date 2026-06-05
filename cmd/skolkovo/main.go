@@ -88,6 +88,9 @@ func main() {
 	}
 
 	cfg := config.Load()
+	// Расширяем денилист обхода/разметки страниц из конфигурации (до запуска любых
+	// команд) — единый источник «ловушек» для crawl, enrich и prune.
+	sitepages.AddExcludedSegments(cfg.SitePagesExcludeSegments)
 	cmd := os.Args[1]
 	args := os.Args[2:]
 

@@ -45,6 +45,39 @@ func TestIsExcludedURL(t *testing.T) {
 	}
 }
 
+// TestDropExcluded проверяет, что фильтр разметки отбрасывает ловушечные страницы
+// и сохраняет реальные (порядок реальных сохраняется).
+func TestDropExcluded(t *testing.T) {
+	pages := []*Page{
+		{URL: "https://sk.ru/foundation/events"},
+		{URL: "https://dochub.sk.ru/tags/website/it/default.aspx"},
+		{URL: "https://dochub.sk.ru/news/b/news/archive/2020/03/25/slug.aspx"},
+		{URL: "https://dochub.sk.ru/user/createuser.aspx"},
+	}
+	kept, skipped := dropExcluded(pages)
+	if skipped != 2 {
+		t.Errorf("ожидали 2 отброшенных, получили %d", skipped)
+	}
+	if len(kept) != 2 || kept[0].URL != pages[0].URL || kept[1].URL != pages[2].URL {
+		t.Errorf("неверный набор оставленных: %+v", kept)
+	}
+}
+
+// TestAddExcludedSegments проверяет, что денилист расширяется из конфигурации и
+// влияет на isExcludedURL. Восстанавливает добавленный сегмент после теста.
+func TestAddExcludedSegments(t *testing.T) {
+	const seg = "weblog3"
+	u, _ := url.Parse("https://dochub.sk.ru/foundation/biomed/weblog3/post")
+	if isExcludedURL(u) {
+		t.Fatal("до добавления weblog3 не должен исключаться")
+	}
+	AddExcludedSegments([]string{" Weblog3 ", ""}) // с пробелами/регистром/пустыми
+	defer delete(excludedPathSegments, seg)
+	if !isExcludedURL(u) {
+		t.Error("после AddExcludedSegments weblog3 должен исключаться")
+	}
+}
+
 // TestCrawlerSkipsExcludedLinks проверяет, что краулер не ставит в очередь и не
 // сохраняет страницы-ловушки (ссылки с сегментом tags), но обходит обычные.
 func TestCrawlerSkipsExcludedLinks(t *testing.T) {

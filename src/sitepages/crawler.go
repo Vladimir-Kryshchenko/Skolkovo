@@ -615,10 +615,23 @@ var excludedPathSegments = map[string]bool{
 	"tags": true, "tag": true, // тег-фильтры — главный источник взрыва
 	"user": true, "users": true, // профили/служебные страницы пользователей
 	"members": true, "membership": true,
-	"search":   true, // страницы поиска
-	"login":    true, "logout": true, // авторизация
-	"signin":   true, "signout": true,
+	"search": true,                 // страницы поиска
+	"login":  true, "logout": true, // авторизация
+	"signin": true, "signout": true,
 	"register": true, "signup": true,
+}
+
+// AddExcludedSegments расширяет встроенный денилист сегментов пути значениями из
+// конфигурации (SITEPAGES_EXCLUDE_SEGMENTS) — чтобы добавлять новые «ловушки» без
+// правки кода и редеплоя. Вызывается один раз на старте, до запуска обхода/разметки
+// (дальше карта только читается). Влияет и на обход (enqueue), и на разметку
+// (EnrichBatch), и на prune — критерий ловушки единый.
+func AddExcludedSegments(segs []string) {
+	for _, s := range segs {
+		if s = strings.ToLower(strings.TrimSpace(s)); s != "" {
+			excludedPathSegments[s] = true
+		}
+	}
 }
 
 // maxPathSegments — предохранитель от неизвестных «ловушек»: пути глубже этого
@@ -646,6 +659,21 @@ func isExcludedURL(u *url.URL) bool {
 		}
 	}
 	return n > maxPathSegments
+}
+
+// dropExcluded отбирает из pages только НЕ-ловушечные страницы (см. isExcludedURL)
+// и возвращает отфильтрованный срез и число отброшенных. Общий фильтр для разметки
+// (EnrichBatch) — гарантия, что токены не тратятся на denylist-URL, попавшие в БД.
+func dropExcluded(pages []*Page) (kept []*Page, skipped int) {
+	kept = pages[:0:0]
+	for _, p := range pages {
+		if u, err := url.Parse(p.URL); err == nil && isExcludedURL(u) {
+			skipped++
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, skipped
 }
 
 // pathKey — host+path без query (для лимита query-вариантов одного пути).

@@ -80,6 +80,17 @@ func (e *Enricher) EnrichBatch(ctx context.Context, pages []*Page) (done, skippe
 		return 0, len(pages), 0
 	}
 
+	// Защита от трат токенов на «ловушки»: даже если denylist-URL как-то попал в
+	// БД (например, был сохранён до расширения денилиста), не отдаём его модели.
+	// Критерий тот же, что у обхода (isExcludedURL) — согласованность гарантирована.
+	pages, skippedExcluded := dropExcluded(pages)
+	if skippedExcluded > 0 {
+		log.Printf("[sitepages/enrich] пропущено %d ловушечных/служебных URL (денилист) — токены не тратятся", skippedExcluded)
+	}
+	if len(pages) == 0 {
+		return 0, skippedExcluded, 0
+	}
+
 	known, _ := e.Pages.ListTags(ctx)
 	chat := e.chat
 	if chat == nil {

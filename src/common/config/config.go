@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -82,12 +83,15 @@ type Config struct {
 	ClassifierEnabled bool
 
 	// Страницы публичного сайта (sitepages) — отдельный от файлов слой знаний
-	SitePagesEnabled     bool
-	SitePagesSeeds       string // стартовые URL обхода через запятую
-	SitePagesMaxPages    int    // лимит страниц за обход
-	SitePagesMaxPerPath  int    // лимит query-вариантов одного пути (0 — без лимита)
-	SitePagesRenderJS    bool   // обходить страницы через headless-браузер (JS-навигация)
-	SitePagesConcurrency int    // число параллельных загрузчиков при обходе (<=1 — последовательно)
+	SitePagesEnabled    bool
+	SitePagesSeeds      string // стартовые URL обхода через запятую
+	SitePagesMaxPages   int    // лимит страниц за обход
+	SitePagesMaxPerPath int    // лимит query-вариантов одного пути (0 — без лимита)
+	// SitePagesExcludeSegments — доп. сегменты пути для денилиста обхода поверх
+	// встроенных (tags/user/...): новые «ловушки» добавляются без правки кода.
+	SitePagesExcludeSegments []string
+	SitePagesRenderJS        bool // обходить страницы через headless-браузер (JS-навигация)
+	SitePagesConcurrency     int  // число параллельных загрузчиков при обходе (<=1 — последовательно)
 
 	// ИИ-обогащение страниц сайта (категория, подкатегория, теги, описание, цели, тезисы, выводы)
 	SitePagesEnrichEnabled     bool          // запускать аннотирование страниц через ИИ-агента
@@ -222,12 +226,13 @@ func Load() Config {
 		ClassifierEnabled: envBool("CLASSIFIER_ENABLED", false),
 
 		// Страницы публичного сайта
-		SitePagesEnabled:     envBool("SITEPAGES_ENABLED", true),
-		SitePagesSeeds:       env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
-		SitePagesMaxPages:    envInt("SITEPAGES_MAX_PAGES", 0),       // 0 = без лимита
-		SitePagesMaxPerPath:  envInt("SITEPAGES_MAX_PER_PATH", 1000), // 0 = без лимита; запас под пагинацию
-		SitePagesRenderJS:    envBool("SITEPAGES_RENDER_JS", false),
-		SitePagesConcurrency: envInt("SITEPAGES_CONCURRENCY", 4),
+		SitePagesEnabled:         envBool("SITEPAGES_ENABLED", true),
+		SitePagesSeeds:           env("SITEPAGES_SEEDS", "https://sk.ru/,https://dochub.sk.ru/foundation/documents/"),
+		SitePagesMaxPages:        envInt("SITEPAGES_MAX_PAGES", 0),       // 0 = без лимита
+		SitePagesMaxPerPath:      envInt("SITEPAGES_MAX_PER_PATH", 1000), // 0 = без лимита; запас под пагинацию
+		SitePagesExcludeSegments: envList("SITEPAGES_EXCLUDE_SEGMENTS"),
+		SitePagesRenderJS:        envBool("SITEPAGES_RENDER_JS", false),
+		SitePagesConcurrency:     envInt("SITEPAGES_CONCURRENCY", 4),
 
 		// ИИ-обогащение страниц сайта
 		SitePagesEnrichEnabled:     envBool("SITEPAGES_ENRICH_ENABLED", true),
@@ -300,6 +305,22 @@ func env(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envList разбирает значение через запятую в список непустых элементов (с trim).
+// Пусто/не задано — nil.
+func envList(key string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envInt(key string, def int) int {
